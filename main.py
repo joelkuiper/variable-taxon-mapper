@@ -6,11 +6,11 @@ import hashlib
 import json
 import math
 import re
-from collections import defaultdict
 from textwrap import dedent
 from typing import Any, Dict, Iterable, Optional, Tuple, Union, Set, List
 
 import pandas as pd
+import networkx as nx
 import requests
 import random
 from tqdm.auto import tqdm
@@ -59,137 +59,130 @@ def unique_dataset_label_name_desc(
 # =============================================================================
 # Tree building with stable IDs
 # =============================================================================
-
-
 def _path_id_hex8(path_parts: list[str]) -> str:
     """Deterministic 8-hex id from the full path (joined by ' / ')."""
     s = " / ".join(path_parts)
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:8]
 
 
-def build_tree_with_ids(
-    df: pd.DataFrame,
-    name_col: str = "name",
-    parent_col: str = "parent",
-    order_col: str = "order",
-) -> dict:
-    """
-    Build a nested dict:
-      {
-        root_label: {
-          "id": <hex8>,
-          "children": {
-            child_label: { "id": <hex8>, "children": {...} },
-            ...
-          }
-        },
-        ...
-      }
-
-    - Siblings sorted by (order, name).
-    - Node IDs are SHA-1 of the full path parts (stable & unique per path).
-    """
-    order_map = df.groupby(name_col)[order_col].min().to_dict()
-    children_map = defaultdict(list)
-    all_names = set(df[name_col].dropna().astype(str))
-    parent_vals = df[parent_col]
-
-    for _, row in df.iterrows():
-        child = row[name_col]
-        parent = row[parent_col]
-        if pd.isna(child):
-            continue
-        child = str(child)
-        parent_key = None if pd.isna(parent) else str(parent)
-        children_map[parent_key].append(child)
-
-    # Roots: NaN parents, parents not present as names, and names with no parent
-    roots = set()
-    for p in parent_vals.unique():
-        if pd.isna(p):
-            roots.add(None)
-        else:
-            ps = str(p)
-            if ps not in all_names:
-                roots.add(ps)
-
-    all_children = {c for lst in children_map.values() for c in lst}
-    for n in all_names:
-        if n not in all_children:
-            roots.add(n)
-
+def _sort_key_factory(order_map: dict[str, float]):
     def sort_key(node_name: str):
         o = order_map.get(node_name, math.inf)
         return (o if pd.notna(o) else math.inf, node_name.lower())
 
-    def build_subtree(parent_key: Optional[str], path_prefix: list[str]) -> dict:
-        seen, uniq = set(), []
-        for k in children_map.get(parent_key, []):
-            if k not in seen:
-                uniq.append(k)
-                seen.add(k)
-        uniq.sort(key=sort_key)
-
-        out = {}
-        for k in uniq:
-            path = path_prefix + [k]
-            out[k] = {
-                "id": _path_id_hex8(path),
-                "children": build_subtree(k, path),
-            }
-        return out
-
-    tree = {}
-    if None in roots:
-        for name, meta in build_subtree(None, []).items():
-            tree[name] = meta
-
-    named_roots = sorted([r for r in roots if r is not None], key=sort_key)
-    for r in named_roots:
-        tree[r] = {
-            "id": _path_id_hex8([r]),
-            "children": build_subtree(r, [r]),
-        }
-    return tree
+    return sort_key
 
 
-def tree_to_markdown_with_ids(tree: dict, indent: int = 0) -> str:
+def build_taxonomy_graph(
+    df: pd.DataFrame,
+    name_col: str = "name",
+    parent_col: str = "parent",
+    order_col: str = "order",
+) -> nx.DiGraph:
     """
-    Render {label: {"id":..,"children":{...}}} as nested markdown lists:
-      - [abcd1234] Label
-        - [ef567890] Child
+    Build a directed acyclic graph (forest of trees) with edges (parent -> child).
+
+    - Nodes created for all `name` values and any `parent` not present in `name`.
+    - NaN parent => node is a root (no incoming edges).
+    - Validates: acyclic and ≤1 parent per node.
     """
-    lines = []
-    for label, meta in tree.items():
-        nid = meta.get("id", "????????")
-        lines.append("  " * indent + f"- [{nid}] {label}")
-        kids = meta.get("children") or {}
-        if kids:
-            lines.append(tree_to_markdown_with_ids(kids, indent + 1))
+    G = nx.DiGraph()
+
+    # Add all names
+    for n in df[name_col].dropna().astype(str):
+        G.add_node(n, label=n)
+
+    # Add placeholder parents (if referenced but not present in names)
+    for p in df[parent_col].dropna().astype(str):
+        if not G.has_node(p):
+            G.add_node(p, label=p, placeholder_root=True)
+
+    # Add edges parent -> child
+    for _, row in df.iterrows():
+        child = row[name_col]
+        if pd.isna(child):
+            continue
+        c = str(child)
+        parent = row[parent_col]
+        if not pd.isna(parent):
+            G.add_edge(str(parent), c)
+
+    # Validate DAG and single-parent constraint
+    if not nx.is_directed_acyclic_graph(G):
+        raise ValueError(
+            "Taxonomy graph contains a cycle; expected a DAG (forest of trees)."
+        )
+    bad = [n for n in G.nodes if G.in_degree(n) > 1]
+    if bad:
+        raise ValueError(
+            f"Nodes with multiple parents found (≤1 expected): {', '.join(sorted(bad)[:8])}"
+        )
+
+    return G
+
+
+def _roots_in_order(G: nx.DiGraph, sort_key) -> list[str]:
+    roots = [n for n in G.nodes if G.in_degree(n) == 0]
+    roots.sort(key=sort_key)
+    return roots
+
+
+def _path_to_root(G: nx.DiGraph, node: str) -> list[str]:
+    """Unique path from root to `node` (since ≤1 parent per node)."""
+    path = [node]
+    cur = node
+    while True:
+        preds = list(G.predecessors(cur))
+        if not preds:
+            break
+        cur = preds[0]  # unique parent
+        path.append(cur)
+    path.reverse()
+    return path
+
+
+def tree_to_markdown_with_ids_from_graph(
+    G: nx.DiGraph,
+    df: pd.DataFrame,
+    name_col: str = "name",
+    order_col: str = "order",
+) -> str:
+    """
+    Render the graph as nested markdown lists with [hex8] IDs computed from full paths.
+    """
+    order_map = df.groupby(name_col)[order_col].min().to_dict()
+    sort_key = _sort_key_factory(order_map)
+
+    lines: list[str] = []
+
+    def _walk(node: str, depth: int):
+        path = _path_to_root(G, node)
+        nid = _path_id_hex8(path)
+        lines.append("  " * depth + f"- [{nid}] {node}")
+        for c in sorted(G.successors(node), key=sort_key):
+            _walk(c, depth + 1)
+
+    for r in _roots_in_order(G, sort_key):
+        _walk(r, 0)
+
     return "\n".join(lines)
 
 
-def build_id_maps(tree: dict) -> Tuple[dict, dict]:
+def build_id_maps_from_graph(G: nx.DiGraph) -> tuple[dict, dict]:
     """
-    Build reverse maps:
+    Reverse maps:
       - id_to_label: hex8 -> node label
       - id_to_path:  hex8 -> "Root / Child / Leaf"
     """
-    id_to_label: Dict[str, str] = {}
-    id_to_path: Dict[str, str] = {}
+    id_to_label: dict[str, str] = {}
+    id_to_path: dict[str, str] = {}
 
-    def _walk(subtree: dict, path: list[str]):
-        for label, meta in subtree.items():
-            nid = meta.get("id")
-            curr_path = path + [label]
-            if nid:
-                id_to_label[nid] = label
-                id_to_path[nid] = " / ".join(curr_path)
-            kids = meta.get("children") or {}
-            if kids:
-                _walk(kids, curr_path)
+    for n in G.nodes:
+        path = _path_to_root(G, n)
+        nid = _path_id_hex8(path)
+        id_to_label[nid] = n
+        id_to_path[nid] = " / ".join(path)
 
-    _walk(tree, [])
     return id_to_label, id_to_path
 
 
@@ -229,18 +222,20 @@ def make_tree_match_prompt(
 
     template = """\
         <|im_start|>system
-        You are a precise taxonomy matcher.
-
-        The TREE is a nested Markdown list where each node line is:
-        - [<node_id>] <label>.
+        You are a biomedical taxonomy matcher.
 
         ## TASK
-        • Choose the SINGLE best-matching node for the ITEM.
+        • You must match the ITEM to the TREE. Choose the best-matching node for the ITEM.
         • If NO node is a reasonably confident match, return a NO-MATCH result.
 
-        OUTPUT (one-line JSON only; no extra text):
+        The TREE is a nested (indented) Markdown list where each line is:
+        - [<node_id>] <label>
+
+        ## OUTPUT
         EITHER a match:
+
         {{"node_id":"[xxxxxxxx]","node_label":"...","rationale":"..."}}
+
         OR a no-match:
         {{"node_id":null,"node_label":null,"rationale":"Why no suitable node fits"}}
 
@@ -249,7 +244,6 @@ def make_tree_match_prompt(
 
         <|im_start|>user
         ## ITEM:
-        - dataset: {DS}
         - label: {LAB}
         - name: {NAM}
         - description: {DESC}<|im_end|>
@@ -258,13 +252,7 @@ def make_tree_match_prompt(
 
     return (
         dedent(template)
-        .format(
-            TREE=tree_md,
-            DS=ds,
-            LAB=lab,
-            NAM=nam,
-            DESC=desc,
-        )
+        .format(TREE=tree_md, DS=ds, LAB=lab, NAM=nam, DESC=desc)
         .strip()
     )
 
@@ -284,9 +272,9 @@ string ::=
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
   )+ quote
 
-obj       ::= ("{" quote "node_id" quote ": " string ","
-                   quote "node_label" quote ": " string ","
-                   quote "rationale" quote ": " string "}")
+obj ::= ("{" quote "node_id" quote ": " string ","
+             quote "node_label" quote ": " string ","
+             quote "rationale" quote ": " string "}")
 """
 
 
@@ -310,9 +298,9 @@ def llama_completion(
     **kwargs: Any,
 ) -> str:
     """
-    POST /completions (no streaming), expects JSON with 'content'.
+    POST /completions, expects JSON with 'content'.
     Pass KV-cache hints via kwargs (cache_prompt=True, n_keep=-1, slot_id=0).
-    On non-2xx, raise with server's error text for easy diagnosis.
+    On non-2xx, raise with server's error text.
     """
     s = session or _HTTP_SESSION
     payload: Dict[str, Any] = {"prompt": prompt, "stream": False}
@@ -328,17 +316,22 @@ def llama_completion(
 # Set-up and testing
 # =============================================================================
 
+
 variables = pd.read_csv("data/Variables.csv", low_memory=False)
 keywords = pd.read_csv("data/Keywords.csv")
 
-# Build tree WITH IDS and render as markdown including the [node_id]
-tree = build_tree_with_ids(
+# Build taxonomy graph
+G = build_taxonomy_graph(
     keywords, name_col="name", parent_col="parent", order_col="order"
 )
-tree_md = tree_to_markdown_with_ids(tree)
 
-# Build reverse maps: id -> label, id -> path
-id_to_label, id_to_path = build_id_maps(tree)
+# Render markdown (for prompting) with [node_id] tags
+tree_md = tree_to_markdown_with_ids_from_graph(
+    G, keywords, name_col="name", order_col="order"
+)
+
+# Reverse maps: id -> label, id -> path
+id_to_label, id_to_path = build_id_maps_from_graph(G)
 
 items = unique_dataset_label_name_desc(variables)
 
@@ -368,7 +361,6 @@ def match_item_to_tree(
     n_keep: int = -1,
     session: Optional[requests.Session] = None,
 ) -> Dict[str, Any]:
-    """Minimal, deterministic match; graceful no-match on parse or resolve failures."""
     prompt = make_tree_match_prompt(tree_markdown_with_ids, item)
 
     raw = llama_completion(
@@ -584,4 +576,14 @@ def run_label_benchmark(
 #     slot_id=0,  # reuse slot across calls
 #     cache_prompt=True,  # keep KV cache for the shared TREE section
 #     n_keep=-1,  # keep entire prompt cached
+# )
+
+# df, metrics = run_label_benchmark(
+#     variables,
+#     tree_markdown_with_ids=tree_md,
+#     id_to_label=id_to_label,
+#     id_to_path=id_to_path,
+#     n=100,
+#     dedupe_on=["label"],
+#     seed=100,
 # )
