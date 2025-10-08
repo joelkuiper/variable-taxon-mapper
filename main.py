@@ -200,7 +200,7 @@ class SapBERTEmbedder:
         max_length: int = 32,
         batch_size: int = 128,
         fp16: bool = True,
-        mean_pool: bool = False,  # ClS
+        mean_pool: bool = True,  # False = ClS
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.tok = AutoTokenizer.from_pretrained(model_name)
@@ -324,7 +324,7 @@ def pruned_tree_markdown_for_item(
     parts = [
         _clean_text(item.get("label")),
         _clean_text(item.get("name")),
-        # _clean_text(item.get("description")), # Perhaps too noisy?
+        _clean_text(item.get("description")),  # Perhaps too noisy?
     ]
     query = " , ".join(p for p in parts if p and p != "(empty)")
     q_emb = embedder.encode([query])[0]
@@ -384,10 +384,10 @@ def pruned_tree_markdown_for_item(
 
     top_show = min(40, len(allowed_ranked))  # keep prompt light
     md = []
-    md.append("### Candidates (ranked)\n")
+    md.append("### Candidates \n")
     for lbl in allowed_ranked[:top_show]:
         md.append(f"- {lbl}")
-    md.append("\n### Taxonomy (pruned view)\n")
+    md.append("\n### Taxonomy \n")
     md.append(tree_md)
     return "\n".join(md), allowed_ranked
 
@@ -559,7 +559,7 @@ def match_item_to_tree(
     allowed_labels: List[str],
     endpoint: str = "http://127.0.0.1:8080/completions",
     temperature: float = 0.0,
-    n_predict: int = 128,
+    n_predict: int = 256,
     slot_id: int = 0,
     cache_prompt: bool = True,
     n_keep: int = -1,
