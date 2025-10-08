@@ -14,6 +14,7 @@ import threading
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+import re
 import pandas as pd
 import networkx as nx
 import requests
@@ -197,7 +198,7 @@ class SapBERTEmbedder:
         self,
         model_name: str = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext",
         device: Optional[str] = None,
-        max_length: int = 32,
+        max_length: int = 512,
         batch_size: int = 128,
         fp16: bool = True,
         mean_pool: bool = True,  # False = ClS
@@ -252,6 +253,24 @@ def cosine_topk(
     return sims[idxs], idxs
 
 
+def encode_item_parts(item):
+    fields = []
+    for k in ("label", "name", "description"):
+        s = _clean_text(item.get(k))
+        if s and s != "(empty)":
+            fields.append(s[:256])
+    embs = EMBEDDER.encode(fields)  # (m, D)
+    return _l2_normalize(embs)
+
+
+def cosine_match_maxpool(node_vecs, item_embs):
+    # item_embs: (m,D); node_vecs: (N,D)
+    sims = node_vecs @ item_embs.T  # (N,m)
+    best = sims.max(axis=1)  # (N,)
+    j = int(np.argmax(best))
+    return j, float(best[j])
+
+
 # =============================================================================
 # Taxonomy embedding & pruning
 # =============================================================================
@@ -263,12 +282,48 @@ def taxonomy_node_texts(G: nx.DiGraph) -> List[str]:
     return nodes_sorted
 
 
-def build_taxonomy_embeddings(
-    G: nx.DiGraph, embedder: SapBERTEmbedder
+def build_taxonomy_embeddings_composed(
+    G: nx.DiGraph,
+    embedder: SapBERTEmbedder,
+    gamma: float = 0.6,  # geometric decay per step to root
 ) -> Tuple[List[str], np.ndarray]:
+    """
+    Compose each node vector from its own name embedding plus ancestor name embeddings
+    with geometric decay. Avoids long-token truncation and path noise.
+    """
+    # 1) Get stable, sorted list of node labels
     names = taxonomy_node_texts(G)
-    embs = embedder.encode(names)
-    return names, embs
+
+    # 2) Embed EVERY unique label exactly once
+    label2idx = {n: i for i, n in enumerate(names)}
+    name_vecs = embedder.encode(names)  # (N, D) L2-normalized
+
+    # 3) Precompute ancestors (root→...→node)
+    def ancestors_to_root(node: str) -> List[str]:
+        seq = []
+        cur = node
+        while True:
+            seq.append(cur)
+            preds = list(G.predecessors(cur))
+            if not preds:
+                break
+            cur = preds[0]
+        return seq  # root..node
+
+    # 4) Compose: v(node) = norm( v(name) + Σ gamma^k * v(ancestor_k) ), excluding self in the sum
+    D = name_vecs.shape[1]
+    out = np.zeros((len(names), D), dtype=np.float32)
+    for n in names:
+        idx = label2idx[n]
+        v = name_vecs[idx].copy()
+        anc = ancestors_to_root(n)[:-1]  # exclude self
+        for k, a in enumerate(reversed(anc), start=1):  # closest parent first
+            v += (gamma**k) * name_vecs[label2idx[a]]
+        out[idx] = v
+
+    # 5) Final L2-normalize
+    out = out / np.clip(np.linalg.norm(out, axis=1, keepdims=True), 1e-9, None)
+    return names, out
 
 
 def _ancestors_to_root(G: nx.DiGraph, node: str) -> List[str]:
@@ -316,21 +371,17 @@ def pruned_tree_markdown_for_item(
     tax_embs_unit: np.ndarray,
     name_col: str = "name",
     order_col: str = "order",
-    top_k_nodes: int = 64,
-    desc_max_depth: int = 2,
+    top_k_nodes: int = 128,
+    desc_max_depth: int = 3,
     max_total_nodes: int = 1200,
 ) -> Tuple[str, List[str]]:
-    # 1) Query text
-    parts = [
-        _clean_text(item.get("label")),
-        _clean_text(item.get("name")),
-        _clean_text(item.get("description")),  # Perhaps too noisy?
+    item_embs = encode_item_parts(item)  # (m, D), L2-normalized
+    # score each node by its best match across parts
+    node_best = (tax_embs_unit @ item_embs.T).max(axis=1)  # (N,)
+    idxs = np.argpartition(-node_best, kth=min(top_k_nodes, node_best.size - 1))[
+        :top_k_nodes
     ]
-    query = " , ".join(p for p in parts if p and p != "(empty)")
-    q_emb = embedder.encode([query])[0]
-
-    # 2) Top-k nearest nodes (anchors)
-    sims, idxs = cosine_topk(tax_embs_unit, q_emb, k=min(top_k_nodes, len(tax_names)))
+    idxs = idxs[np.argsort(-node_best[idxs])]
     anchors = [tax_names[i] for i in idxs]
 
     # 3) Expand: ancestors + descendants
@@ -516,19 +567,21 @@ G = build_taxonomy_graph(
     keywords, name_col="name", parent_col="parent", order_col="order"
 )
 
-# Embedder & taxonomy embeddings
+# Name maps (unchanged)
+NAME_TO_ID, NAME_TO_PATH = build_name_maps_from_graph(G)
+
+# Embedder
 EMBEDDER = SapBERTEmbedder(
     model_name="cambridgeltl/SapBERT-from-PubMedBERT-fulltext",
     batch_size=128,
     fp16=True,
+    max_length=256,
 )
-TAX_NAMES, TAX_EMBS = build_taxonomy_embeddings(G, EMBEDDER)  # (N,), (N,D) L2-normed
 
-# Name maps (label -> hex id/path)
-NAME_TO_ID, NAME_TO_PATH = build_name_maps_from_graph(G)
+# Composed embeddings (leaf + ancestor names with decay)
+TAX_NAMES, TAX_EMBS = build_taxonomy_embeddings_composed(G, EMBEDDER, gamma=0.6)
 
 items = unique_dataset_label_name_desc(variables)
-
 
 # =============================================================================
 # Matching: label-only + constrained grammar + robust fallback
@@ -565,7 +618,8 @@ def match_item_to_tree(
     n_keep: int = -1,
     session: Optional[requests.Session] = None,
 ) -> Dict[str, Any]:
-    grammar = GRAMMAR_RESPONSE  # build_label_constrained_grammar(allowed_labels)
+    grammar = GRAMMAR_RESPONSE
+
     prompt = make_tree_match_prompt(tree_markdown, item)
 
     raw = llama_completion(
@@ -761,8 +815,8 @@ def run_label_benchmark(
     n_predict: int = 256,
     temperature: float = 0.0,
     dedupe_on: Optional[List[str]] = None,
-    top_k_nodes: int = 64,
-    desc_max_depth: int = 2,
+    top_k_nodes: int = 32,
+    desc_max_depth: int = 3,
     max_total_nodes: int = 800,
     # ---- parallel controls ----
     max_workers: int = 4,
@@ -963,8 +1017,8 @@ def run_label_benchmark(
 df, metrics = run_label_benchmark(
     variables,
     keywords,
-    n=100,
+    n=500,
     dedupe_on=["label"],
-    seed=100,
+    seed=37,
 )
 print(metrics)
