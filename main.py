@@ -182,18 +182,6 @@ def tree_to_markdown(
     return "\n".join(lines)
 
 
-# (Optional external consumers)
-def build_id_maps_from_graph(G: nx.DiGraph) -> tuple[dict, dict]:
-    id_to_label: dict[str, str] = {}
-    id_to_path: dict[str, str] = {}
-    for n in G.nodes:
-        path = _path_to_root(G, n)
-        nid = _path_id_hex8(path)
-        id_to_label[nid] = n
-        id_to_path[nid] = " / ".join(path)
-    return id_to_label, id_to_path
-
-
 # =============================================================================
 # SapBERT embedder + NN helpers
 # =============================================================================
@@ -328,20 +316,17 @@ def pruned_tree_markdown_for_item(
     tax_embs_unit: np.ndarray,
     name_col: str = "name",
     order_col: str = "order",
-    top_k_nodes: int = 128,  # a bit larger to avoid missing obvious ones
+    top_k_nodes: int = 64,
     desc_max_depth: int = 2,
     max_total_nodes: int = 1200,
 ) -> Tuple[str, List[str]]:
-    # 1) Query text (with keywords)
+    # 1) Query text
     parts = [
         _clean_text(item.get("label")),
         _clean_text(item.get("name")),
-        _clean_text(item.get("description")),
+        # _clean_text(item.get("description")), # Perhaps too noisy?
     ]
-    kw = item.get("keywords")
-    if isinstance(kw, str) and kw.strip():
-        parts.append(kw.strip())
-    query = " | ".join(p for p in parts if p and p != "(empty)")
+    query = " , ".join(p for p in parts if p and p != "(empty)")
     q_emb = embedder.encode([query])[0]
 
     # 2) Top-k nearest nodes (anchors)
@@ -468,37 +453,6 @@ def make_tree_match_prompt(
 # =============================================================================
 
 
-def _json_escape(s: str) -> str:
-    return json.dumps(s)  # JSON string literal with quotes/escapes
-
-
-def build_label_constrained_grammar(allowed_labels: List[str]) -> str:
-    """
-    GBNF grammar that forces node_label to be one of allowed_labels.
-    """
-    if not allowed_labels:
-        # shouldn't happen (we already fallback to full tree), but guard anyway
-        allowed_labels = ["(no-candidates)"]
-
-    alts = " | ".join(json.dumps(lbl) for lbl in allowed_labels)
-    return rf"""
-root      ::= obj
-quote     ::= "\""
-
-string ::=
-  quote (
-    [^"\\] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{{4}})
-  )+ quote
-
-label ::= {alts}
-
-obj ::= ("{{" quote "node_label" quote ": " label ","
-             quote "rationale" quote ": " string "}}")
-""".strip()
-
-
-# Legacy
 GRAMMAR_RESPONSE = r"""
 root      ::= obj
 quote     ::= "\""
@@ -509,8 +463,7 @@ string ::=
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
   )+ quote
 
-obj ::= ("{" quote "node_id" quote ": " string ","
-             quote "node_label" quote ": " string ","
+obj ::= ("{" quote "node_label" quote ": " string ","
              quote "rationale" quote ": " string "}")
 """
 
@@ -573,9 +526,6 @@ TAX_NAMES, TAX_EMBS = build_taxonomy_embeddings(G, EMBEDDER)  # (N,), (N,D) L2-n
 
 # Name maps (label -> hex id/path)
 NAME_TO_ID, NAME_TO_PATH = build_name_maps_from_graph(G)
-
-# (Optional external compatibility)
-id_to_label, id_to_path = build_id_maps_from_graph(G)
 
 items = unique_dataset_label_name_desc(variables)
 
@@ -761,12 +711,9 @@ def _get_thread_session(pool_maxsize: int = 64) -> requests.Session:
 
 
 def _ancestors_inclusive(G: nx.DiGraph, node: str) -> List[str]:
-    """node plus all ancestors up to the root (order root..node)."""
-    out = []
-    cur = node
-    seen = set()
+    out, cur, seen = [], node, set()
     while True:
-        if cur in seen:  # safety in case of dirty graphs
+        if cur in seen:
             break
         seen.add(cur)
         out.append(cur)
@@ -774,34 +721,34 @@ def _ancestors_inclusive(G: nx.DiGraph, node: str) -> List[str]:
         if not preds:
             break
         cur = preds[0]
-    return out[::-1]  # root..node
+    return out[::-1]
+
+
+def _is_ancestor_of(G: nx.DiGraph, maybe_ancestor: str, node: str) -> bool:
+    if maybe_ancestor == node:
+        return True
+    return (
+        maybe_ancestor in _ancestors_inclusive(G, node)
+        if (maybe_ancestor in G and node in G)
+        else False
+    )
 
 
 def is_correct_prediction(
-    pred_label: Optional[str],
-    gold_labels: List[str],
-    *,
-    G: nx.DiGraph,
-    mode: str = "path_any",  # "exact" | "ancestor" | "path_any"
+    pred_label: Optional[str], gold_labels: List[str], *, G: nx.DiGraph
 ) -> bool:
-    """
-    - exact: pred_label in gold_labels
-    - ancestor: any ancestor-of-pred equals a gold label (inclusive of pred)
-    - path_any (recommended): exact OR ancestor
-    """
     if not isinstance(pred_label, str):
         return False
-    if mode == "exact":
-        return pred_label in gold_labels
-    path_nodes = (
-        set(_ancestors_inclusive(G, pred_label))
-        if pred_label in G.nodes
-        else {pred_label}
-    )
-    if mode == "ancestor":
-        return any(g in path_nodes for g in gold_labels)
-    # default "path_any"
-    return (pred_label in gold_labels) or any(g in path_nodes for g in gold_labels)
+    for g in gold_labels:
+        if not isinstance(g, str):
+            continue
+        if pred_label == g:
+            return True
+        if _is_ancestor_of(G, pred_label, g):  # pred above gold
+            return True
+        if _is_ancestor_of(G, g, pred_label):  # pred below gold
+            return True
+    return False
 
 
 def run_label_benchmark(
@@ -908,7 +855,9 @@ def run_label_benchmark(
             )
             resolved_label = pred.get("resolved_label")
             correct = is_correct_prediction(
-                resolved_label, gold_labels, G=G, mode="path_any"
+                resolved_label,
+                gold_labels,
+                G=G,
             )
             out = {
                 "dataset": item.get("dataset"),
