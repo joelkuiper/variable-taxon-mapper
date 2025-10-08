@@ -1,0 +1,2 @@
+https://molgeniscatalogue.org/CatalogueOntologies/tables#/Keywords
+https://molgeniscatalogue.org/catalogue/tables/#/Variables
