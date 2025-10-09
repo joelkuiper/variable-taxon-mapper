@@ -159,24 +159,7 @@ def _render_tree_markdown(
 
     tree_md = "\n".join(lines)
 
-    if tree_md.strip():
-        return tree_md, None  # None => caller keeps its own allowed_ranked
-
-    # Fallback: render full tree
-    lines = []
-
-    def _walk_all(node: str, depth: int):
-        label_display = make_label_display(node, gloss_map or {})
-        lines.append("  " * depth + f"- {label_display}")
-        for c in sorted(G.successors(node), key=sort_key):
-            _walk_all(c, depth + 1)
-
-    for r in roots_in_order(G, sort_key):
-        _walk_all(r, 0)
-
-    tree_md = "\n".join(lines)
-    full_ranked = sorted(list(G.nodes), key=lambda s: s.lower())
-    return tree_md, full_ranked
+    return tree_md, None
 
 
 # --- Refactored main ---------------------------------------------------------
@@ -247,7 +230,9 @@ def pruned_tree_markdown_for_item(
     top_show = min(40, len(allowed_ranked))
     md_lines: List[str] = ["### Candidates \n"]
     for lbl in allowed_ranked[:top_show]:
-        md_lines.append(f"- {make_label_display(lbl, gloss_map or {})}")
+        md_lines.append(
+            f"- {make_label_display(lbl, gloss_map or {}, use_summary=False)}"
+        )
     md_lines.append("\n### Taxonomy \n")
     md_lines.append(tree_md)
 

@@ -49,6 +49,7 @@ df, metrics = run_label_benchmark(
     gloss_map=GLOSS_MAP,
     dedupe_on=["name"],
     n=1000,
+    n_predict=512,
     seed=37,
 )
 print(df[["label", "name", "description", "gold_labels", "resolved_label", "correct"]])
