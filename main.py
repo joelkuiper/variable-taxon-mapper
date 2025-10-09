@@ -243,16 +243,6 @@ class SapBERTEmbedder:
         return _l2_normalize(embs).astype(np.float32)
 
 
-def cosine_topk(
-    matrix_unit: np.ndarray, query_unit: np.ndarray, k: int
-) -> Tuple[np.ndarray, np.ndarray]:
-    sims = matrix_unit @ query_unit  # (N,)
-    idxs = np.argpartition(-sims, kth=min(k, sims.size - 1))[:k]
-    order = np.argsort(-sims[idxs])
-    idxs = idxs[order]
-    return sims[idxs], idxs
-
-
 def encode_item_parts(item):
     fields = []
     for k in ("label", "name", "description"):
@@ -638,21 +628,39 @@ items = unique_dataset_label_name_desc(variables)
 # =============================================================================
 
 
-def _nn_among_labels(query_text: str, candidate_labels: List[str]) -> Optional[str]:
-    """k=1 SapBERT among candidate_labels (returns the chosen label or None)."""
+def _nn_among_labels(
+    query_text: Union[str, Dict[str, Optional[str]]],
+    candidate_labels: List[str],
+) -> Optional[str]:
+    """
+    Max-pool SapBERT among candidate_labels (returns the chosen label or None).
+    If `query_text` is an ITEM dict with fields (label/name/description), we
+    encode each part and max-pool across them. If it's a string, we encode one
+    vector (degenerate max-pool).
+    """
     if not candidate_labels:
         return None
-    q_emb = EMBEDDER.encode([query_text])[0]
-    # map candidate labels to indices in TAX_NAMES
-    try:
-        idxs = [TAX_NAMES.index(lbl) for lbl in candidate_labels if lbl in TAX_NAMES]
-    except Exception:
-        idxs = []
+
+    # Build query embedding(s)
+    if isinstance(query_text, dict):
+        item_embs = encode_item_parts(query_text)  # (m, D)
+    else:
+        item_embs = EMBEDDER.encode([_clean_text(query_text)])  # (1, D)
+
+    if item_embs.size == 0:
+        return None
+
+    # Map candidate labels to indices and gather their vectors
+    idxs = [TAX_NAMES.index(lbl) for lbl in candidate_labels if lbl in TAX_NAMES]
     if not idxs:
         return None
-    sub = TAX_EMBS[idxs]
-    _, top = cosine_topk(sub, q_emb, k=1)
-    return candidate_labels[int(top[0])] if top.size else None
+    sub = TAX_EMBS[idxs]  # (K, D)
+
+    # Max-pool similarity across parts
+    sims = sub @ item_embs.T  # (K, m)
+    best = sims.max(axis=1)  # (K,)
+    j = int(np.argmax(best))
+    return candidate_labels[j]
 
 
 _PROMPT_DEBUG_SHOWN = False  # global, print-once gate
@@ -664,7 +672,7 @@ def match_item_to_tree(
     tree_markdown: str,
     allowed_labels: List[str],
     endpoint: str = "http://127.0.0.1:8080/completions",
-    temperature: float = 0.0,
+    temperature: float = 0.7,
     n_predict: int = 256,
     slot_id: int = 0,
     cache_prompt: bool = True,
@@ -688,8 +696,8 @@ def match_item_to_tree(
         endpoint,
         session=session,
         temperature=temperature,
-        top_k=0,
-        top_p=1.0,
+        top_k=20,
+        top_p=0.8,
         min_p=0.0,
         n_predict=max(n_predict, 64),
         grammar=grammar,
