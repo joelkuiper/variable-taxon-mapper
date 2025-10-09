@@ -261,6 +261,31 @@ def cosine_match_maxpool(node_vecs, item_embs):
     return j, float(best[j])
 
 
+def build_hnsw_index(
+    embs_unit: np.ndarray,
+    *,
+    space: str = "cosine",
+    M: int = 32,
+    ef_construction: int = 200,
+    ef_search: int = 128,
+    num_threads: int = 0,
+):
+    """
+    Build an HNSW index over unit-normalized taxonomy embeddings (TAX_EMBS).
+    Returns the hnswlib.Index configured with ef_search.
+    """
+    if embs_unit.dtype != np.float32:
+        embs_unit = embs_unit.astype(np.float32, copy=False)
+    N, D = embs_unit.shape
+    import hnswlib
+
+    index = hnswlib.Index(space=space, dim=D)
+    index.init_index(max_elements=N, ef_construction=ef_construction, M=M)
+    index.add_items(embs_unit, np.arange(N), num_threads=num_threads)
+    index.set_ef(ef_search)
+    return index
+
+
 # =============================================================================
 # Gloss helpers
 # =============================================================================
@@ -395,18 +420,31 @@ def pruned_tree_markdown_for_item(
     top_k_nodes: int = 128,
     desc_max_depth: int = 3,
     max_total_nodes: int = 1200,
-    gloss_map: Optional[dict[str, str]] = None,  # <-- NEW
+    gloss_map: Optional[dict[str, str]] = None,
 ) -> Tuple[str, List[str]]:
     item_embs = encode_item_parts(item)  # (m, D)
+
     if item_embs.size == 0:
         anchors = tax_names[:top_k_nodes]
     else:
-        node_best = (tax_embs_unit @ item_embs.T).max(axis=1)  # (N,)
-        idxs = np.argpartition(-node_best, kth=min(top_k_nodes, node_best.size - 1))[
-            :top_k_nodes
-        ]
-        idxs = idxs[np.argsort(-node_best[idxs])]
-        anchors = [tax_names[i] for i in idxs]
+        # HNSW query per part; combine by max-pooling similarity
+        # (cosine distance -> similarity = 1 - dist)
+        N = len(tax_names)
+        Kq = min(max(128, top_k_nodes * 3), N)
+        scores = np.full(N, -1.0, dtype=np.float32)
+        for q in item_embs:
+            labels, dists = HNSW_INDEX.knn_query(
+                q[np.newaxis, :].astype(np.float32), k=Kq
+            )
+            labels, dists = labels[0], dists[0]
+            sims = 1.0 - dists.astype(np.float32)
+            for idx, sim in zip(labels, sims):
+                if sim > scores[idx]:
+                    scores[idx] = sim
+        # Top-k by pooled score
+        idxs = np.argpartition(-scores, kth=min(top_k_nodes - 1, N - 1))[:top_k_nodes]
+        idxs = idxs[np.argsort(-scores[idxs])]
+        anchors = [tax_names[i] for i in idxs if scores[i] >= 0]
 
     # Expand: ancestors + descendants
     allowed: Set[str] = set()
@@ -453,7 +491,7 @@ def pruned_tree_markdown_for_item(
 
     tree_md = "\n".join(lines_tree)
     if not tree_md.strip():
-        # fallback: full tree display (with gloss)
+        # fallback: full tree
         lines_tree = []
 
         def _walk_all(node: str, depth: int):
@@ -619,6 +657,8 @@ EMBEDDER = SapBERTEmbedder(
 
 # Composed embeddings (leaf + ancestor names with decay)
 TAX_NAMES, TAX_EMBS = build_taxonomy_embeddings_composed(G, EMBEDDER, gamma=0.6)
+HNSW_INDEX = build_hnsw_index(TAX_EMBS, ef_search=128)
+
 GLOSS_MAP = build_gloss_map(keywords)  # 'keywords' is your Keywords_summarized DF
 
 items = unique_dataset_label_name_desc(variables)
@@ -633,10 +673,9 @@ def _nn_among_labels(
     candidate_labels: List[str],
 ) -> Optional[str]:
     """
-    Max-pool SapBERT among candidate_labels (returns the chosen label or None).
-    If `query_text` is an ITEM dict with fields (label/name/description), we
-    encode each part and max-pool across them. If it's a string, we encode one
-    vector (degenerate max-pool).
+    HNSW-based, max-pool SapBERT among candidate_labels.
+    If `query_text` is an ITEM dict (label/name/description), we encode each part and
+    max-pool across them. If it's a string, we encode one vector (degenerate pool).
     """
     if not candidate_labels:
         return None
@@ -646,21 +685,44 @@ def _nn_among_labels(
         item_embs = encode_item_parts(query_text)  # (m, D)
     else:
         item_embs = EMBEDDER.encode([_clean_text(query_text)])  # (1, D)
-
     if item_embs.size == 0:
         return None
 
-    # Map candidate labels to indices and gather their vectors
-    idxs = [TAX_NAMES.index(lbl) for lbl in candidate_labels if lbl in TAX_NAMES]
-    if not idxs:
+    # Map candidate labels to global indices
+    cand_to_idx = {
+        lbl: TAX_NAMES.index(lbl) for lbl in candidate_labels if lbl in TAX_NAMES
+    }
+    if not cand_to_idx:
         return None
-    sub = TAX_EMBS[idxs]  # (K, D)
 
-    # Max-pool similarity across parts
-    sims = sub @ item_embs.T  # (K, m)
-    best = sims.max(axis=1)  # (K,)
-    j = int(np.argmax(best))
-    return candidate_labels[j]
+    # Query HNSW for each part; collect max similarity per node
+    # (hnswlib cosine distance = 1 - cosine_similarity)
+    Kq = min(max(64, 4 * len(cand_to_idx)), len(TAX_NAMES))
+    score: Dict[int, float] = {}
+    for q in item_embs:
+        labels, dists = HNSW_INDEX.knn_query(q[np.newaxis, :].astype(np.float32), k=Kq)
+        labels, dists = labels[0], dists[0]
+        for idx, dist in zip(labels, dists):
+            if idx in cand_to_idx.values():  # keep only candidates
+                sim = 1.0 - float(dist)
+                prev = score.get(idx, -1.0)
+                if sim > prev:
+                    score[idx] = sim
+
+    if not score:
+        # Fallback to exact max-pool over the candidate subset only
+        idxs = list(cand_to_idx.values())
+        sub = TAX_EMBS[idxs]
+        sims = sub @ item_embs.T  # (K, m)
+        best = sims.max(axis=1)  # (K,)
+        j = int(np.argmax(best))
+        inv = {v: k for k, v in cand_to_idx.items()}
+        return inv[idxs[j]]
+
+    # Pick the candidate with highest max-pooled similarity
+    best_idx = max(score.items(), key=lambda kv: kv[1])[0]
+    inv = {v: k for k, v in cand_to_idx.items()}
+    return inv.get(best_idx)
 
 
 _PROMPT_DEBUG_SHOWN = False  # global, print-once gate
@@ -682,7 +744,6 @@ def match_item_to_tree(
     grammar = GRAMMAR_RESPONSE
     prompt = make_tree_match_prompt(tree_markdown, item)
 
-    # --- PRINT ONCE for inspection ---
     global _PROMPT_DEBUG_SHOWN
     if not _PROMPT_DEBUG_SHOWN:
         _PROMPT_DEBUG_SHOWN = True
@@ -737,17 +798,49 @@ def match_item_to_tree(
         if node_label_raw not in allowed_labels:
             raise ValueError("label_not_in_allowed")
     except Exception:
-        # Embedding fallback among allowed
-        mask = [TAX_NAMES.index(lbl) for lbl in allowed_labels if lbl in TAX_NAMES]
-        if mask:
+        # ---- HNSW-backed fallback restricted to allowed labels ----
+        if allowed_labels:
+            # Use HNSW to get a large candidate pool, then filter to allowed and max-pool
             item_embs = encode_item_parts(item)
-            sub = TAX_EMBS[mask]
-            best = (
-                (sub @ item_embs.T).max(axis=1)
-                if (item_embs.size and sub.size)
-                else np.array([])
-            )
-            chosen = allowed_labels[int(np.argmax(best))] if best.size else None
+            if item_embs.size:
+                N = len(TAX_NAMES)
+                Kq = min(max(256, 4 * len(allowed_labels)), N)
+                scores: Dict[int, float] = {}
+                for q in item_embs:
+                    labels, dists = HNSW_INDEX.knn_query(
+                        q[np.newaxis, :].astype(np.float32), k=Kq
+                    )
+                    labels, dists = labels[0], dists[0]
+                    sims = 1.0 - dists.astype(np.float32)
+                    for idx, sim in zip(labels, sims):
+                        scores[idx] = max(scores.get(idx, -1.0), float(sim))
+
+                allowed_idx = {
+                    TAX_NAMES.index(lbl): lbl
+                    for lbl in allowed_labels
+                    if lbl in TAX_NAMES
+                }
+                # Keep only scores for allowed nodes
+                filtered = [
+                    (idx, sc) for idx, sc in scores.items() if idx in allowed_idx
+                ]
+                if filtered:
+                    best_idx = max(filtered, key=lambda kv: kv[1])[0]
+                    chosen = allowed_idx[best_idx]
+                else:
+                    # Final fallback: exact max-pool within allowed subset
+                    mask = list(allowed_idx.keys())
+                    sub = TAX_EMBS[mask]
+                    best = (
+                        (sub @ item_embs.T).max(axis=1)
+                        if (sub.size and item_embs.size)
+                        else np.array([])
+                    )
+                    chosen = (
+                        allowed_idx[mask[int(np.argmax(best))]] if best.size else None
+                    )
+            else:
+                chosen = None
         else:
             chosen = None
 
@@ -757,7 +850,7 @@ def match_item_to_tree(
                 chosen,
                 NAME_TO_ID.get(chosen),
                 NAME_TO_PATH.get(chosen),
-                "Fallback: embedding k=1 among allowed.",
+                "Fallback: HNSW + max-pool among allowed.",
                 keep_raw=True,
                 raw_text=raw,
             )
