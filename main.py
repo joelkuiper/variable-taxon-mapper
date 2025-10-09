@@ -546,8 +546,18 @@ def make_tree_match_prompt(
     desc = _clean_text(item.get("description"))
     tree_md = (tree_markdown_labels_only or "").strip()
 
+    # # Qwen
+    role_prefix = "<|im_start|>"
+    role_suffix = ""
+    eot = "<|im_end|>"
+
+    # Granite
+    # role_prefix = "<|start_of_role|>"
+    # role_suffix = "<|end_of_role|>"
+    # eot = "<|end_of_text|>"
+
     template = """\
-        <|im_start|>system
+        {role_prefix}system{role_suffix}
         You are a biomedical taxonomy matcher.
 
         ## TASK
@@ -564,16 +574,29 @@ def make_tree_match_prompt(
         {{"node_label":"...","rationale":"(≤ 20 words)"}}
 
         ## TREE
-        {TREE}.<|im_end|>
+        {TREE}.{eot}
 
-        <|im_start|>user
+        {role_prefix}user{role_suffix}
         ## ITEM:
         - label: {LAB}
         - name: {NAM}
-        - description: {DESC}<|im_end|>
-        <|im_start|>assistant
+        - description: {DESC}{eot}
+        {role_prefix}assistant{role_suffix}
+
     """
-    return dedent(template).format(TREE=tree_md, LAB=lab, NAM=nam, DESC=desc).strip()
+    return (
+        dedent(template)
+        .format(
+            role_prefix=role_prefix,
+            role_suffix=role_suffix,
+            eot=eot,
+            TREE=tree_md,
+            LAB=lab,
+            NAM=nam,
+            DESC=desc,
+        )
+        .strip()
+    )
 
 
 # =============================================================================
@@ -1181,8 +1204,7 @@ def run_label_benchmark(
 df, metrics = run_label_benchmark(
     variables,
     keywords,
-    n=500,
-    dedupe_on=["label"],
+    n=1000,
     seed=37,
 )
 print(metrics)
