@@ -272,6 +272,37 @@ def cosine_match_maxpool(node_vecs, item_embs):
 
 
 # =============================================================================
+# Gloss helpers
+# =============================================================================
+
+
+def build_gloss_map(keywords_df: Optional[pd.DataFrame]) -> dict[str, str]:
+    """Build {name -> <=25 word summary} from Keywords_summarized."""
+    gloss: dict[str, str] = {}
+    if keywords_df is None or not {"name", "definition_summary"}.issubset(
+        keywords_df.columns
+    ):
+        return gloss
+    for _, row in keywords_df[["name", "definition_summary"]].iterrows():
+        n = row["name"]
+        s = row["definition_summary"]
+        if isinstance(n, str) and n and isinstance(s, str):
+            s = s.strip()
+            if s and n not in gloss:
+                gloss[n] = s
+    return gloss
+
+
+def make_label_display(name: str, gloss_map: dict[str, str]) -> str:
+    """Render 'Label — summary' for display; fall back to plain label."""
+    if not isinstance(name, str) or not name:
+        return str(name)
+    g = gloss_map.get(name, "")
+    g = g.strip() if isinstance(g, str) else ""
+    return f"{name} — {g}" if g else name
+
+
+# =============================================================================
 # Taxonomy embedding & pruning
 # =============================================================================
 
@@ -374,17 +405,20 @@ def pruned_tree_markdown_for_item(
     top_k_nodes: int = 128,
     desc_max_depth: int = 3,
     max_total_nodes: int = 1200,
+    gloss_map: Optional[dict[str, str]] = None,  # <-- NEW
 ) -> Tuple[str, List[str]]:
-    item_embs = encode_item_parts(item)  # (m, D), L2-normalized
-    # score each node by its best match across parts
-    node_best = (tax_embs_unit @ item_embs.T).max(axis=1)  # (N,)
-    idxs = np.argpartition(-node_best, kth=min(top_k_nodes, node_best.size - 1))[
-        :top_k_nodes
-    ]
-    idxs = idxs[np.argsort(-node_best[idxs])]
-    anchors = [tax_names[i] for i in idxs]
+    item_embs = encode_item_parts(item)  # (m, D)
+    if item_embs.size == 0:
+        anchors = tax_names[:top_k_nodes]
+    else:
+        node_best = (tax_embs_unit @ item_embs.T).max(axis=1)  # (N,)
+        idxs = np.argpartition(-node_best, kth=min(top_k_nodes, node_best.size - 1))[
+            :top_k_nodes
+        ]
+        idxs = idxs[np.argsort(-node_best[idxs])]
+        anchors = [tax_names[i] for i in idxs]
 
-    # 3) Expand: ancestors + descendants
+    # Expand: ancestors + descendants
     allowed: Set[str] = set()
     for a in anchors:
         for n in _ancestors_to_root(G, a):
@@ -397,9 +431,8 @@ def pruned_tree_markdown_for_item(
         core = set(anchors[: max_total_nodes // 4])
         allowed = core | {n for a in core for n in _ancestors_to_root(G, a)}
 
-    # 4) ORDER the allowed labels: first by similarity rank, then fill the rest
-    #    (LLMs are position-biased; put best candidates first)
-    allowed_ranked = []
+    # Rank allowed: anchors first, then alpha
+    allowed_ranked: List[str] = []
     seen = set()
     for a in anchors:
         if a in allowed and a not in seen:
@@ -410,16 +443,16 @@ def pruned_tree_markdown_for_item(
             allowed_ranked.append(n)
             seen.add(n)
 
-    # 5) Build a small ranked "Candidates" section + full pruned tree
+    # TREE markdown (display with gloss; IDs remain raw)
     order_map = df.groupby(name_col)[order_col].min().to_dict()
     sort_key = _sort_key_factory(order_map)
-
     lines_tree: List[str] = []
 
     def _walk(node: str, depth: int):
         if node not in allowed:
             return
-        lines_tree.append("  " * depth + f"- {node}")
+        label_display = make_label_display(node, gloss_map or {})
+        lines_tree.append("  " * depth + f"- {label_display}")
         for c in sorted(G.successors(node), key=sort_key):
             if c in allowed:
                 _walk(c, depth + 1)
@@ -430,16 +463,29 @@ def pruned_tree_markdown_for_item(
 
     tree_md = "\n".join(lines_tree)
     if not tree_md.strip():
-        tree_md = tree_to_markdown(G, df, name_col=name_col, order_col=order_col)
+        # fallback: full tree display (with gloss)
+        lines_tree = []
+
+        def _walk_all(node: str, depth: int):
+            label_display = make_label_display(node, gloss_map or {})
+            lines_tree.append("  " * depth + f"- {label_display}")
+            for c in sorted(G.successors(node), key=sort_key):
+                _walk_all(c, depth + 1)
+
+        for r in _roots_in_order(G, sort_key):
+            _walk_all(r, 0)
+        tree_md = "\n".join(lines_tree)
         allowed_ranked = sorted(list(G.nodes), key=lambda s: s.lower())
 
-    top_show = min(40, len(allowed_ranked))  # keep prompt light
-    md = []
+    # Candidates (display with gloss)
+    top_show = min(40, len(allowed_ranked))
+    md: List[str] = []
     md.append("### Candidates \n")
     for lbl in allowed_ranked[:top_show]:
-        md.append(f"- {lbl}")
+        md.append(f"- {make_label_display(lbl, gloss_map or {})}")
     md.append("\n### Taxonomy \n")
     md.append(tree_md)
+
     return "\n".join(md), allowed_ranked
 
 
@@ -478,13 +524,16 @@ def make_tree_match_prompt(
 
         ## TASK
         • From the TREE, choose **exactly one** label that best matches the ITEM.
-        • If uncertain, choose the closest label — do **not** abstain.
+        • Labels in the TREE/Candidates may include a short summary after an em dash (—).
+          Those summaries are guidance only; **output must be the exact label text (no summary)**.
+        • If uncertain between close options, **prefer the closest correct parent** over a sibling.
+        • Do **not** invent new labels; choose from the TREE only. Do **not** abstain.
 
-        The TREE is a nested (indented) Markdown list where each line is:
-        - <label>  (exact text; choose from these)
+        The TREE is a nested (indented) Markdown list. Each bullet is:
+        - <label> — <short summary>
 
         ## OUTPUT (single-line JSON)
-        {{"node_label":"...","rationale":"..."}}
+        {{"node_label":"...","rationale":"(≤ 20 words)"}}
 
         ## TREE
         {TREE}.<|im_end|>
@@ -560,7 +609,7 @@ def llama_completion(
 # =============================================================================
 
 variables = pd.read_csv("data/Variables.csv", low_memory=False)
-keywords = pd.read_csv("data/Keywords.csv")
+keywords = pd.read_csv("data/Keywords_summarized.csv")
 
 # Build taxonomy graph
 G = build_taxonomy_graph(
@@ -580,6 +629,7 @@ EMBEDDER = SapBERTEmbedder(
 
 # Composed embeddings (leaf + ancestor names with decay)
 TAX_NAMES, TAX_EMBS = build_taxonomy_embeddings_composed(G, EMBEDDER, gamma=0.6)
+GLOSS_MAP = build_gloss_map(keywords)  # 'keywords' is your Keywords_summarized DF
 
 items = unique_dataset_label_name_desc(variables)
 
@@ -605,6 +655,9 @@ def _nn_among_labels(query_text: str, candidate_labels: List[str]) -> Optional[s
     return candidate_labels[int(top[0])] if top.size else None
 
 
+_PROMPT_DEBUG_SHOWN = False  # global, print-once gate
+
+
 def match_item_to_tree(
     item: Dict[str, Optional[str]],
     *,
@@ -619,8 +672,16 @@ def match_item_to_tree(
     session: Optional[requests.Session] = None,
 ) -> Dict[str, Any]:
     grammar = GRAMMAR_RESPONSE
-
     prompt = make_tree_match_prompt(tree_markdown, item)
+
+    # --- PRINT ONCE for inspection ---
+    global _PROMPT_DEBUG_SHOWN
+    if not _PROMPT_DEBUG_SHOWN:
+        _PROMPT_DEBUG_SHOWN = True
+        print("\n====== LLM PROMPT (one-time) ======\n")
+        print(prompt)
+        print("\n====== END PROMPT ======\n")
+        sys.stdout.flush()
 
     raw = llama_completion(
         prompt,
@@ -629,9 +690,9 @@ def match_item_to_tree(
         temperature=temperature,
         top_k=0,
         top_p=1.0,
-        min_p=0,
+        min_p=0.0,
         n_predict=max(n_predict, 64),
-        grammar=grammar,  # constrained; no newline stop
+        grammar=grammar,
         cache_prompt=cache_prompt,
         n_keep=n_keep,
         slot_id=slot_id,
@@ -665,30 +726,30 @@ def match_item_to_tree(
         p = json.loads(raw)
         node_label_raw = p.get("node_label")
         rationale = p.get("rationale")
+        if node_label_raw not in allowed_labels:
+            raise ValueError("label_not_in_allowed")
     except Exception:
-        # Parse failed: pick k=1 among the same allowed labels
-        parts = [
-            _clean_text(item.get("label")),
-            _clean_text(item.get("name")),
-            _clean_text(item.get("description")),
-        ]
-        q = " | ".join(t for t in parts if t and t != "(empty)")
-        # constrained NN among allowed_labels
+        # Embedding fallback among allowed
         mask = [TAX_NAMES.index(lbl) for lbl in allowed_labels if lbl in TAX_NAMES]
         if mask:
-            q_emb = EMBEDDER.encode([q])[0]
+            item_embs = encode_item_parts(item)
             sub = TAX_EMBS[mask]
-            _, top = cosine_topk(sub, q_emb, k=1)
-            chosen = allowed_labels[int(top[0])] if top.size else None
+            best = (
+                (sub @ item_embs.T).max(axis=1)
+                if (item_embs.size and sub.size)
+                else np.array([])
+            )
+            chosen = allowed_labels[int(np.argmax(best))] if best.size else None
         else:
             chosen = None
+
         if chosen:
             return _pack(
-                pred_label_raw=None,
-                resolved_label=chosen,
-                resolved_id=NAME_TO_ID.get(chosen),
-                resolved_path=NAME_TO_PATH.get(chosen),
-                rationale="Fallback: embedding k=1 among allowed labels (parse fail).",
+                None,
+                chosen,
+                NAME_TO_ID.get(chosen),
+                NAME_TO_PATH.get(chosen),
+                "Fallback: embedding k=1 among allowed.",
                 keep_raw=True,
                 raw_text=raw,
             )
@@ -697,16 +758,18 @@ def match_item_to_tree(
             None,
             None,
             None,
-            "Parse failed; no NN fallback candidate.",
+            "Parse/validation failed; no fallback.",
             keep_raw=True,
             raw_text=raw,
         )
 
-    # Normal path: grammar forces `node_label_raw` to be in allowed_labels
-    resolved_label = node_label_raw
-    resolved_id = NAME_TO_ID.get(resolved_label)
-    resolved_path = NAME_TO_PATH.get(resolved_label)
-    return _pack(node_label_raw, resolved_label, resolved_id, resolved_path, rationale)
+    return _pack(
+        node_label_raw,
+        node_label_raw,
+        NAME_TO_ID.get(node_label_raw),
+        NAME_TO_PATH.get(node_label_raw),
+        rationale,
+    )
 
 
 # =============================================================================
@@ -892,8 +955,8 @@ def run_label_benchmark(
             top_k_nodes=top_k_nodes,
             desc_max_depth=desc_max_depth,
             max_total_nodes=max_total_nodes,
+            gloss_map=GLOSS_MAP,
         )
-
         try:
             pred = match_item_to_tree(
                 item,
