@@ -162,9 +162,6 @@ def _render_tree_markdown(
     return tree_md, None
 
 
-# --- Refactored main ---------------------------------------------------------
-
-
 def pruned_tree_markdown_for_item(
     item: Dict[str, Optional[str]],
     *,
@@ -274,8 +271,6 @@ def _parse_llm_json(raw: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 # ---- helpers: embeddings / ANN fallback -------------------------------------
-
-
 def _encode_item_parts_local(
     item: Dict[str, Optional[str]],
     embedder: "Embedder",
@@ -293,7 +288,7 @@ def _encode_item_parts_local(
             fields.append(str(s)[:256])
     if not fields:
         return np.zeros((0, 768), dtype=np.float32)
-    embs = embedder.encode(fields)  # already L2-normalized by our embedder
+    embs = embedder.encode(fields)  # expected L2-normalized by embedder
     return embs.astype(np.float32, copy=False)
 
 
@@ -326,6 +321,83 @@ def _exact_maxpool_within(
     return int(np.argmax(best)) if best.size else None
 
 
+def _hnsw_top_match_for_query_vec(
+    q_vec: np.ndarray,
+    *,
+    allowed_idx_map: Dict[int, str],
+    tax_embs: np.ndarray,
+    hnsw_index,
+    fanout_k: int,
+) -> Optional[str]:
+    """
+    Single-vector ANN search with HNSW, then restrict to allowed indices and pick the best by cosine sim.
+    Falls back to exact within-allowed if ANN result doesn't intersect allowed.
+    """
+    if q_vec.size == 0 or not allowed_idx_map:
+        return None
+
+    N = tax_embs.shape[0]
+    Kq = min(max(64, fanout_k), N)
+
+    # HNSW returns cosine *distance* (1 - sim); convert back to similarity.
+    labels, dists = hnsw_index.knn_query(q_vec[np.newaxis, :].astype(np.float32), k=Kq)
+    labels, dists = labels[0], dists[0]
+
+    # Keep only allowed; pick the best by highest similarity.
+    best_label = None
+    best_sim = -1.0
+    for idx, dist in zip(labels, dists):
+        if idx in allowed_idx_map:
+            sim = 1.0 - float(dist)
+            if sim > best_sim:
+                best_sim = sim
+                best_label = allowed_idx_map[idx]
+
+    if best_label is not None:
+        return best_label
+
+    # No overlap in ANN results — do exact within allowed.
+    mask = list(allowed_idx_map.keys())
+    sub = tax_embs[mask]  # (K,D)
+    j = _exact_maxpool_within(q_vec[np.newaxis, :], sub)  # treat as 1-part item
+    return allowed_idx_map[mask[j]] if j is not None else None
+
+
+def _map_freeform_label_to_allowed(
+    pred_text: Optional[str],
+    *,
+    allowed_labels: List[str],
+    tax_names: List[str],
+    tax_embs: np.ndarray,
+    embedder: "Embedder",
+    hnsw_index,
+) -> Optional[str]:
+    """
+    Embed the freeform LLM label string and map it to the nearest allowed taxonomy node.
+    """
+    if not isinstance(pred_text, str) or not pred_text.strip() or not allowed_labels:
+        return None
+
+    # Encode the single text (already L2-normalized by embedder).
+    q = embedder.encode([pred_text.strip()])  # (1,D)
+    if q.size == 0:
+        return None
+    q = q.astype(np.float32, copy=False)[0]
+
+    allowed_idx_map = _build_allowed_index_map(allowed_labels, tax_names)
+    if not allowed_idx_map:
+        return None
+
+    fanout = max(256, 4 * len(allowed_idx_map))
+    return _hnsw_top_match_for_query_vec(
+        q,
+        allowed_idx_map=allowed_idx_map,
+        tax_embs=tax_embs,
+        hnsw_index=hnsw_index,
+        fanout_k=fanout,
+    )
+
+
 def _hnsw_fallback_choose_label(
     item: Dict[str, Optional[str]],
     *,
@@ -344,8 +416,8 @@ def _hnsw_fallback_choose_label(
     if not allowed_labels:
         return None
 
-    # Encode parts
-    item_embs = _encode_item_parts_local(item, embedder)
+    # Encode item parts
+    item_embs = _encode_item_parts_local(item, embedder)  # (m,D)
     if item_embs.size == 0:
         return None
 
@@ -353,26 +425,33 @@ def _hnsw_fallback_choose_label(
     N = len(tax_names)
     Kq = min(max(256, 4 * len(allowed_labels)), N)
 
-    # HNSW scores for all retrieved nodes
-    scores = maxpool_scores(item_embs, index=hnsw_index, pool_k=Kq)
-
-    # Keep only allowed
+    # Aggregate max similarity per retrieved node (over all parts).
     allowed_idx_map = _build_allowed_index_map(allowed_labels, tax_names)
-    filtered = [(idx, sc) for idx, sc in scores.items() if idx in allowed_idx_map]
+    if not allowed_idx_map:
+        return None
 
-    if filtered:
-        best_idx = max(filtered, key=lambda kv: kv[1])[0]
+    scores: Dict[int, float] = {}
+    for q in item_embs:
+        labels, dists = hnsw_index.knn_query(q[np.newaxis, :].astype(np.float32), k=Kq)
+        labels, dists = labels[0], dists[0]
+        sims = 1.0 - dists.astype(np.float32)
+        for idx, sim in zip(labels, sims):
+            # Keep only allowed nodes; max-pool across parts
+            if idx in allowed_idx_map:
+                if sim > scores.get(idx, -1.0):
+                    scores[idx] = float(sim)
+
+    if scores:
+        best_idx = max(scores.items(), key=lambda kv: kv[1])[0]
         return allowed_idx_map[best_idx]
 
     # Final exact max-pool within allowed subset
-    if allowed_idx_map:
-        mask = list(allowed_idx_map.keys())
-        sub = tax_embs[mask]
-        j = _exact_maxpool_within(item_embs, sub)
-        if j is not None:
-            return allowed_idx_map[mask[j]]
-
-    return None
+    mask = list(allowed_idx_map.keys())
+    if not mask:
+        return None
+    sub = tax_embs[mask]
+    j = _exact_maxpool_within(item_embs, sub)
+    return allowed_idx_map[mask[j]] if j is not None else None
 
 
 def match_item_to_tree(
@@ -396,14 +475,13 @@ def match_item_to_tree(
     grammar: str = GRAMMAR_RESPONSE,
 ) -> Dict[str, Any]:
     """
-    LLM-first matching; on parse/validation failure, fall back to HNSW + exact max-pool
-    restricted to `allowed_labels`. Returns a flat dict (no _pack helpers).
+    LLM-first matching; if the label isn't an exact taxonomy match, embed the LLM text and
+    map to the nearest allowed node (ANN→exact). If that still fails, fall back to item-based ANN.
+    Returns a flat dict.
     """
     prompt = make_tree_match_prompt(tree_markdown, item)
-
     _print_prompt_once(prompt)
 
-    # Direct llama.cpp call (no _call_llm helper)
     raw = llama_completion(
         prompt,
         endpoint,
@@ -419,64 +497,82 @@ def match_item_to_tree(
         slot_id=slot_id,
     )
 
-    # Try to parse JSON and validate
+    # Try to parse JSON and validate; keep the freeform label for fuzzy mapping.
     node_label_raw: Optional[str] = None
     rationale: Optional[str] = None
-    parse_ok = False
     try:
         payload = json.loads(raw)
         node_label_raw = payload.get("node_label")
         rationale = payload.get("rationale")
-        if isinstance(node_label_raw, str) and node_label_raw in allowed_labels:
-            parse_ok = True
-        else:
-            raise ValueError("label_not_in_allowed")
     except Exception:
-        parse_ok = False
+        node_label_raw = None  # keep as None; we'll fall back
 
-    if not parse_ok:
-        # HNSW-backed fallback restricted to allowed labels
-        chosen = _hnsw_fallback_choose_label(
-            item,
-            allowed_labels=allowed_labels,
-            tax_names=tax_names,
-            tax_embs=tax_embs,
-            embedder=embedder,
-            hnsw_index=hnsw_index,
-        )
-        if chosen:
-            return {
-                "input_item": item,
-                "pred_label_raw": None,
-                "resolved_label": chosen,
-                "resolved_id": name_to_id.get(chosen),
-                "resolved_path": name_to_path.get(chosen),
-                "rationale": "Fallback: HNSW + max-pool among allowed.",
-                "matched": True,
-                "no_match": False,
-                "raw": raw,  # keep original text for debugging
-            }
-        # Nothing matched
+    # Path A: exact allowed hit
+    if isinstance(node_label_raw, str) and node_label_raw in allowed_labels:
         return {
             "input_item": item,
-            "pred_label_raw": None,
-            "resolved_label": None,
-            "resolved_id": None,
-            "resolved_path": None,
-            "rationale": "Parse/validation failed; no fallback.",
-            "matched": False,
-            "no_match": True,
+            "pred_label_raw": node_label_raw,
+            "resolved_label": node_label_raw,
+            "resolved_id": name_to_id.get(node_label_raw),
+            "resolved_path": name_to_path.get(node_label_raw),
+            "rationale": rationale if isinstance(rationale, str) else "",
+            "matched": True,
+            "no_match": False,
+        }
+
+    # Path B: fuzzy-map the LLM freeform label into the allowed set
+    mapped = _map_freeform_label_to_allowed(
+        node_label_raw,
+        allowed_labels=allowed_labels,
+        tax_names=tax_names,
+        tax_embs=tax_embs,
+        embedder=embedder,
+        hnsw_index=hnsw_index,
+    )
+    if mapped:
+        return {
+            "input_item": item,
+            "pred_label_raw": node_label_raw,  # keep what LLM said
+            "resolved_label": mapped,
+            "resolved_id": name_to_id.get(mapped),
+            "resolved_path": name_to_path.get(mapped),
+            "rationale": "Mapped LLM text to nearest allowed node (ANN).",
+            "matched": True,
+            "no_match": False,
             "raw": raw,
         }
 
-    # Success path via LLM
+    # Path C: item-based ANN fallback within allowed
+    chosen = _hnsw_fallback_choose_label(
+        item,
+        allowed_labels=allowed_labels,
+        tax_names=tax_names,
+        tax_embs=tax_embs,
+        embedder=embedder,
+        hnsw_index=hnsw_index,
+    )
+    if chosen:
+        return {
+            "input_item": item,
+            "pred_label_raw": node_label_raw,
+            "resolved_label": chosen,
+            "resolved_id": name_to_id.get(chosen),
+            "resolved_path": name_to_path.get(chosen),
+            "rationale": "Fallback: HNSW + max-pool among allowed.",
+            "matched": True,
+            "no_match": False,
+            "raw": raw,
+        }
+
+    # Path D: no match
     return {
         "input_item": item,
         "pred_label_raw": node_label_raw,
-        "resolved_label": node_label_raw,
-        "resolved_id": name_to_id.get(node_label_raw),
-        "resolved_path": name_to_path.get(node_label_raw),
-        "rationale": rationale if isinstance(rationale, str) else "",
-        "matched": True,
-        "no_match": False,
+        "resolved_label": None,
+        "resolved_id": None,
+        "resolved_path": None,
+        "rationale": "Parse/validation failed; no ANN/exact fallback matched.",
+        "matched": False,
+        "no_match": True,
+        "raw": raw,
     }

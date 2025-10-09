@@ -85,13 +85,14 @@ def make_tree_match_prompt(
 
         ## TASK
         • From the TREE, choose **exactly one** label that best matches the ITEM.
-        • Labels may include a short summary after an em dash (—).
+        • Labels may include a short summary.
           Those summaries are guidance only; **output must be the exact label text (no summary)**.
         • If uncertain between close options, **prefer the closest correct parent** over a sibling.
         • Do **not** invent new labels; choose from the TREE only.
+        • Candidates were preselected based on similarity to ITEM, they are not exhaustive (the Taxonomy is).
 
         The TREE is a nested (indented) Markdown list. Each bullet is:
-        - <label> — <short summary>
+        - <label> (<optional short summary>)
 
         ## OUTPUT (single-line JSON)
         {{"node_label":"...","rationale":"(≤ 20 words)"}}
