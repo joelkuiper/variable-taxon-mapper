@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from embedding import (
-    SapBERTEmbedder,
+    Embedder,
     build_hnsw_index,
     build_taxonomy_embeddings_composed,
 )
@@ -23,7 +23,7 @@ G = build_taxonomy_graph(
 )
 NAME_TO_ID, NAME_TO_PATH = build_name_maps_from_graph(G)
 
-EMBEDDER = SapBERTEmbedder(
+EMBEDDER = Embedder(
     model_name="cambridgeltl/SapBERT-from-PubMedBERT-fulltext",
     batch_size=128,
     fp16=True,
@@ -51,3 +51,5 @@ df, metrics = run_label_benchmark(
     n=1000,
     seed=37,
 )
+print(df[["label", "name", "description", "gold_labels", "resolved_label", "correct"]])
+print(metrics)

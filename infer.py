@@ -14,7 +14,7 @@ import networkx as nx
 import numpy as np
 import requests
 
-from embedding import SapBERTEmbedder, l2_normalize, maxpool_scores
+from embedding import Embedder, l2_normalize, maxpool_scores
 from llm_chat import GRAMMAR_RESPONSE, llama_completion, make_tree_match_prompt
 from taxonomy import (
     collect_descendants,
@@ -40,9 +40,7 @@ def clean_text(v) -> str:
     return s if s else "(empty)"
 
 
-def encode_item_parts(
-    item: Dict[str, Optional[str]], embedder: SapBERTEmbedder
-) -> np.ndarray:
+def encode_item_parts(item: Dict[str, Optional[str]], embedder: Embedder) -> np.ndarray:
     fields: List[str] = []
     for k in ("label", "name", "description"):
         s = clean_text(item.get(k))
@@ -189,7 +187,7 @@ def pruned_tree_markdown_for_item(
     *,
     G: nx.DiGraph,
     df: pd.DataFrame,
-    embedder: "SapBERTEmbedder",
+    embedder: "Embedder",
     tax_names: List[str],
     tax_embs_unit: np.ndarray,
     hnsw_index,
@@ -295,7 +293,7 @@ def _parse_llm_json(raw: str) -> Tuple[Optional[str], Optional[str]]:
 
 def _encode_item_parts_local(
     item: Dict[str, Optional[str]],
-    embedder: "SapBERTEmbedder",
+    embedder: "Embedder",
 ) -> np.ndarray:
     """
     Encode non-empty item parts (label/name/description) using the provided embedder.
@@ -349,7 +347,7 @@ def _hnsw_fallback_choose_label(
     allowed_labels: List[str],
     tax_names: List[str],
     tax_embs: np.ndarray,
-    embedder: "SapBERTEmbedder",
+    embedder: "Embedder",
     hnsw_index,
 ) -> Optional[str]:
     """
@@ -401,7 +399,7 @@ def match_item_to_tree(
     name_to_path: Dict[str, str],
     tax_names: List[str],
     tax_embs: np.ndarray,
-    embedder: "SapBERTEmbedder",
+    embedder: "Embedder",
     hnsw_index,
     endpoint: str = "http://127.0.0.1:8080/completions",
     temperature: float = 0.7,

@@ -16,7 +16,7 @@ def l2_normalize(a: np.ndarray, eps: float = 1e-9) -> np.ndarray:
     return a / np.maximum(n, eps)
 
 
-class SapBERTEmbedder:
+class Embedder:
     def __init__(
         self,
         model_name: str = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext",
@@ -97,8 +97,8 @@ def build_hnsw_index(
 
 def build_taxonomy_embeddings_composed(
     G,
-    embedder: SapBERTEmbedder,
-    gamma: float = 0.6,
+    embedder: Embedder,
+    gamma: float = 0.3,
 ) -> Tuple[List[str], np.ndarray]:
     names = taxonomy_node_texts(G)
     label2idx = {n: i for i, n in enumerate(names)}

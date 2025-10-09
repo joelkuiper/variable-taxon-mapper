@@ -15,7 +15,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from embedding import SapBERTEmbedder
+from embedding import Embedder
 from infer import match_item_to_tree, pruned_tree_markdown_for_item
 from taxonomy import is_ancestor_of
 
@@ -61,7 +61,7 @@ def run_label_benchmark(
     keywords: pd.DataFrame,
     *,
     G,
-    embedder: SapBERTEmbedder,
+    embedder: Embedder,
     tax_names: List[str],
     tax_embs_unit: np.ndarray,
     hnsw_index,
