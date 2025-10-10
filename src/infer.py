@@ -283,6 +283,9 @@ def pruned_tree_markdown_for_item(
     desc_max_depth: int = 3,
     max_total_nodes: int = 1200,
     gloss_map: Optional[Dict[str, str]] = None,
+    anchor_overfetch_mult: int = 3,
+    anchor_min_overfetch: int = 128,
+    candidate_list_max_items: int = 40,
 ) -> Tuple[str, List[str]]:
     """
     Build a pruned TREE (markdown) and an ordered candidate list for the ITEM.
@@ -301,8 +304,8 @@ def pruned_tree_markdown_for_item(
             hnsw_index,
             N=len(tax_names),
             top_k_nodes=top_k_nodes,
-            overfetch_mult=3,
-            min_overfetch=128,
+            overfetch_mult=max(1, int(anchor_overfetch_mult)),
+            min_overfetch=max(1, int(anchor_min_overfetch)),
         )
     anchors = [tax_names[i] for i in anchor_idxs]
 
@@ -330,7 +333,8 @@ def pruned_tree_markdown_for_item(
         allowed_ranked = fallback_ranked
 
     # 6) Compose concise "Candidates" + full "Taxonomy" markdown
-    top_show = min(40, len(allowed_ranked))
+    max_items = int(candidate_list_max_items)
+    top_show = len(allowed_ranked) if max_items <= 0 else min(max_items, len(allowed_ranked))
     md_lines: List[str] = ["### Candidates \n"]
     for lbl in allowed_ranked[:top_show]:
         md_lines.append(
@@ -506,6 +510,8 @@ def _map_freeform_label_to_allowed(
     tax_embs: np.ndarray,
     embedder: "Embedder",
     hnsw_index,
+    fanout_min: int = 256,
+    fanout_multiplier: int = 4,
 ) -> Optional[str]:
     """
     Embed the freeform LLM label string and map it to the nearest allowed taxonomy node.
@@ -529,7 +535,8 @@ def _map_freeform_label_to_allowed(
     if not allowed_idx_map:
         return None
 
-    fanout = max(256, 4 * len(allowed_idx_map))
+    multiplier = max(1, int(fanout_multiplier))
+    fanout = max(int(fanout_min), multiplier * max(1, len(allowed_idx_map)))
     return _hnsw_top_match_for_query_vec(
         q,
         allowed_idx_map=allowed_idx_map,
@@ -547,6 +554,8 @@ def _hnsw_fallback_choose_label(
     tax_embs: np.ndarray,
     embedder: "Embedder",
     hnsw_index,
+    fanout_min: int = 256,
+    fanout_multiplier: int = 4,
 ) -> Optional[str]:
     """
     ANN-backed fallback restricted to allowed labels:
@@ -564,7 +573,8 @@ def _hnsw_fallback_choose_label(
 
     # Determine query fanout
     N = len(tax_names)
-    Kq = min(max(256, 4 * len(allowed_labels)), N)
+    multiplier = max(1, int(fanout_multiplier))
+    Kq = min(max(int(fanout_min), multiplier * max(1, len(allowed_labels))), N)
 
     # Aggregate max similarity per retrieved node (over all parts).
     allowed_idx_map = _build_allowed_index_map(allowed_labels, tax_names)
@@ -615,7 +625,14 @@ async def match_item_to_tree(
     cache_prompt: bool = True,
     n_keep: int = -1,
     session: Optional[aiohttp.ClientSession] = None,
-    grammar: str = GRAMMAR_RESPONSE,
+    top_k: int = 20,
+    top_p: float = 0.8,
+    min_p: float = 0.0,
+    grammar: Optional[str] = None,
+    freeform_fanout_min: int = 256,
+    freeform_fanout_multiplier: int = 4,
+    fallback_fanout_min: int = 256,
+    fallback_fanout_multiplier: int = 4,
 ) -> Dict[str, Any]:
     """
     LLM-first matching; if the label isn't an exact taxonomy match, embed the LLM text and
@@ -629,11 +646,11 @@ async def match_item_to_tree(
         prompt,
         endpoint,
         temperature=temperature,
-        top_k=20,
-        top_p=0.8,
-        min_p=0.0,
+        top_k=top_k,
+        top_p=top_p,
+        min_p=min_p,
         n_predict=max(n_predict, 64),
-        grammar=grammar,
+        grammar=grammar if grammar is not None else GRAMMAR_RESPONSE,
         cache_prompt=cache_prompt,
         n_keep=n_keep,
         slot_id=slot_id,
@@ -672,6 +689,8 @@ async def match_item_to_tree(
         tax_embs=tax_embs,
         embedder=embedder,
         hnsw_index=hnsw_index,
+        fanout_min=freeform_fanout_min,
+        fanout_multiplier=freeform_fanout_multiplier,
     )
     if mapped:
         return {
@@ -693,6 +712,8 @@ async def match_item_to_tree(
         tax_embs=tax_embs,
         embedder=embedder,
         hnsw_index=hnsw_index,
+        fanout_min=fallback_fanout_min,
+        fanout_multiplier=fallback_fanout_multiplier,
     )
     if chosen:
         return {

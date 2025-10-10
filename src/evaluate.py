@@ -6,11 +6,13 @@ import asyncio
 import random
 import sys
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Mapping, Optional, Set
 
 import aiohttp
 import numpy as np
 import pandas as pd
+
+from config import EvaluationConfig
 
 from .embedding import Embedder
 from .infer import match_item_to_tree, pruned_tree_markdown_for_item
@@ -53,6 +55,20 @@ def is_correct_prediction(
     return False
 
 
+def _coerce_eval_config(
+    config: EvaluationConfig | Mapping[str, Any] | None,
+) -> EvaluationConfig:
+    if config is None:
+        return EvaluationConfig()
+    if isinstance(config, EvaluationConfig):
+        return config
+    if isinstance(config, Mapping):
+        return EvaluationConfig(**config)
+    raise TypeError(
+        "eval_config must be an EvaluationConfig or a mapping of keyword arguments"
+    )
+
+
 def run_label_benchmark(
     variables: pd.DataFrame,
     keywords: pd.DataFrame,
@@ -65,19 +81,11 @@ def run_label_benchmark(
     name_to_id: Dict[str, str],
     name_to_path: Dict[str, str],
     gloss_map: Dict[str, str],
-    endpoint: str = "http://127.0.0.1:8080/completions",
-    n: int = 50,
-    seed: int = 0,
-    n_predict: int = 256,
-    temperature: float = 0.0,
-    dedupe_on: Optional[List[str]] = None,
-    top_k_nodes: int = 32,
-    desc_max_depth: int = 3,
-    max_total_nodes: int = 800,
-    max_workers: int = 4,
-    num_slots: int = 4,
-    pool_maxsize: int = 64,
+    eval_config: EvaluationConfig | Mapping[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    cfg = _coerce_eval_config(eval_config)
+
+    dedupe_on = [c for c in (cfg.dedupe_on or []) if c]
     if "keywords" not in variables.columns:
         raise KeyError("variables must have a 'keywords' column")
 
@@ -108,18 +116,18 @@ def run_label_benchmark(
         )
 
     eligible_idxs = list(work_df.index[eligible_mask])
-    rnd = random.Random(seed)
+    rnd = random.Random(cfg.seed)
     rnd.shuffle(eligible_idxs)
-    idxs = eligible_idxs[: min(n, len(eligible_idxs))]
+    idxs = eligible_idxs[: min(cfg.n, len(eligible_idxs))]
 
     async def _evaluate_all() -> List[Dict[str, Any]]:
         timeout_cfg = aiohttp.ClientTimeout(
             total=None,
-            sock_connect=10,
-            sock_read=max(30.0, float(n_predict)),
+            sock_connect=float(cfg.http_sock_connect),
+            sock_read=max(float(cfg.http_sock_read_floor), float(cfg.n_predict)),
         )
         connector = aiohttp.TCPConnector(
-            limit=max(1, pool_maxsize), limit_per_host=max(1, pool_maxsize)
+            limit=max(1, cfg.pool_maxsize), limit_per_host=max(1, cfg.pool_maxsize)
         )
 
         rows: List[Dict[str, Any]] = []
@@ -142,7 +150,7 @@ def run_label_benchmark(
                     "description": r.get("description"),
                 }
 
-                slot_id = j % max(1, num_slots)
+                slot_id = j % max(1, cfg.num_slots)
 
                 tree_markdown, allowed_labels = pruned_tree_markdown_for_item(
                     item,
@@ -154,11 +162,18 @@ def run_label_benchmark(
                     hnsw_index=hnsw_index,
                     name_col="name",
                     order_col="order",
-                    top_k_nodes=top_k_nodes,
-                    desc_max_depth=desc_max_depth,
-                    max_total_nodes=max_total_nodes,
+                    top_k_nodes=cfg.top_k_nodes,
+                    desc_max_depth=cfg.desc_max_depth,
+                    max_total_nodes=cfg.max_total_nodes,
                     gloss_map=gloss_map,
+                    anchor_overfetch_mult=cfg.anchor_overfetch_mult,
+                    anchor_min_overfetch=cfg.anchor_min_overfetch,
+                    candidate_list_max_items=cfg.candidate_list_max_items,
                 )
+
+                match_kwargs = {}
+                if cfg.llm_grammar is not None:
+                    match_kwargs["grammar"] = cfg.llm_grammar
 
                 pred = await match_item_to_tree(
                     item,
@@ -170,13 +185,21 @@ def run_label_benchmark(
                     tax_embs=tax_embs_unit,
                     embedder=embedder,
                     hnsw_index=hnsw_index,
-                    endpoint=endpoint,
-                    n_predict=n_predict,
-                    temperature=temperature,
+                    endpoint=cfg.endpoint,
+                    n_predict=cfg.n_predict,
+                    temperature=cfg.temperature,
                     slot_id=slot_id,
-                    cache_prompt=True,
-                    n_keep=-1,
+                    cache_prompt=cfg.llm_cache_prompt,
+                    n_keep=cfg.llm_n_keep,
+                    top_k=cfg.llm_top_k,
+                    top_p=cfg.llm_top_p,
+                    min_p=cfg.llm_min_p,
+                    freeform_fanout_min=cfg.freeform_fanout_min,
+                    freeform_fanout_multiplier=cfg.freeform_fanout_multiplier,
+                    fallback_fanout_min=cfg.fallback_fanout_min,
+                    fallback_fanout_multiplier=cfg.fallback_fanout_multiplier,
                     session=session,
+                    **match_kwargs,
                 )
 
                 resolved_label = pred.get("resolved_label")
@@ -205,7 +228,8 @@ def run_label_benchmark(
                 correct_sum += 1 if out.get("correct") else 0
 
                 done = len(rows)
-                if done % 10 == 0 or done == total:
+                interval = max(1, int(cfg.progress_log_interval))
+                if done % interval == 0 or done == total:
                     elapsed = max(time.time() - start, 1e-6)
                     rps = done / elapsed if elapsed > 0 else 0.0
                     acc = (correct_sum / done) if done else 0.0
@@ -248,13 +272,13 @@ def run_label_benchmark(
         "n_excluded_not_in_taxonomy": int(n_excluded_not_in_taxonomy),
         "n_evaluated": int(len(df)),
         "label_accuracy_any_match": float(df["correct"].mean()) if len(df) else 0.0,
-        "dedupe_on": dedupe_on or [],
-        "max_workers": int(max_workers),
-        "num_slots": int(num_slots),
-        "pool_maxsize": int(pool_maxsize),
-        "n_predict": int(n_predict),
-        "temperature": float(temperature),
-        "endpoint": endpoint,
+        "dedupe_on": dedupe_on,
+        "max_workers": int(cfg.max_workers),
+        "num_slots": int(cfg.num_slots),
+        "pool_maxsize": int(cfg.pool_maxsize),
+        "n_predict": int(cfg.n_predict),
+        "temperature": float(cfg.temperature),
+        "endpoint": cfg.endpoint,
         "n_errors": int(df["_error"].notna().sum()) if "_error" in df.columns else 0,
     }
 
