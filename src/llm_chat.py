@@ -20,8 +20,7 @@ string ::=
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
   )+ quote
 
-obj ::= ("{" quote "node_label" quote ": " string ","
-             quote "rationale" quote ": " string "}")
+obj ::= ("{" quote "node_label" quote ": " string "}")
 """
 
 
@@ -141,7 +140,7 @@ def make_tree_match_prompt(
         - <label> (<optional short summary>)
 
         ## OUTPUT (single-line JSON)
-        {{"node_label":"...","rationale":"(≤ 20 words)"}}
+        {{"node_label":"..."}}
 
         {role_prefix}user{role_suffix}
         ## TREE

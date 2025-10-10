@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -254,24 +255,6 @@ def _print_prompt_once(prompt: str) -> None:
         sys.stdout.flush()
 
 
-def _parse_llm_json(raw: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Parse {"node_label": "...", "rationale": "..."} from model output.
-    Raise ValueError on structure/validation issues.
-    """
-    try:
-        p = json.loads(raw)
-        node_label_raw = p.get("node_label")
-        rationale = p.get("rationale")
-        if not isinstance(node_label_raw, str) or not node_label_raw.strip():
-            raise ValueError("missing_node_label")
-        if not isinstance(rationale, str):
-            rationale = ""
-        return node_label_raw, rationale
-    except Exception as e:
-        raise ValueError(f"parse_failed: {e}")
-
-
 # ---- helpers: embeddings / ANN fallback -------------------------------------
 def _encode_item_parts_local(
     item: Dict[str, Optional[str]],
@@ -365,6 +348,51 @@ def _hnsw_top_match_for_query_vec(
     return allowed_idx_map[mask[j]] if j is not None else None
 
 
+def _canonicalize_label_text(
+    pred_text: Optional[str], *, allowed_labels: List[str]
+) -> Tuple[Optional[str], Optional[str]]:
+    """Normalize the raw LLM text and case-fold into the allowed label set.
+
+    Returns a tuple of (normalized_text, resolved_allowed_label). The normalized text
+    trims whitespace, strips surrounding quotes, removes trailing parenthetical
+    summaries (``(...)``), and leaves the text ready for downstream embedding. If the
+    normalized text matches an allowed label ignoring case, the second element will be
+    that label with the original allowed casing; otherwise it is ``None``.
+    """
+
+    if not isinstance(pred_text, str):
+        return None, None
+
+    normalized = pred_text.strip()
+    if not normalized:
+        return None, None
+
+    # Drop trailing parenthetical summaries (possibly nested, e.g., ``Label (foo)``).
+    while True:
+        trimmed = re.sub(r"\s*\([^()]*\)\s*$", "", normalized)
+        if trimmed == normalized:
+            break
+        normalized = trimmed.strip()
+        if not normalized:
+            return None, None
+
+    # Remove surrounding matching quotes.
+    quotes = {"'", '"'}
+    while (
+        len(normalized) >= 2
+        and normalized[0] == normalized[-1]
+        and normalized[0] in quotes
+    ):
+        normalized = normalized[1:-1].strip()
+        if not normalized:
+            return None, None
+
+    allowed_lookup = {label.lower(): label for label in allowed_labels}
+    resolved = allowed_lookup.get(normalized.lower()) if normalized else None
+
+    return normalized if normalized else None, resolved
+
+
 def _map_freeform_label_to_allowed(
     pred_text: Optional[str],
     *,
@@ -377,11 +405,17 @@ def _map_freeform_label_to_allowed(
     """
     Embed the freeform LLM label string and map it to the nearest allowed taxonomy node.
     """
-    if not isinstance(pred_text, str) or not pred_text.strip() or not allowed_labels:
+    normalized, resolved = _canonicalize_label_text(
+        pred_text, allowed_labels=allowed_labels
+    )
+    if resolved:
+        return resolved
+
+    if not normalized or not allowed_labels:
         return None
 
     # Encode the single text (already L2-normalized by embedder).
-    q = embedder.encode([pred_text.strip()])  # (1,D)
+    q = embedder.encode([normalized])  # (1,D)
     if q.size == 0:
         return None
     q = q.astype(np.float32, copy=False)[0]
@@ -501,23 +535,24 @@ async def match_item_to_tree(
 
     # Try to parse JSON and validate; keep the freeform label for fuzzy mapping.
     node_label_raw: Optional[str] = None
-    rationale: Optional[str] = None
     try:
         payload = json.loads(raw)
         node_label_raw = payload.get("node_label")
-        rationale = payload.get("rationale")
     except Exception:
         node_label_raw = None  # keep as None; we'll fall back
 
+    _, canonical_label = _canonicalize_label_text(
+        node_label_raw, allowed_labels=allowed_labels
+    )
+
     # Path A: exact allowed hit
-    if isinstance(node_label_raw, str) and node_label_raw in allowed_labels:
+    if canonical_label:
         return {
             "input_item": item,
             "pred_label_raw": node_label_raw,
-            "resolved_label": node_label_raw,
-            "resolved_id": name_to_id.get(node_label_raw),
-            "resolved_path": name_to_path.get(node_label_raw),
-            "rationale": rationale if isinstance(rationale, str) else "",
+            "resolved_label": canonical_label,
+            "resolved_id": name_to_id.get(canonical_label),
+            "resolved_path": name_to_path.get(canonical_label),
             "matched": True,
             "no_match": False,
         }
@@ -538,7 +573,6 @@ async def match_item_to_tree(
             "resolved_label": mapped,
             "resolved_id": name_to_id.get(mapped),
             "resolved_path": name_to_path.get(mapped),
-            "rationale": "Mapped LLM text to nearest allowed node (ANN).",
             "matched": True,
             "no_match": False,
             "raw": raw,
@@ -560,7 +594,6 @@ async def match_item_to_tree(
             "resolved_label": chosen,
             "resolved_id": name_to_id.get(chosen),
             "resolved_path": name_to_path.get(chosen),
-            "rationale": "Fallback: HNSW + max-pool among allowed.",
             "matched": True,
             "no_match": False,
             "raw": raw,
@@ -573,7 +606,6 @@ async def match_item_to_tree(
         "resolved_label": None,
         "resolved_id": None,
         "resolved_path": None,
-        "rationale": "Parse/validation failed; no ANN/exact fallback matched.",
         "matched": False,
         "no_match": True,
         "raw": raw,
