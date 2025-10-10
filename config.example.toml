@@ -10,8 +10,8 @@ fp16 = true
 mean_pool = true
 
 [taxonomy_embeddings]
-gamma = 0.3
-summary_weight = 0.25
+gamma = 0.125
+summary_weight = 0.33
 
 [hnsw]
 space = "cosine"
