@@ -153,6 +153,24 @@ def _expand_allowed_nodes(
         for n in new_ancestors:
             allowed.add(n)
 
+        # This somehow tanks performance, and I have no idea why.
+        # sibling_candidates: List[str] = []
+        # for parent in G.predecessors(anchor):
+        #     if parent not in allowed:
+        #         # If the parent was not admitted (due to capacity), its children
+        #         # should remain inaccessible just like deeper descendants.
+        #         continue
+        #     for child in G.successors(parent):
+        #         if child == anchor or child in allowed:
+        #             continue
+        #         if child not in sibling_candidates:
+        #             sibling_candidates.append(child)
+
+        # for sibling in sibling_candidates:
+        #     if len(allowed) >= max_total_nodes:
+        #         break
+        #     allowed.add(sibling)
+
         descendants_order = _descendant_order(anchor)
         has_descendants = bool(descendants_order)
 
