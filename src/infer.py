@@ -6,6 +6,7 @@ import json
 import math
 import re
 import sys
+from collections import deque
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import aiohttp
@@ -20,7 +21,6 @@ from .llm_chat import (
     make_tree_match_prompt,
 )
 from .taxonomy import (
-    collect_descendants,
     make_label_display,
     sort_key_factory,
     ancestors_to_root,
@@ -78,6 +78,8 @@ def _hnsw_anchor_indices(
         labels, dists = labels[0], dists[0]
         sims = 1.0 - dists.astype(np.float32)  # cosine dist -> sim
         for idx, sim in zip(labels, sims):
+            if idx < 0:
+                continue
             if sim > scores[idx]:
                 scores[idx] = sim
 
@@ -95,20 +97,94 @@ def _expand_allowed_nodes(
     desc_max_depth: int,
     max_total_nodes: int,
 ) -> Set[str]:
+    """Assemble an allowed-node set while respecting a hard cap.
+
+    Nodes are added by iterating anchors in order and including their ancestor
+    paths plus a down-sampled selection of descendants. Descendants are added in
+    breadth-first order up to ``desc_max_depth`` while ensuring that at least
+    one descendant survives for each retained anchor (when any exist) without
+    exceeding ``max_total_nodes``.
     """
-    Allowed set = anchors + their ancestors + descendants (up to depth),
-    with a size cap that keeps ancestors of a core subset if needed.
-    """
+
+    def _descendant_order(node: str) -> List[str]:
+        if desc_max_depth <= 0:
+            return []
+        order: List[str] = []
+        seen: Set[str] = {node}
+        queue: deque[Tuple[str, int]] = deque([(node, 0)])
+        while queue:
+            cur, depth = queue.popleft()
+            if depth >= desc_max_depth:
+                continue
+            for child in G.successors(cur):
+                if child in seen:
+                    continue
+                seen.add(child)
+                order.append(child)
+                queue.append((child, depth + 1))
+        return order
+
     allowed: Set[str] = set()
-    for a in anchors:
-        for n in ancestors_to_root(G, a):
-            allowed.add(n)
-        for n in collect_descendants(G, a, max_depth=desc_max_depth):
+    if max_total_nodes <= 0:
+        return allowed
+
+    total_anchors = len(anchors)
+
+    for idx, anchor in enumerate(anchors):
+        if len(allowed) >= max_total_nodes:
+            break
+
+        ancestors = ancestors_to_root(G, anchor)
+        new_ancestors = [n for n in ancestors if n not in allowed]
+
+        if len(allowed) + len(new_ancestors) > max_total_nodes:
+            # Cannot fit this anchor and its ancestors; skip it entirely.
+            continue
+
+        for n in new_ancestors:
             allowed.add(n)
 
-    if len(allowed) > max_total_nodes:
-        core = set(anchors[: max_total_nodes // 4])
-        allowed = core | {n for a in core for n in ancestors_to_root(G, a)}
+        descendants_order = _descendant_order(anchor)
+        has_descendants = bool(descendants_order)
+
+        if not has_descendants:
+            continue
+
+        remaining_capacity = max_total_nodes - len(allowed)
+        if remaining_capacity <= 0:
+            # Roll back the ancestors we just added and skip this anchor so we
+            # don't violate the descendant guarantee.
+            for n in new_ancestors:
+                allowed.remove(n)
+            continue
+
+        remaining_anchors = max(total_anchors - (idx + 1), 0)
+        if remaining_anchors > 0:
+            per_anchor_base = remaining_capacity // (remaining_anchors + 1)
+            extra = remaining_capacity % (remaining_anchors + 1)
+            desc_budget = per_anchor_base + (1 if extra > 0 else 0)
+        else:
+            desc_budget = remaining_capacity
+        desc_budget = max(1, min(desc_budget, remaining_capacity))
+
+        added_descendants: Set[str] = set()
+        for node in descendants_order:
+            if len(allowed) >= max_total_nodes or len(added_descendants) >= desc_budget:
+                break
+            if node in allowed:
+                continue
+            if not any(pred in allowed for pred in G.predecessors(node)):
+                continue
+            allowed.add(node)
+            added_descendants.add(node)
+
+        if not added_descendants:
+            # No descendant could be added; undo new nodes for this anchor.
+            for node in added_descendants:
+                allowed.remove(node)
+            for node in new_ancestors:
+                allowed.remove(node)
+
     return allowed
 
 
@@ -332,6 +408,8 @@ def _hnsw_top_match_for_query_vec(
     best_label = None
     best_sim = -1.0
     for idx, dist in zip(labels, dists):
+        if idx < 0:
+            continue
         if idx in allowed_idx_map:
             sim = 1.0 - float(dist)
             if sim > best_sim:
@@ -472,6 +550,8 @@ def _hnsw_fallback_choose_label(
         labels, dists = labels[0], dists[0]
         sims = 1.0 - dists.astype(np.float32)
         for idx, sim in zip(labels, sims):
+            if idx < 0:
+                continue
             # Keep only allowed nodes; max-pool across parts
             if idx in allowed_idx_map:
                 if sim > scores.get(idx, -1.0):
