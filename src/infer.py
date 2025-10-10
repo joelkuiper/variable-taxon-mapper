@@ -334,15 +334,19 @@ def pruned_tree_markdown_for_item(
 
     # 6) Compose concise "Candidates" + full "Taxonomy" markdown
     max_items = int(candidate_list_max_items)
-    top_show = len(allowed_ranked) if max_items <= 0 else min(max_items, len(allowed_ranked))
-    md_lines: List[str] = ["### Candidates \n"]
+    top_show = (
+        len(allowed_ranked) if max_items <= 0 else min(max_items, len(allowed_ranked))
+    )
+
+    md_lines = []
+    md_lines.append("\n### TAXONOMY \n")
+    md_lines.append(tree_md)
+
+    md_lines.append("\n### SUGGESTIONS \n")
     for lbl in allowed_ranked[:top_show]:
         md_lines.append(
             f"- {make_label_display(lbl, gloss_map or {}, use_summary=False)}"
         )
-    md_lines.append("\n### Taxonomy \n")
-    md_lines.append(tree_md)
-
     return "\n".join(md_lines), allowed_ranked
 
 

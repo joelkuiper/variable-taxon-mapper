@@ -126,17 +126,13 @@ def make_tree_match_prompt(
 
     template = """\
         {role_prefix}system{role_suffix}
-        You are an expert biomedical taxonomy matcher.
-
         ## TASK
-        • From the TREE, choose **exactly one** label that best matches the ITEM.
-        • Labels may include a short summary.
+        • From the TAXONOMY or SUGGESTIONS, choose **exactly one** label that best matches the ITEM.
+        • Labels may include a short summary in parentheses.
           Those summaries are guidance only; **output must be the exact label text (no summary)**.
-        • If uncertain between close options, **prefer the closest correct parent** over a sibling.
-        • Do **not** invent new labels; choose from the TREE only.
-        • Candidates were preselected based on similarity to ITEM, they are not exhaustive (the Taxonomy is).
+        • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive (the TAXONOMY is).
 
-        The TREE is a nested (indented) Markdown list. Each bullet is:
+        The TAXONOMY in TREE is a nested (indented) Markdown list. Each bullet is:
         - <label> (<optional short summary>)
 
         ## OUTPUT (single-line JSON)
