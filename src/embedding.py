@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from taxonomy import ancestors_to_root, taxonomy_node_texts
+from .taxonomy import ancestors_to_root, taxonomy_node_texts
 
 
 def l2_normalize(a: np.ndarray, eps: float = 1e-9) -> np.ndarray:
@@ -116,26 +116,3 @@ def build_taxonomy_embeddings_composed(
 
     out = out / np.clip(np.linalg.norm(out, axis=1, keepdims=True), 1e-9, None)
     return names, out
-
-
-def maxpool_scores(
-    item_embs: np.ndarray,
-    *,
-    index,
-    pool_k: int,
-) -> Dict[int, float]:
-    """
-    Query HNSW per item part; return dict of {tax_idx: max_similarity}.
-    Assumes index space='cosine' (distance = 1 - cosine_sim).
-    """
-    scores: Dict[int, float] = {}
-    if item_embs.size == 0:
-        return scores
-    for q in item_embs:
-        labels, dists = index.knn_query(q[np.newaxis, :].astype(np.float32), k=pool_k)
-        labels, dists = labels[0], dists[0]
-        for idx, dist in zip(labels, dists):
-            sim = 1.0 - float(dist)
-            if sim > scores.get(int(idx), -1.0):
-                scores[int(idx)] = sim
-    return scores

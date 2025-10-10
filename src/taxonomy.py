@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import networkx as nx
 import pandas as pd

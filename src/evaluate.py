@@ -15,9 +15,9 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from embedding import Embedder
-from infer import match_item_to_tree, pruned_tree_markdown_for_item
-from taxonomy import is_ancestor_of
+from .embedding import Embedder
+from .infer import match_item_to_tree, pruned_tree_markdown_for_item
+from .taxonomy import is_ancestor_of
 
 
 def clean_str_or_none(v) -> Optional[str]:

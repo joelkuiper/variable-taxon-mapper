@@ -11,12 +11,11 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 
-import numpy as np
 import requests
 
-from embedding import Embedder, l2_normalize, maxpool_scores
-from llm_chat import GRAMMAR_RESPONSE, llama_completion, make_tree_match_prompt
-from taxonomy import (
+from .embedding import Embedder, l2_normalize
+from .llm_chat import GRAMMAR_RESPONSE, llama_completion, make_tree_match_prompt
+from .taxonomy import (
     collect_descendants,
     make_label_display,
     sort_key_factory,

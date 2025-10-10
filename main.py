@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import pandas as pd
 
-from embedding import (
+from src.embedding import (
     Embedder,
     build_hnsw_index,
     build_taxonomy_embeddings_composed,
 )
-from taxonomy import (
+from src.taxonomy import (
     build_gloss_map,
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
 
-from evaluate import run_label_benchmark
+from src.evaluate import run_label_benchmark
 
 variables = pd.read_csv("data/Variables.csv", low_memory=False)
 keywords = pd.read_csv("data/Keywords_summarized.csv")
