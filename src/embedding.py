@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import List, Tuple, Dict
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
 import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
+
+import pandas as pd
 
 from .taxonomy import ancestors_to_root, taxonomy_node_texts
 
@@ -95,23 +97,72 @@ def build_hnsw_index(
     return index
 
 
+def _extract_summary_map(
+    summaries: Optional[object],
+) -> Dict[str, str]:
+    if summaries is None:
+        return {}
+
+    summary_map: Dict[str, str] = {}
+
+    if isinstance(summaries, Mapping):
+        items: Iterable[Tuple[object, object]] = summaries.items()
+    elif isinstance(summaries, pd.Series):
+        items = summaries.items()
+    elif isinstance(summaries, pd.DataFrame):
+        items = summaries[["name", "definition_summary"]].itertuples(index=False, name=None)
+    else:
+        raise TypeError("summaries must be a mapping, pandas Series/DataFrame, or None")
+
+    for key, value in items:
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        name = key.strip()
+        summary = value.strip()
+        if name and summary and name not in summary_map:
+            summary_map[name] = summary
+
+    return summary_map
+
+
 def build_taxonomy_embeddings_composed(
     G,
     embedder: Embedder,
     gamma: float = 0.3,
+    *,
+    summaries: Optional[object] = None,
+    summary_weight: float = 1.0,
 ) -> Tuple[List[str], np.ndarray]:
     names = taxonomy_node_texts(G)
     label2idx = {n: i for i, n in enumerate(names)}
+
     name_vecs = embedder.encode(names)
 
-    D = name_vecs.shape[1] if name_vecs.size else 0
+    summary_map = _extract_summary_map(summaries)
+    summary_vecs = np.zeros_like(name_vecs)
+    if summary_map:
+        texts: List[str] = []
+        idxs: List[int] = []
+        for i, n in enumerate(names):
+            s = summary_map.get(n)
+            if s:
+                texts.append(s)
+                idxs.append(i)
+        if texts:
+            encoded = embedder.encode(texts)
+            for j, idx in enumerate(idxs):
+                summary_vecs[idx] = encoded[j]
+
+    composed_base = l2_normalize(name_vecs + summary_weight * summary_vecs)
+
+    D = composed_base.shape[1] if composed_base.size else 0
     out = np.zeros((len(names), D), dtype=np.float32)
     for n in names:
         idx = label2idx[n]
-        v = name_vecs[idx].copy()
+        v = composed_base[idx].copy()
         anc = ancestors_to_root(G, n)[:-1]
         for k, a in enumerate(reversed(anc), start=1):
-            v += (gamma**k) * name_vecs[label2idx[a]]
+            v += (gamma**k) * composed_base[label2idx[a]]
         out[idx] = v
 
     out = out / np.clip(np.linalg.norm(out, axis=1, keepdims=True), 1e-9, None)

@@ -30,7 +30,13 @@ EMBEDDER = Embedder(
     max_length=256,
 )
 
-TAX_NAMES, TAX_EMBS = build_taxonomy_embeddings_composed(G, EMBEDDER, gamma=0.6)
+TAX_NAMES, TAX_EMBS = build_taxonomy_embeddings_composed(
+    G,
+    EMBEDDER,
+    gamma=0.3,
+    summaries=keywords,
+    summary_weight=0.25,
+)
 HNSW_INDEX = build_hnsw_index(TAX_EMBS, ef_search=128)
 
 GLOSS_MAP = build_gloss_map(keywords)

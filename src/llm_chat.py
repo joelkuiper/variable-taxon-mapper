@@ -140,16 +140,15 @@ def make_tree_match_prompt(
         - <label> (<optional short summary>)
 
         ## OUTPUT (single-line JSON)
-        {{"node_label":"..."}}
-
+        {{"node_label":"..."}}{eot}
         {role_prefix}user{role_suffix}
         ## TREE
-        {TREE}.{eot}
+        {tree}
 
         ## ITEM:
-        - label: {LAB}
-        - name: {NAM}
-        - description: {DESC}{eot}
+        - label: {item_label}
+        - name: {item_name}
+        - description: {item_desc}{eot}
         {role_prefix}assistant{role_suffix}
 
     """
@@ -159,10 +158,10 @@ def make_tree_match_prompt(
             role_prefix=role_prefix,
             role_suffix=role_suffix,
             eot=eot,
-            TREE=tree_md,
-            LAB=lab,
-            NAM=nam,
-            DESC=desc,
+            tree=tree_md,
+            item_label=lab,
+            item_name=nam,
+            item_desc=desc,
         )
         .strip()
     )
