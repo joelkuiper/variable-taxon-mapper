@@ -72,7 +72,8 @@ def _hnsw_anchor_indices(
     Kq = min(max(min_overfetch, top_k_nodes * overfetch_mult), N)
 
     # Pool max(sim) over all query parts
-    scores = np.full(N, -1.0, dtype=np.float32)
+    scores = np.full(N, -np.inf, dtype=np.float32)
+    seen = np.zeros(N, dtype=bool)
     for q in item_embs:
         labels, dists = hnsw_index.knn_query(q[np.newaxis, :].astype(np.float32), k=Kq)
         labels, dists = labels[0], dists[0]
@@ -80,14 +81,22 @@ def _hnsw_anchor_indices(
         for idx, sim in zip(labels, sims):
             if idx < 0:
                 continue
+            seen[idx] = True
             if sim > scores[idx]:
                 scores[idx] = sim
+
+    if not seen.any():
+        return list(range(min(top_k_nodes, N)))
+
+    scores[~seen] = -np.inf
 
     # Top-k by pooled score
     idxs = np.argpartition(-scores, kth=min(top_k_nodes - 1, N - 1))[:top_k_nodes]
     idxs = idxs[np.argsort(-scores[idxs])]
-    # Filter out never-seen nodes (score < 0)
-    return [int(i) for i in idxs if scores[int(i)] >= 0.0]
+    filtered = [int(i) for i in idxs if seen[int(i)]]
+    if filtered:
+        return filtered
+    return [int(i) for i in idxs]
 
 
 def _expand_allowed_nodes(
