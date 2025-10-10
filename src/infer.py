@@ -245,9 +245,27 @@ def _render_tree_markdown(
         if r in allowed:
             _walk(r, 0)
 
-    tree_md = "\n".join(lines)
+    if lines:
+        tree_md = "\n".join(lines)
+        return tree_md, None
 
-    return tree_md, None
+    # Fallback: render the full taxonomy without filtering and provide
+    # an alphabetical list of all labels for downstream consumers.
+    fallback_lines: List[str] = []
+
+    def _walk_full(node: str, depth: int):
+        label_display = make_label_display(node, gloss_map or {})
+        fallback_lines.append("  " * depth + f"- {label_display}")
+        for c in sorted(G.successors(node), key=sort_key):
+            _walk_full(c, depth + 1)
+
+    for r in roots_in_order(G, sort_key):
+        _walk_full(r, 0)
+
+    tree_md = "\n".join(fallback_lines)
+    fallback_ranked = sorted(G.nodes, key=lambda s: s.lower())
+
+    return tree_md, fallback_ranked
 
 
 def pruned_tree_markdown_for_item(
