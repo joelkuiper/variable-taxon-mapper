@@ -7,14 +7,17 @@ import math
 import sys
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import aiohttp
+import networkx as nx
 import numpy as np
 import pandas as pd
-import networkx as nx
-
-import requests
 
 from .embedding import Embedder, l2_normalize
-from .llm_chat import GRAMMAR_RESPONSE, llama_completion, make_tree_match_prompt
+from .llm_chat import (
+    GRAMMAR_RESPONSE,
+    llama_completion_async,
+    make_tree_match_prompt,
+)
 from .taxonomy import (
     collect_descendants,
     make_label_display,
@@ -453,7 +456,7 @@ def _hnsw_fallback_choose_label(
     return allowed_idx_map[mask[j]] if j is not None else None
 
 
-def match_item_to_tree(
+async def match_item_to_tree(
     item: Dict[str, Optional[str]],
     *,
     tree_markdown: str,
@@ -470,7 +473,7 @@ def match_item_to_tree(
     slot_id: int = 0,
     cache_prompt: bool = True,
     n_keep: int = -1,
-    session: Optional[requests.Session] = None,
+    session: Optional[aiohttp.ClientSession] = None,
     grammar: str = GRAMMAR_RESPONSE,
 ) -> Dict[str, Any]:
     """
@@ -481,10 +484,9 @@ def match_item_to_tree(
     prompt = make_tree_match_prompt(tree_markdown, item)
     _print_prompt_once(prompt)
 
-    raw = llama_completion(
+    raw = await llama_completion_async(
         prompt,
         endpoint,
-        session=session,
         temperature=temperature,
         top_k=20,
         top_p=0.8,
@@ -494,6 +496,7 @@ def match_item_to_tree(
         cache_prompt=cache_prompt,
         n_keep=n_keep,
         slot_id=slot_id,
+        session=session,
     )
 
     # Try to parse JSON and validate; keep the freeform label for fuzzy mapping.

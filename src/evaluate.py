@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
 import sys
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Set
 
+import aiohttp
 import numpy as np
 import pandas as pd
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from .embedding import Embedder
 from .infer import match_item_to_tree, pruned_tree_markdown_for_item
@@ -115,146 +112,127 @@ def run_label_benchmark(
     rnd.shuffle(eligible_idxs)
     idxs = eligible_idxs[: min(n, len(eligible_idxs))]
 
-    _tls = threading.local()
-
-    def _make_adapter(pool_maxsize: int) -> HTTPAdapter:
-        retry = Retry(
-            total=2,
-            backoff_factor=0.2,
-            status_forcelist=[429, 502, 503, 504],
-            allowed_methods=["POST", "GET"],
-            raise_on_status=False,
+    async def _evaluate_all() -> List[Dict[str, Any]]:
+        timeout_cfg = aiohttp.ClientTimeout(
+            total=None,
+            sock_connect=10,
+            sock_read=max(30.0, float(n_predict)),
         )
-        return HTTPAdapter(
-            pool_connections=pool_maxsize, pool_maxsize=pool_maxsize, max_retries=retry
+        connector = aiohttp.TCPConnector(
+            limit=max(1, pool_maxsize), limit_per_host=max(1, pool_maxsize)
         )
 
-    def _get_thread_session(pool_maxsize: int = 64) -> requests.Session:
-        s = getattr(_tls, "session", None)
-        if s is None:
-            s = requests.Session()
-            adapter = _make_adapter(pool_maxsize)
-            s.mount("http://", adapter)
-            s.mount("https://", adapter)
-            _tls.session = s
-        return s
-
-    def _worker(j: int, i: int) -> Dict[str, Any]:
-        r = work_df.loc[i]
-        gold_tokens = token_sets.loc[i]
-        gold_labels = sorted(gold_tokens & known_labels)
-
-        item = {
-            "dataset": r.get("dataset"),
-            "label": r.get("label"),
-            "name": r.get("name"),
-            "description": r.get("description"),
-        }
-
-        slot_id = j % max(1, num_slots)
-
-        tree_markdown, allowed_labels = pruned_tree_markdown_for_item(
-            item,
-            G=G,
-            df=keywords,
-            embedder=embedder,
-            tax_names=tax_names,
-            tax_embs_unit=tax_embs_unit,
-            hnsw_index=hnsw_index,
-            name_col="name",
-            order_col="order",
-            top_k_nodes=top_k_nodes,
-            desc_max_depth=desc_max_depth,
-            max_total_nodes=max_total_nodes,
-            gloss_map=gloss_map,
-        )
-        try:
-            pred = match_item_to_tree(
-                item,
-                tree_markdown=tree_markdown,
-                allowed_labels=allowed_labels,
-                name_to_id=name_to_id,
-                name_to_path=name_to_path,
-                tax_names=tax_names,
-                tax_embs=tax_embs_unit,
-                embedder=embedder,
-                hnsw_index=hnsw_index,
-                endpoint=endpoint,
-                n_predict=n_predict,
-                temperature=temperature,
-                slot_id=slot_id,
-                cache_prompt=True,
-                n_keep=-1,
-                session=_get_thread_session(pool_maxsize=pool_maxsize),
-            )
-            resolved_label = pred.get("resolved_label")
-            correct = is_correct_prediction(resolved_label, gold_labels, G=G)
-            out = {
-                "dataset": item.get("dataset"),
-                "label": item.get("label"),
-                "name": item.get("name"),
-                "description": item.get("description"),
-                "gold_labels": gold_labels,
-                "pred_label_raw": pred.get("pred_label_raw"),
-                "resolved_label": resolved_label,
-                "resolved_id": pred.get("resolved_id"),
-                "resolved_path": pred.get("resolved_path"),
-                "correct": bool(correct),
-                "rationale": pred.get("rationale"),
-                "_idx": i,
-                "_j": j,
-                "_slot": slot_id,
-                "_error": None,
-            }
-            if "raw" in pred:
-                out["raw"] = pred["raw"]
-            return out
-        except Exception as e:
-            return {
-                "dataset": item.get("dataset"),
-                "label": item.get("label"),
-                "name": item.get("name"),
-                "description": item.get("description"),
-                "gold_labels": gold_labels,
-                "pred_label_raw": None,
-                "resolved_label": None,
-                "resolved_id": None,
-                "resolved_path": None,
-                "correct": False,
-                "rationale": None,
-                "_idx": i,
-                "_j": j,
-                "_slot": slot_id,
-                "_error": f"{type(e).__name__}: {e}",
-            }
-
-    rows: List[Dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = {ex.submit(_worker, j, i): j for j, i in enumerate(idxs)}
+        rows: List[Dict[str, Any]] = []
         start = time.time()
-        done = 0
-        total = len(futures)
-        err = 0
         correct_sum = 0
+        total = len(idxs)
 
-        for fut in as_completed(futures):
-            res = fut.result()
-            rows.append(res)
-            done += 1
-            err += 1 if res.get("_error") else 0
-            correct_sum += 1 if res.get("correct") else 0
+        async with aiohttp.ClientSession(
+            timeout=timeout_cfg, connector=connector
+        ) as session:
+            for j, i in enumerate(idxs):
+                r = work_df.loc[i]
+                gold_tokens = token_sets.loc[i]
+                gold_labels = sorted(gold_tokens & known_labels)
 
-            if done % 10 == 0 or done == total:
-                elapsed = max(time.time() - start, 1e-6)
-                rps = done / elapsed
-                acc = (correct_sum / done) if done else 0.0
-                sys.stderr.write(
-                    f"\rEvaluating: {done}/{total} "
-                    f"(errors={err}, acc≈{acc:.3f}, {rps:.1f} rows/s)"
+                item = {
+                    "dataset": r.get("dataset"),
+                    "label": r.get("label"),
+                    "name": r.get("name"),
+                    "description": r.get("description"),
+                }
+
+                slot_id = j % max(1, num_slots)
+
+                tree_markdown, allowed_labels = pruned_tree_markdown_for_item(
+                    item,
+                    G=G,
+                    df=keywords,
+                    embedder=embedder,
+                    tax_names=tax_names,
+                    tax_embs_unit=tax_embs_unit,
+                    hnsw_index=hnsw_index,
+                    name_col="name",
+                    order_col="order",
+                    top_k_nodes=top_k_nodes,
+                    desc_max_depth=desc_max_depth,
+                    max_total_nodes=max_total_nodes,
+                    gloss_map=gloss_map,
                 )
-                sys.stderr.flush()
 
-        sys.stderr.write("\n")
+                pred = await match_item_to_tree(
+                    item,
+                    tree_markdown=tree_markdown,
+                    allowed_labels=allowed_labels,
+                    name_to_id=name_to_id,
+                    name_to_path=name_to_path,
+                    tax_names=tax_names,
+                    tax_embs=tax_embs_unit,
+                    embedder=embedder,
+                    hnsw_index=hnsw_index,
+                    endpoint=endpoint,
+                    n_predict=n_predict,
+                    temperature=temperature,
+                    slot_id=slot_id,
+                    cache_prompt=True,
+                    n_keep=-1,
+                    session=session,
+                )
+
+                resolved_label = pred.get("resolved_label")
+                correct = is_correct_prediction(resolved_label, gold_labels, G=G)
+
+                out: Dict[str, Any] = {
+                    "dataset": item.get("dataset"),
+                    "label": item.get("label"),
+                    "name": item.get("name"),
+                    "description": item.get("description"),
+                    "gold_labels": gold_labels,
+                    "pred_label_raw": pred.get("pred_label_raw"),
+                    "resolved_label": resolved_label,
+                    "resolved_id": pred.get("resolved_id"),
+                    "resolved_path": pred.get("resolved_path"),
+                    "correct": bool(correct),
+                    "rationale": pred.get("rationale"),
+                    "_idx": i,
+                    "_j": j,
+                    "_slot": slot_id,
+                    "_error": None,
+                }
+                if "raw" in pred:
+                    out["raw"] = pred["raw"]
+
+                rows.append(out)
+                correct_sum += 1 if out.get("correct") else 0
+
+                done = len(rows)
+                if done % 10 == 0 or done == total:
+                    elapsed = max(time.time() - start, 1e-6)
+                    rps = done / elapsed if elapsed > 0 else 0.0
+                    acc = (correct_sum / done) if done else 0.0
+                    sys.stderr.write(
+                        f"\rEvaluating: {done}/{total} "
+                        f"(acc≈{acc:.3f}, {rps:.1f} rows/s)"
+                    )
+                    sys.stderr.flush()
+
+        if total:
+            sys.stderr.write("\n")
+
+        return rows
+
+    try:
+        rows = asyncio.run(_evaluate_all())
+    except KeyboardInterrupt:
+        sys.stderr.write("\nEvaluation cancelled.\n")
+        raise
+    except RuntimeError as exc:
+        if "asyncio.run()" in str(exc) and "running event loop" in str(exc):
+            raise RuntimeError(
+                "run_label_benchmark must be called from a synchronous context "
+                "without an active event loop."
+            ) from exc
+        raise
 
     rows.sort(key=lambda r: r["_j"])
     for r in rows:

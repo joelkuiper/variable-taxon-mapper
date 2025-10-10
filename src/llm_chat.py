@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from textwrap import dedent
 from typing import Any, Dict, Iterable, Optional, Union
 
-import requests
+import aiohttp
 
 
 GRAMMAR_RESPONSE = r"""
@@ -31,7 +32,40 @@ class LlamaHTTPError(RuntimeError):
         self.body = body
 
 
-_HTTP_SESSION = requests.Session()
+async def llama_completion_async(
+    prompt: Union[str, Iterable[Union[str, int]]],
+    endpoint: str,
+    *,
+    timeout: float = 120.0,
+    session: Optional[aiohttp.ClientSession] = None,
+    **kwargs: Any,
+) -> str:
+    payload: Dict[str, Any] = {"prompt": prompt}
+    payload.update(kwargs)
+
+    close_session = False
+    if session is None:
+        timeout_cfg = aiohttp.ClientTimeout(
+            total=None, sock_connect=10, sock_read=timeout
+        )
+        session = aiohttp.ClientSession(timeout=timeout_cfg)
+        close_session = True
+    try:
+        request_timeout = aiohttp.ClientTimeout(
+            total=None, sock_connect=10, sock_read=timeout
+        )
+        async with session.post(
+            endpoint,
+            json=payload,
+            timeout=request_timeout,
+        ) as resp:
+            if resp.status >= 400:
+                raise LlamaHTTPError(resp.status, await resp.text())
+            data = await resp.json(content_type=None)
+            return data.get("content", "")
+    finally:
+        if close_session and session is not None:
+            await session.close()
 
 
 def llama_completion(
@@ -39,17 +73,29 @@ def llama_completion(
     endpoint: str,
     *,
     timeout: float = 120.0,
-    session: Optional[requests.Session] = None,
+    session: Optional[aiohttp.ClientSession] = None,
     **kwargs: Any,
 ) -> str:
-    payload: Dict[str, Any] = {"prompt": prompt}
-    payload.update(kwargs)
+    async def _runner() -> str:
+        return await llama_completion_async(
+            prompt,
+            endpoint,
+            timeout=timeout,
+            session=session,
+            **kwargs,
+        )
 
-    s = session or _HTTP_SESSION
-    resp = s.post(endpoint, json=payload, timeout=(10, timeout))
-    if not resp.ok:
-        raise LlamaHTTPError(resp.status_code, resp.text)
-    return resp.json().get("content", "")
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_runner())
+    else:
+        if loop.is_running():
+            raise RuntimeError(
+                "llama_completion cannot be called while an event loop is running; "
+                "use llama_completion_async instead."
+            )
+        return loop.run_until_complete(_runner())
 
 
 def make_tree_match_prompt(
