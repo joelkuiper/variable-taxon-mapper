@@ -161,10 +161,8 @@ def _expand_allowed_nodes(
 
         remaining_capacity = max_total_nodes - len(allowed)
         if remaining_capacity <= 0:
-            # Roll back the ancestors we just added and skip this anchor so we
-            # don't violate the descendant guarantee.
-            for n in new_ancestors:
-                allowed.remove(n)
+            # No room for descendants, but keep the anchor/ancestors so that
+            # we still consider this node as a candidate.
             continue
 
         remaining_anchors = max(total_anchors - (idx + 1), 0)
@@ -186,13 +184,6 @@ def _expand_allowed_nodes(
                 continue
             allowed.add(node)
             added_descendants.add(node)
-
-        if not added_descendants:
-            # No descendant could be added; undo new nodes for this anchor.
-            for node in added_descendants:
-                allowed.remove(node)
-            for node in new_ancestors:
-                allowed.remove(node)
 
     return allowed
 
@@ -467,8 +458,9 @@ def _canonicalize_label_text(
     """Normalize the raw LLM text and case-fold into the allowed label set.
 
     Returns a tuple of (normalized_text, resolved_allowed_label). The normalized text
-    trims whitespace, strips surrounding quotes, removes trailing parenthetical
-    summaries (``(...)``), and leaves the text ready for downstream embedding. If the
+    trims whitespace, first attempts a direct case-insensitive lookup, and only if that
+    fails does it strip trailing parenthetical summaries (``(...)``) and surrounding
+    quotes before returning the cleaned text for downstream embedding. If the
     normalized text matches an allowed label ignoring case, the second element will be
     that label with the original allowed casing; otherwise it is ``None``.
     """
@@ -476,9 +468,16 @@ def _canonicalize_label_text(
     if not isinstance(pred_text, str):
         return None, None
 
+    allowed_lookup = {label.lower(): label for label in allowed_labels}
+
     normalized = pred_text.strip()
     if not normalized:
         return None, None
+
+    # Try direct lookup on the trimmed string before any further normalization.
+    direct_resolved = allowed_lookup.get(normalized.lower()) if normalized else None
+    if direct_resolved:
+        return normalized, direct_resolved
 
     # Drop trailing parenthetical summaries (possibly nested, e.g., ``Label (foo)``).
     while True:
@@ -500,7 +499,6 @@ def _canonicalize_label_text(
         if not normalized:
             return None, None
 
-    allowed_lookup = {label.lower(): label for label in allowed_labels}
     resolved = allowed_lookup.get(normalized.lower()) if normalized else None
 
     return normalized if normalized else None, resolved
