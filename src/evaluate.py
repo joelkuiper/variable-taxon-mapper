@@ -193,7 +193,6 @@ def run_label_benchmark(
                     "resolved_id": pred.get("resolved_id"),
                     "resolved_path": pred.get("resolved_path"),
                     "correct": bool(correct),
-                    "rationale": pred.get("rationale"),
                     "_idx": i,
                     "_j": j,
                     "_slot": slot_id,

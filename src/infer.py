@@ -227,12 +227,12 @@ def pruned_tree_markdown_for_item(
 
     # 6) Compose concise "Candidates" + full "Taxonomy" markdown
     top_show = min(40, len(allowed_ranked))
-    md_lines: List[str] = ["### Candidates \n"]
+    md_lines: List[str] = ["### Likely Candidates \n"]
     for lbl in allowed_ranked[:top_show]:
         md_lines.append(
             f"- {make_label_display(lbl, gloss_map or {}, use_summary=False)}"
         )
-    md_lines.append("\n### Taxonomy \n")
+    md_lines.append("\n### Full Taxonomy \n")
     md_lines.append(tree_md)
 
     return "\n".join(md_lines), allowed_ranked
@@ -252,24 +252,6 @@ def _print_prompt_once(prompt: str) -> None:
         print(prompt)
         print("\n====== END PROMPT ======\n")
         sys.stdout.flush()
-
-
-def _parse_llm_json(raw: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Parse {"node_label": "...", "rationale": "..."} from model output.
-    Raise ValueError on structure/validation issues.
-    """
-    try:
-        p = json.loads(raw)
-        node_label_raw = p.get("node_label")
-        rationale = p.get("rationale")
-        if not isinstance(node_label_raw, str) or not node_label_raw.strip():
-            raise ValueError("missing_node_label")
-        if not isinstance(rationale, str):
-            rationale = ""
-        return node_label_raw, rationale
-    except Exception as e:
-        raise ValueError(f"parse_failed: {e}")
 
 
 # ---- helpers: embeddings / ANN fallback -------------------------------------
@@ -501,11 +483,9 @@ async def match_item_to_tree(
 
     # Try to parse JSON and validate; keep the freeform label for fuzzy mapping.
     node_label_raw: Optional[str] = None
-    rationale: Optional[str] = None
     try:
         payload = json.loads(raw)
         node_label_raw = payload.get("node_label")
-        rationale = payload.get("rationale")
     except Exception:
         node_label_raw = None  # keep as None; we'll fall back
 
@@ -517,7 +497,6 @@ async def match_item_to_tree(
             "resolved_label": node_label_raw,
             "resolved_id": name_to_id.get(node_label_raw),
             "resolved_path": name_to_path.get(node_label_raw),
-            "rationale": rationale if isinstance(rationale, str) else "",
             "matched": True,
             "no_match": False,
         }
@@ -538,7 +517,6 @@ async def match_item_to_tree(
             "resolved_label": mapped,
             "resolved_id": name_to_id.get(mapped),
             "resolved_path": name_to_path.get(mapped),
-            "rationale": "Mapped LLM text to nearest allowed node (ANN).",
             "matched": True,
             "no_match": False,
             "raw": raw,
@@ -560,7 +538,6 @@ async def match_item_to_tree(
             "resolved_label": chosen,
             "resolved_id": name_to_id.get(chosen),
             "resolved_path": name_to_path.get(chosen),
-            "rationale": "Fallback: HNSW + max-pool among allowed.",
             "matched": True,
             "no_match": False,
             "raw": raw,
@@ -573,7 +550,6 @@ async def match_item_to_tree(
         "resolved_label": None,
         "resolved_id": None,
         "resolved_path": None,
-        "rationale": "Parse/validation failed; no ANN/exact fallback matched.",
         "matched": False,
         "no_match": True,
         "raw": raw,
