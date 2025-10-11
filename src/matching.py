@@ -45,19 +45,6 @@ def _build_allowed_index_map(
     return idx_map
 
 
-def _exact_maxpool_within(
-    item_embs: np.ndarray,
-    sub_embs: np.ndarray,
-) -> Optional[int]:
-    """Exact max-pool similarity between ``item_embs`` and ``sub_embs`` rows."""
-
-    if item_embs.size == 0 or sub_embs.size == 0:
-        return None
-    sims = sub_embs @ item_embs.T
-    best = sims.max(axis=1)
-    return int(np.argmax(best)) if best.size else None
-
-
 def _hnsw_top_match_for_query_vec(
     q_vec: np.ndarray,
     *,
@@ -88,13 +75,7 @@ def _hnsw_top_match_for_query_vec(
                 best_sim = sim
                 best_label = allowed_idx_map[idx]
 
-    if best_label is not None:
-        return best_label
-
-    mask = list(allowed_idx_map.keys())
-    sub = tax_embs[mask]
-    best_idx = _exact_maxpool_within(q_vec[np.newaxis, :], sub)
-    return allowed_idx_map[mask[best_idx]] if best_idx is not None else None
+    return best_label
 
 
 def _canonicalize_label_text(
@@ -212,7 +193,9 @@ def _hnsw_fallback_choose_label(
 
     scores: Dict[int, float] = {}
     for query in item_embs:
-        labels, dists = hnsw_index.knn_query(query[np.newaxis, :].astype(np.float32), k=Kq)
+        labels, dists = hnsw_index.knn_query(
+            query[np.newaxis, :].astype(np.float32), k=Kq
+        )
         labels, dists = labels[0], dists[0]
         sims = 1.0 - dists.astype(np.float32)
         for idx, sim in zip(labels, sims):
@@ -221,16 +204,8 @@ def _hnsw_fallback_choose_label(
             if idx in allowed_idx_map and sim > scores.get(idx, -1.0):
                 scores[idx] = float(sim)
 
-    if scores:
-        best_idx = max(scores.items(), key=lambda kv: kv[1])[0]
-        return allowed_idx_map[best_idx]
-
-    mask = list(allowed_idx_map.keys())
-    if not mask:
-        return None
-    sub = tax_embs[mask]
-    best_idx = _exact_maxpool_within(item_embs, sub)
-    return allowed_idx_map[mask[best_idx]] if best_idx is not None else None
+    best_idx = max(scores.items(), key=lambda kv: kv[1])[0]
+    return allowed_idx_map[best_idx]
 
 
 async def match_item_to_tree(
