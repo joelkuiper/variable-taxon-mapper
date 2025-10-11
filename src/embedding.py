@@ -26,7 +26,7 @@ class Embedder:
         max_length: int = 512,
         batch_size: int = 128,
         fp16: bool = True,
-        mean_pool: bool = True,
+        mean_pool: bool = False,  # False = [CLS]
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.tok = AutoTokenizer.from_pretrained(model_name)
@@ -110,7 +110,9 @@ def _extract_summary_map(
     elif isinstance(summaries, pd.Series):
         items = summaries.items()
     elif isinstance(summaries, pd.DataFrame):
-        items = summaries[["name", "definition_summary"]].itertuples(index=False, name=None)
+        items = summaries[["name", "definition_summary"]].itertuples(
+            index=False, name=None
+        )
     else:
         raise TypeError("summaries must be a mapping, pandas Series/DataFrame, or None")
 

@@ -7,7 +7,7 @@ model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
 max_length = 256
 batch_size = 128
 fp16 = true
-mean_pool = true
+mean_pool = false
 
 [taxonomy_embeddings]
 gamma = 0.125
