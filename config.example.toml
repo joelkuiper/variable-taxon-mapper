@@ -11,7 +11,7 @@ mean_pool = false
 
 [taxonomy_embeddings]
 gamma = 0.125
-summary_weight = 0.33
+summary_weight = 0.5
 
 [hnsw]
 space = "cosine"
@@ -28,7 +28,7 @@ n_predict = 512
 dedupe_on = ["name"]
 top_k_nodes = 32
 desc_max_depth = 5
-max_total_nodes = 800
+max_total_nodes = 1024
 max_workers = 4
 num_slots = 4
 pool_maxsize = 64
