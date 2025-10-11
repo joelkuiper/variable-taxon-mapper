@@ -348,10 +348,10 @@ def pruned_tree_markdown_for_item(
     )
 
     md_lines = []
-    md_lines.append("\n### TAXONOMY \n")
+    md_lines.append("\n### TAXONOMY")
     md_lines.append(tree_md)
 
-    md_lines.append("\n### SUGGESTIONS \n")
+    md_lines.append("\n### SUGGESTIONS")
     for lbl in allowed_ranked[:top_show]:
         md_lines.append(
             f"- {make_label_display(lbl, gloss_map or {}, use_summary=False)}"
