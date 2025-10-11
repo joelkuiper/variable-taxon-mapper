@@ -230,10 +230,6 @@ async def match_item_to_tree(
     top_p: float = 0.8,
     min_p: float = 0.0,
     grammar: Optional[str] = None,
-    freeform_fanout_min: int = 256,
-    freeform_fanout_multiplier: int = 4,
-    fallback_fanout_min: int = 256,
-    fallback_fanout_multiplier: int = 4,
 ) -> Dict[str, Any]:
     """Resolve ``item`` to the best taxonomy node using LLM + ANN fallbacks."""
 
@@ -284,8 +280,6 @@ async def match_item_to_tree(
         tax_embs=tax_embs,
         embedder=embedder,
         hnsw_index=hnsw_index,
-        fanout_min=freeform_fanout_min,
-        fanout_multiplier=freeform_fanout_multiplier,
     )
     if mapped:
         return {
@@ -306,8 +300,6 @@ async def match_item_to_tree(
         tax_embs=tax_embs,
         embedder=embedder,
         hnsw_index=hnsw_index,
-        fanout_min=fallback_fanout_min,
-        fanout_multiplier=fallback_fanout_multiplier,
     )
     if chosen:
         return {

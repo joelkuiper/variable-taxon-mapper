@@ -195,10 +195,6 @@ def run_label_benchmark(
                     top_k=cfg.llm_top_k,
                     top_p=cfg.llm_top_p,
                     min_p=cfg.llm_min_p,
-                    freeform_fanout_min=cfg.freeform_fanout_min,
-                    freeform_fanout_multiplier=cfg.freeform_fanout_multiplier,
-                    fallback_fanout_min=cfg.fallback_fanout_min,
-                    fallback_fanout_multiplier=cfg.fallback_fanout_multiplier,
                     session=session,
                     **match_kwargs,
                 )

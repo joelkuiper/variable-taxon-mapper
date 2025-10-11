@@ -78,10 +78,6 @@ class EvaluationConfig:
     candidate_list_max_items: int = 40
     anchor_overfetch_mult: int = 3
     anchor_min_overfetch: int = 128
-    freeform_fanout_min: int = 256
-    freeform_fanout_multiplier: int = 4
-    fallback_fanout_min: int = 256
-    fallback_fanout_multiplier: int = 4
     llm_top_k: int = 20
     llm_top_p: float = 0.8
     llm_min_p: float = 0.0
@@ -111,9 +107,7 @@ class AppConfig:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
 
-def _coerce_section(
-    section: Mapping[str, Any] | None, cls: type[Any]
-) -> Any:
+def _coerce_section(section: Mapping[str, Any] | None, cls: type[Any]) -> Any:
     if section is None:
         return cls()
     if not isinstance(section, Mapping):
@@ -141,9 +135,7 @@ def load_config(path: str | Path) -> AppConfig:
     app_config = AppConfig(
         data=_coerce_section(data_section, DataConfig),
         embedder=_coerce_section(embedder_section, EmbedderConfig),
-        taxonomy_embeddings=_coerce_section(
-            taxonomy_section, TaxonomyEmbeddingConfig
-        ),
+        taxonomy_embeddings=_coerce_section(taxonomy_section, TaxonomyEmbeddingConfig),
         hnsw=_coerce_section(hnsw_section, HNSWConfig),
         evaluation=_coerce_section(evaluation_section, EvaluationConfig),
     )
