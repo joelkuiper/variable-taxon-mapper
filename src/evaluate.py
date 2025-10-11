@@ -15,7 +15,8 @@ import pandas as pd
 from config import EvaluationConfig
 
 from .embedding import Embedder
-from .infer import match_item_to_tree, pruned_tree_markdown_for_item
+from .matching import match_item_to_tree
+from .taxonomy_pruning import pruned_tree_markdown_for_item
 from .taxonomy import is_ancestor_of
 
 

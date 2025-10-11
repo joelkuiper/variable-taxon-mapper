@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from textwrap import dedent
 from typing import Any, Dict, Iterable, Optional, Union
 
 import aiohttp
+
+from .utils import clean_text
 
 
 GRAMMAR_RESPONSE = r"""
@@ -105,24 +106,10 @@ def make_tree_match_prompt(
     role_suffix: str = "",
     eot: str = "<|im_end|>",
 ) -> str:
-    def _clean_text(v) -> str:
-        if v is None:
-            return "(empty)"
-        if isinstance(v, str):
-            s = v.strip()
-            return s if s else "(empty)"
-        try:
-            if isinstance(v, float) and math.isnan(v):  # type: ignore[name-defined]
-                return "(empty)"
-        except Exception:
-            pass
-        s = str(v).strip()
-        return s if s else "(empty)"
-
     tree_md = (tree_markdown_labels_only or "").strip()
-    lab = _clean_text(item.get("label"))
-    nam = _clean_text(item.get("name"))
-    desc = _clean_text(item.get("description"))
+    lab = clean_text(item.get("label"))
+    nam = clean_text(item.get("name"))
+    desc = clean_text(item.get("description"))
 
     template = """\
         {role_prefix}system{role_suffix}

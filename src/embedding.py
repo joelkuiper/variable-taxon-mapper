@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -11,6 +11,7 @@ from transformers import AutoModel, AutoTokenizer
 import pandas as pd
 
 from .taxonomy import ancestors_to_root, taxonomy_node_texts
+from .utils import clean_text
 
 
 def l2_normalize(a: np.ndarray, eps: float = 1e-9) -> np.ndarray:
@@ -39,7 +40,7 @@ class Embedder:
         self.mean_pool = mean_pool
 
     @torch.no_grad()
-    def encode(self, texts: List[str]) -> np.ndarray:
+    def encode(self, texts: Sequence[str]) -> np.ndarray:
         out = []
         bs = self.batch_size
         for i in range(0, len(texts), bs):
@@ -65,6 +66,52 @@ class Embedder:
             np.concatenate(out, axis=0) if out else np.zeros((0, 768), dtype=np.float32)
         )
         return l2_normalize(embs).astype(np.float32)
+
+
+def collect_item_texts(
+    item: Mapping[str, Optional[str]],
+    *,
+    fields: Sequence[str] = ("label", "name", "description"),
+    clean: bool = True,
+    max_length: int = 256,
+) -> List[str]:
+    """Extract candidate text fields from an item for embedding."""
+
+    texts: List[str] = []
+    for key in fields:
+        raw = item.get(key)
+        if clean:
+            text = clean_text(raw)
+            if text and text != "(empty)":
+                texts.append(text[:max_length])
+        else:
+            if isinstance(raw, str):
+                text = raw.strip()
+            elif raw is None:
+                text = ""
+            else:
+                text = str(raw).strip()
+            if text:
+                texts.append(text[:max_length])
+    return texts
+
+
+def encode_item_texts(
+    item: Mapping[str, Optional[str]],
+    embedder: Embedder,
+    *,
+    fields: Sequence[str] = ("label", "name", "description"),
+    clean: bool = True,
+    max_length: int = 256,
+) -> np.ndarray:
+    """Encode selected text fields from ``item`` using ``embedder``."""
+
+    texts = collect_item_texts(
+        item, fields=fields, clean=clean, max_length=max_length
+    )
+    if not texts:
+        return np.zeros((0, 768), dtype=np.float32)
+    return embedder.encode(texts)
 
 
 def cosine_match_maxpool(
