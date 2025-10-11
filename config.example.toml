@@ -4,7 +4,7 @@ keywords_csv = "data/Keywords_summarized.csv"
 
 [embedder]
 model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
-max_length = 256
+max_length = 512
 batch_size = 128
 fp16 = true
 mean_pool = false
