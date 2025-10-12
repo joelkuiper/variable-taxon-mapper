@@ -10,13 +10,29 @@ from transformers import AutoModel, AutoTokenizer
 
 import pandas as pd
 
-from .taxonomy import ancestors_to_root, taxonomy_node_texts
+from .taxonomy import taxonomy_node_texts
 from .utils import clean_text
 
 
 def l2_normalize(a: np.ndarray, eps: float = 1e-9) -> np.ndarray:
     n = np.linalg.norm(a, axis=-1, keepdims=True)
     return a / np.maximum(n, eps)
+
+
+def _topological_order(G) -> List[str]:
+    indegree = {node: G.in_degree(node) for node in G.nodes}
+    stack = [node for node, deg in indegree.items() if deg == 0]
+    order: List[str] = []
+    while stack:
+        node = stack.pop()
+        order.append(node)
+        for succ in G.successors(node):
+            indegree[succ] -= 1
+            if indegree[succ] == 0:
+                stack.append(succ)
+    if len(order) != len(indegree):
+        raise ValueError("Taxonomy graph contains a cycle; expected a DAG.")
+    return order
 
 
 class Embedder:
@@ -185,6 +201,13 @@ def build_taxonomy_embeddings_composed(
     names = taxonomy_node_texts(G)
     label2idx = {n: i for i, n in enumerate(names)}
 
+    topo = _topological_order(G)
+    parent_idx = np.full(len(names), -1, dtype=np.int32)
+    for node in topo:
+        preds = list(G.predecessors(node))
+        if preds:
+            parent_idx[label2idx[node]] = label2idx[preds[0]]
+
     name_vecs = embedder.encode(names)
 
     summary_map = _extract_summary_map(summaries)
@@ -206,13 +229,13 @@ def build_taxonomy_embeddings_composed(
 
     D = composed_base.shape[1] if composed_base.size else 0
     out = np.zeros((len(names), D), dtype=np.float32)
-    for n in names:
-        idx = label2idx[n]
-        v = composed_base[idx].copy()
-        anc = ancestors_to_root(G, n)[:-1]
-        for k, a in enumerate(reversed(anc), start=1):
-            v += (gamma**k) * composed_base[label2idx[a]]
-        out[idx] = v
+    for node in topo:
+        idx = label2idx[node]
+        pidx = parent_idx[idx]
+        if pidx >= 0:
+            out[idx] = composed_base[idx] + gamma * out[pidx]
+        else:
+            out[idx] = composed_base[idx]
 
     out = out / np.clip(np.linalg.norm(out, axis=1, keepdims=True), 1e-9, None)
     return names, out
