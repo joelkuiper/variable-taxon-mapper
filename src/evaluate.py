@@ -134,6 +134,13 @@ def _collect_predictions(
                     result["raw"] = pred["raw"]
 
                 if job.gold_labels is not None:
+                    allowed_has_gold = False
+                    if allowed_labels:
+                        allowed_lookup = set(allowed_labels)
+                        allowed_has_gold = any(
+                            g in allowed_lookup for g in job.gold_labels if g
+                        )
+
                     match_type = determine_match_type(
                         resolved_label, job.gold_labels, G=G
                     )
@@ -141,6 +148,9 @@ def _collect_predictions(
                     result["gold_labels"] = job.gold_labels
                     result["match_type"] = match_type
                     result["correct"] = bool(correct)
+                    result["possible_correct_under_allowed"] = bool(
+                        allowed_has_gold
+                    )
                     correct_sum += 1 if correct else 0
 
                 rows.append(result)
@@ -372,6 +382,15 @@ def run_label_benchmark(
     if evaluate and "correct" in df.columns and total_processed:
         metrics["n_correct"] = int(df["correct"].sum())
         metrics["label_accuracy_any_match"] = float(df["correct"].mean())
+
+        if "possible_correct_under_allowed" in df.columns:
+            possible_series = (
+                df["possible_correct_under_allowed"].fillna(False).astype(bool)
+            )
+            metrics["n_possible_correct_under_allowed"] = int(possible_series.sum())
+            metrics["possible_correct_under_allowed_rate"] = float(
+                possible_series.mean()
+            )
 
         if "match_type" in df.columns:
             match_counts_series = df["match_type"].value_counts(sort=False)
