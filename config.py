@@ -87,11 +87,28 @@ class EvaluationConfig:
     http_sock_connect: float = 10.0
     http_sock_read_floor: float = 30.0
     progress_log_interval: int = 10
+    results_csv: Optional[str] = None
 
     def to_kwargs(self) -> dict[str, Any]:
         data = asdict(self)
         data["dedupe_on"] = list(self.dedupe_on)
         return data
+
+    def resolve_results_path(
+        self,
+        *,
+        base_path: Optional[Path] = None,
+        variables_path: Optional[Path] = None,
+    ) -> Path:
+        base = base_path or Path.cwd()
+        if self.results_csv:
+            path = Path(self.results_csv)
+            if not path.is_absolute():
+                path = base / path
+            return path
+        if variables_path is not None:
+            return variables_path.with_name(f"{variables_path.stem}_results.csv")
+        return base / "results.csv"
 
 
 @dataclass

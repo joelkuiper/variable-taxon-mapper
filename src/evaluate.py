@@ -21,21 +21,27 @@ from .taxonomy import is_ancestor_of
 from .utils import clean_str_or_none, split_keywords_comma
 
 
-def is_correct_prediction(
+def determine_match_type(
     pred_label: Optional[str], gold_labels: List[str], *, G
-) -> bool:
+) -> str:
     if not isinstance(pred_label, str):
-        return False
+        return "none"
     for g in gold_labels:
         if not isinstance(g, str):
             continue
         if pred_label == g:
-            return True
+            return "exact"
         if is_ancestor_of(G, pred_label, g):
-            return True
+            return "ancestor"
         if is_ancestor_of(G, g, pred_label):
-            return True
-    return False
+            return "descendant"
+    return "none"
+
+
+def is_correct_prediction(
+    pred_label: Optional[str], gold_labels: List[str], *, G
+) -> bool:
+    return determine_match_type(pred_label, gold_labels, G=G) != "none"
 
 
 def _coerce_eval_config(
@@ -182,7 +188,10 @@ def run_label_benchmark(
                 )
 
                 resolved_label = pred.get("resolved_label")
-                correct = is_correct_prediction(resolved_label, gold_labels, G=G)
+                match_type = determine_match_type(
+                    resolved_label, gold_labels, G=G
+                )
+                correct = match_type != "none"
 
                 out: Dict[str, Any] = {
                     "dataset": item.get("dataset"),
@@ -195,6 +204,7 @@ def run_label_benchmark(
                     "resolved_id": pred.get("resolved_id"),
                     "resolved_path": pred.get("resolved_path"),
                     "correct": bool(correct),
+                    "match_type": match_type,
                     "_idx": i,
                     "_j": j,
                     "_slot": slot_id,
@@ -244,14 +254,37 @@ def run_label_benchmark(
 
     df = pd.DataFrame(rows)
 
+    total_evaluated = int(len(df))
+
     metrics: Dict[str, Any] = {
         "n_total_rows_after_dedupe": int(total_rows),
         "n_with_any_keyword": int(total_with_any_keyword),
         "n_eligible": int(n_eligible),
         "n_excluded_not_in_taxonomy": int(n_excluded_not_in_taxonomy),
-        "n_evaluated": int(len(df)),
-        "label_accuracy_any_match": float(df["correct"].mean()) if len(df) else 0.0,
+        "n_evaluated": total_evaluated,
+        "n_correct": int(df["correct"].sum()) if total_evaluated else 0,
+        "label_accuracy_any_match": float(df["correct"].mean())
+        if total_evaluated
+        else 0.0,
         "n_errors": int(df["_error"].notna().sum()) if "_error" in df.columns else 0,
     }
+
+    if "match_type" in df.columns and total_evaluated:
+        match_counts_series = df["match_type"].value_counts(sort=False)
+        match_counts = {str(k): int(v) for k, v in match_counts_series.items()}
+        metrics["match_type_counts"] = match_counts
+        metrics["match_type_rates"] = {
+            str(k): float(v / total_evaluated) for k, v in match_counts.items()
+        }
+        metrics["label_accuracy_exact_only"] = float(
+            match_counts.get("exact", 0) / total_evaluated
+        )
+        metrics["label_accuracy_ancestor_only"] = float(
+            match_counts.get("ancestor", 0) / total_evaluated
+        )
+        metrics["label_accuracy_descendant_only"] = float(
+            match_counts.get("descendant", 0) / total_evaluated
+        )
+        metrics["n_unmatched"] = int(match_counts.get("none", 0))
 
     return df, metrics
