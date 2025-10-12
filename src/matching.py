@@ -204,6 +204,9 @@ def _hnsw_fallback_choose_label(
             if idx in allowed_idx_map and sim > scores.get(idx, -1.0):
                 scores[idx] = float(sim)
 
+    if not scores:
+        return None
+
     best_idx = max(scores.items(), key=lambda kv: kv[1])[0]
     return allowed_idx_map[best_idx]
 

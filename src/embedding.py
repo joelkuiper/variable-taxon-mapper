@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+import logging
+
 import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
+
 
 import pandas as pd
 
@@ -59,15 +62,18 @@ class Embedder:
     def encode(self, texts: Sequence[str]) -> np.ndarray:
         out = []
         bs = self.batch_size
+        total_tokens = 0
+
         for i in range(0, len(texts), bs):
             batch = texts[i : i + bs]
             toks = self.tok.batch_encode_plus(
                 batch,
-                padding="max_length",
+                padding=True,
                 max_length=self.max_length,
                 truncation=True,
                 return_tensors="pt",
             )
+            total_tokens += int(toks["attention_mask"].sum().item())
             toks = {k: v.to(self.device) for k, v in toks.items()}
             last_hidden = self.model(**toks)[0]
             if self.mean_pool:
@@ -122,9 +128,7 @@ def encode_item_texts(
 ) -> np.ndarray:
     """Encode selected text fields from ``item`` using ``embedder``."""
 
-    texts = collect_item_texts(
-        item, fields=fields, clean=clean, max_length=max_length
-    )
+    texts = collect_item_texts(item, fields=fields, clean=clean, max_length=max_length)
     if not texts:
         return np.zeros((0, 768), dtype=np.float32)
     return embedder.encode(texts)
