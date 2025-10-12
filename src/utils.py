@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+import numpy as np
+from typing import Any, List, Optional
 
 
 def clean_text(value: Any) -> str:
@@ -20,3 +21,22 @@ def clean_text(value: Any) -> str:
         pass
     text = str(value).strip()
     return text if text else "(empty)"
+
+
+def clean_str_or_none(v) -> Optional[str]:
+    if isinstance(v, str):
+        s = v.strip()
+        return s if s else None
+    try:
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return None
+    except Exception:
+        pass
+    s = str(v).strip()
+    return s if s else None
+
+
+def split_keywords_comma(s: Optional[str]) -> List[str]:
+    if not isinstance(s, str):
+        return []
+    return [t.strip() for t in s.split(",") if t.strip()]

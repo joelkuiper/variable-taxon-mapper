@@ -18,25 +18,7 @@ from .embedding import Embedder
 from .matching import match_item_to_tree
 from .taxonomy_pruning import pruned_tree_markdown_for_item
 from .taxonomy import is_ancestor_of
-
-
-def clean_str_or_none(v) -> Optional[str]:
-    if isinstance(v, str):
-        s = v.strip()
-        return s if s else None
-    try:
-        if v is None or (isinstance(v, float) and np.isnan(v)):
-            return None
-    except Exception:
-        pass
-    s = str(v).strip()
-    return s if s else None
-
-
-def split_keywords_comma(s: Optional[str]) -> List[str]:
-    if not isinstance(s, str):
-        return []
-    return [t.strip() for t in s.split(",") if t.strip()]
+from .utils import clean_str_or_none, split_keywords_comma
 
 
 def is_correct_prediction(
@@ -269,13 +251,6 @@ def run_label_benchmark(
         "n_excluded_not_in_taxonomy": int(n_excluded_not_in_taxonomy),
         "n_evaluated": int(len(df)),
         "label_accuracy_any_match": float(df["correct"].mean()) if len(df) else 0.0,
-        "dedupe_on": dedupe_on,
-        "max_workers": int(cfg.max_workers),
-        "num_slots": int(cfg.num_slots),
-        "pool_maxsize": int(cfg.pool_maxsize),
-        "n_predict": int(cfg.n_predict),
-        "temperature": float(cfg.temperature),
-        "endpoint": cfg.endpoint,
         "n_errors": int(df["_error"].notna().sum()) if "_error" in df.columns else 0,
     }
 
