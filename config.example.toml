@@ -22,7 +22,8 @@ num_threads = 0
 
 [evaluation]
 endpoint = "http://127.0.0.1:8080/completions"
-n = 1000
+# n = 1000
+n = 10_000
 seed = 37
 n_predict = 32
 dedupe_on = ["name"]

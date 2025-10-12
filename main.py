@@ -13,7 +13,7 @@ from src.embedding import (
     build_hnsw_index,
     build_taxonomy_embeddings_composed,
 )
-from src.evaluate import run_label_benchmark
+from src.evaluate import ProgressHook, run_label_benchmark
 from src.taxonomy import (
     build_gloss_map,
     build_name_maps_from_graph,
@@ -37,6 +37,8 @@ def run_pipeline(
     *,
     base_path: Path | None = None,
     variables_csv: Path | None = None,
+    evaluate: bool = True,
+    progress_hook: ProgressHook | None = None,
 ) -> Tuple[pd.DataFrame, dict[str, object]]:
     variables_default, keywords_path = config.data.to_paths(base_path)
     variables_path = variables_csv or variables_default
@@ -80,6 +82,8 @@ def run_pipeline(
         name_to_path=name_to_path,
         gloss_map=gloss_map,
         eval_config=config.evaluation,
+        evaluate=evaluate,
+        progress_hook=progress_hook,
     )
 
     return df, metrics

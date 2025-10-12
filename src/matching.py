@@ -239,19 +239,23 @@ async def match_item_to_tree(
     prompt = make_tree_match_prompt(tree_markdown, item)
     _print_prompt_once(prompt)
 
+    llama_kwargs: Dict[str, Any] = {
+        "temperature": temperature,
+        "top_k": top_k,
+        "top_p": top_p,
+        "min_p": min_p,
+        "grammar": grammar if grammar is not None else GRAMMAR_RESPONSE,
+        "cache_prompt": cache_prompt,
+        "n_keep": n_keep,
+        "slot_id": slot_id,
+        "session": session,
+    }
+    llama_kwargs["n_predict"] = max(int(n_predict), 64)
+
     raw = await llama_completion_async(
         prompt,
         endpoint,
-        temperature=temperature,
-        top_k=top_k,
-        top_p=top_p,
-        min_p=min_p,
-        n_predict=max(n_predict, 64),
-        grammar=grammar if grammar is not None else GRAMMAR_RESPONSE,
-        cache_prompt=cache_prompt,
-        n_keep=n_keep,
-        slot_id=slot_id,
-        session=session,
+        **llama_kwargs,
     )
 
     node_label_raw: Optional[str] = None
