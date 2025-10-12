@@ -65,7 +65,7 @@ def _expand_allowed_nodes(
     desc_max_depth: int,
     max_total_nodes: int,
 ) -> Set[str]:
-    """Build an allowed-node set containing anchors, ancestors and sampled descendants."""
+    """Build allowed-node set containing anchors, relatives, and sampled descendants."""
 
     def _descendant_order(node: str) -> List[str]:
         if desc_max_depth <= 0:
@@ -103,6 +103,37 @@ def _expand_allowed_nodes(
 
         for n in new_ancestors:
             allowed.add(n)
+
+        # Adding siblings and direct children before sampling deeper
+        # descendants, ensuring the rendered TREE includes those makes intuitive
+        # sense but it doesn't work performance wise
+        # if len(allowed) >= max_total_nodes:
+        #     continue
+
+        # siblings: Set[str] = set()
+        # for parent in G.predecessors(anchor):
+        #     if len(allowed) >= max_total_nodes:
+        #         break
+        #     if parent not in allowed:
+        #         allowed.add(parent)
+        #     for sib in G.successors(parent):
+        #         if sib == anchor or sib in allowed:
+        #             continue
+        #         siblings.add(sib)
+
+        # for sib in sorted(siblings, key=lambda s: s.lower()):
+        #     if len(allowed) >= max_total_nodes:
+        #         break
+        #     allowed.add(sib)
+
+        # if len(allowed) >= max_total_nodes:
+        #     continue
+
+        # children = [c for c in G.successors(anchor) if c not in allowed]
+        # for child in sorted(children, key=lambda s: s.lower()):
+        #     if len(allowed) >= max_total_nodes:
+        #         break
+        #     allowed.add(child)
 
         descendants_order = _descendant_order(anchor)
         has_descendants = bool(descendants_order)
