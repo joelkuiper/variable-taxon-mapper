@@ -263,7 +263,7 @@ def pruned_tree_markdown_for_item(
         len(allowed_ranked) if max_items <= 0 else min(max_items, len(allowed_ranked))
     )
 
-    md_lines = ["\n### TAXONOMY", tree_md, "\n### SUGGESTIONS"]
+    md_lines = ["\n## TAXONOMY", tree_md, "\n## SUGGESTIONS"]
     for label in allowed_ranked[:top_show]:
         md_lines.append(
             f"- {make_label_display(label, gloss_map or {}, use_summary=False)}"
