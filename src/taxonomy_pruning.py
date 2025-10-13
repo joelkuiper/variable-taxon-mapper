@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, cast
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, cast
 
 import networkx as nx
 import numpy as np
@@ -13,7 +13,6 @@ from .taxonomy import (
     collect_descendants,
     make_label_display,
     roots_in_order,
-    sort_key_factory,
 )
 
 import textdistance
@@ -99,6 +98,36 @@ def _hnsw_anchor_indices(
     if filtered:
         return filtered
     return [int(i) for i in idxs]
+
+
+def _taxonomy_similarity_scores(
+    item_embs: np.ndarray, tax_embs_unit: np.ndarray
+) -> np.ndarray:
+    """Return max pooled cosine similarity for each taxonomy node."""
+
+    if tax_embs_unit.size == 0:
+        return np.zeros((0,), dtype=np.float32)
+
+    N = tax_embs_unit.shape[0]
+    if item_embs.size == 0:
+        return np.zeros((N,), dtype=np.float32)
+
+    if tax_embs_unit.dtype != np.float32:
+        tax_embs = tax_embs_unit.astype(np.float32, copy=False)
+    else:
+        tax_embs = tax_embs_unit
+
+    if item_embs.dtype != np.float32:
+        item = item_embs.astype(np.float32, copy=False)
+    else:
+        item = item_embs
+
+    sims = tax_embs @ item.T
+    if sims.ndim == 1:
+        return sims.astype(np.float32, copy=False)
+
+    scores = sims.max(axis=1)
+    return scores.astype(np.float32, copy=False)
 
 
 def _undirected_taxonomy(G: nx.DiGraph) -> nx.Graph:
@@ -267,9 +296,7 @@ def _dominant_anchor_forest(
         if not candidate_nodes:
             candidate_nodes = set(anchor_set)
 
-        pagerank_scores = {
-            n: pagerank_scores.get(n, 0.0) for n in candidate_nodes
-        }
+        pagerank_scores = {n: pagerank_scores.get(n, 0.0) for n in candidate_nodes}
 
     if anchor_sources:
         distances = {n: distances_full.get(n, float("inf")) for n in candidate_nodes}
@@ -329,20 +356,24 @@ def _dominant_anchor_forest(
     return allowed
 
 
-def _rank_allowed_nodes(anchors: Sequence[str], allowed: Set[str]) -> List[str]:
-    """Return anchors first (deduped, in order) followed by remaining allowed nodes."""
+def _rank_allowed_nodes(
+    allowed: Set[str],
+    *,
+    similarity_map: Mapping[str, float],
+    order_map: Mapping[str, float],
+) -> List[str]:
+    """Return allowed nodes ranked by similarity (desc) with deterministic fallback."""
 
-    allowed_ranked: List[str] = []
-    seen: Set[str] = set()
-    for anchor in anchors:
-        if anchor in allowed and anchor not in seen:
-            allowed_ranked.append(anchor)
-            seen.add(anchor)
-    for node in sorted(allowed, key=lambda s: s.lower()):
-        if node not in seen:
-            allowed_ranked.append(node)
-            seen.add(node)
-    return allowed_ranked
+    def sort_key(name: str) -> Tuple[float, float, str]:
+        score = similarity_map.get(name, float("-inf"))
+        order_val = order_map.get(name, float("inf"))
+        return (
+            -score,
+            order_val if pd.notna(order_val) else float("inf"),
+            name.lower(),
+        )
+
+    return sorted(allowed, key=sort_key)
 
 
 def _render_tree_markdown(
@@ -353,11 +384,19 @@ def _render_tree_markdown(
     name_col: str,
     order_col: str,
     gloss_map: Optional[Dict[str, str]],
+    similarity_map: Mapping[str, float],
+    order_map: Mapping[str, float],
 ) -> Tuple[str, Optional[List[str]]]:
     """Render the allowed subtree as markdown; fallback to full taxonomy if empty."""
 
-    order_map = df.groupby(name_col)[order_col].min().to_dict()
-    sort_key = sort_key_factory(order_map)
+    def sort_key(node_name: str) -> Tuple[float, float, str]:
+        score = similarity_map.get(node_name, float("-inf"))
+        order_val = order_map.get(node_name, float("inf"))
+        return (
+            -score,
+            order_val if pd.notna(order_val) else float("inf"),
+            node_name.lower(),
+        )
 
     lines: List[str] = []
 
@@ -389,7 +428,7 @@ def _render_tree_markdown(
         _walk_full(root, 0)
 
     tree_md = "\n".join(fallback_lines)
-    fallback_ranked = sorted(G.nodes, key=lambda s: s.lower())
+    fallback_ranked = sorted(G.nodes, key=sort_key)
 
     return tree_md, fallback_ranked
 
@@ -422,6 +461,13 @@ def pruned_tree_markdown_for_item(
     """Return pruned tree markdown and ranked candidate labels for ``item``."""
 
     item_embs = encode_item_texts(item, embedder)
+
+    similarity_scores = _taxonomy_similarity_scores(item_embs, tax_embs_unit)
+    similarity_map: Dict[str, float] = {name: float("-inf") for name in tax_names}
+    limit = min(len(tax_names), len(similarity_scores))
+    for i in range(limit):
+        similarity_map[tax_names[i]] = float(similarity_scores[i])
+    order_map = df.groupby(name_col)[order_col].min().to_dict()
 
     if item_embs.size == 0:
         anchor_idxs = list(range(min(top_k_nodes, len(tax_names))))
@@ -468,7 +514,11 @@ def pruned_tree_markdown_for_item(
         pagerank_max_candidates=max(0, int(pagerank_max_candidates)),
     )
 
-    allowed_ranked = _rank_allowed_nodes(anchors, allowed)
+    allowed_ranked = _rank_allowed_nodes(
+        allowed,
+        similarity_map=similarity_map,
+        order_map=order_map,
+    )
 
     tree_md, fallback_ranked = _render_tree_markdown(
         G,
@@ -477,6 +527,8 @@ def pruned_tree_markdown_for_item(
         name_col=name_col,
         order_col=order_col,
         gloss_map=gloss_map,
+        similarity_map=similarity_map,
+        order_map=order_map,
     )
     if fallback_ranked is not None:
         allowed_ranked = fallback_ranked
@@ -486,7 +538,7 @@ def pruned_tree_markdown_for_item(
         len(allowed_ranked) if max_items <= 0 else min(max_items, len(allowed_ranked))
     )
 
-    md_lines = ["\n## TAXONOMY", tree_md, "\n## TOP SUGGESTIONS"]
+    md_lines = ["\n## TAXONOMY", tree_md, "\n## SUGGESTIONS"]
     for label in allowed_ranked[:top_show]:
         md_lines.append(
             f"- {make_label_display(label, gloss_map or {}, use_summary=False)}"
