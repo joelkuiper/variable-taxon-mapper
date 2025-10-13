@@ -253,6 +253,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             lexical_anchor_count=config.evaluation.lexical_anchor_count,
             community_k=config.evaluation.community_k,
             community_max_size=config.evaluation.community_max_size,
+            pagerank_alpha=config.evaluation.pagerank_alpha,
+            pagerank_score_threshold=config.evaluation.pagerank_score_threshold,
+            pagerank_max_candidates=config.evaluation.pagerank_max_candidates,
         )
 
         allowed_set = set(allowed_ranked)

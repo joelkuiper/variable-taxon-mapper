@@ -81,6 +81,9 @@ class EvaluationConfig:
     lexical_anchor_count: int = 3
     community_k: int = 2
     community_max_size: Optional[int] = 400
+    pagerank_alpha: float = 0.85
+    pagerank_score_threshold: float = 0.0
+    pagerank_max_candidates: int = 256
     llm_top_k: int = 20
     llm_top_p: float = 0.8
     llm_min_p: float = 0.0

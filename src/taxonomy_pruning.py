@@ -196,6 +196,9 @@ def _dominant_anchor_forest(
     max_total_nodes: int,
     community_k: int,
     community_max_size: Optional[int],
+    pagerank_alpha: float,
+    pagerank_score_threshold: float,
+    pagerank_max_candidates: int,
 ) -> Set[str]:
     """Select a covering forest rooted at anchors using a dominating-set view."""
 
@@ -212,64 +215,116 @@ def _dominant_anchor_forest(
     if not neighborhood:
         return set()
 
-    undirected = nx.Graph()
-    undirected.add_nodes_from(neighborhood)
-    undirected_base = G.to_undirected()
-    undirected.add_edges_from(
-        (u, v)
-        for u, v in undirected_base.edges()
-        if u in neighborhood and v in neighborhood
-    )
+    anchor_set: Set[str] = {a for a in anchors if G.has_node(a)}
+    candidate_nodes: Set[str] = set(neighborhood)
+    for anchor in anchor_set:
+        candidate_nodes.update(ancestors_to_root(G, anchor))
 
-    if not undirected.nodes:
+    if not candidate_nodes:
         return set()
 
-    dominating = set(
-        nx.algorithms.approximation.min_weighted_dominating_set(undirected)
-    )
-    dominating.update(anchors)
-
-    # Include nodes in the closed neighborhood of the dominating set to capture
-    # the covered regions.
-    coverage_nodes: Set[str] = set()
-    for node in dominating:
-        if node not in undirected:
-            continue
-        coverage_nodes.add(node)
-        coverage_nodes.update(undirected.neighbors(node))
-    coverage_nodes.update(a for a in anchors if G.has_node(a))
-
-    # Prioritize anchors, then remaining coverage nodes ordered by distance to
-    # any anchor (fallback to lexical order).
+    undirected = _undirected_taxonomy(G)
     anchor_sources = [a for a in anchors if a in undirected]
     if anchor_sources:
-        distances = nx.multi_source_dijkstra_path_length(
+        distances_full = nx.multi_source_dijkstra_path_length(
             undirected, sources=anchor_sources
         )
+    else:
+        distances_full = {}
+
+    if pagerank_max_candidates and pagerank_max_candidates > 0:
+        if len(candidate_nodes) > pagerank_max_candidates:
+            ordered_candidates = sorted(
+                candidate_nodes,
+                key=lambda n: (distances_full.get(n, float("inf")), n.lower()),
+            )
+            candidate_nodes = set(ordered_candidates[:pagerank_max_candidates])
+            for anchor in anchor_set:
+                candidate_nodes.update(ancestors_to_root(G, anchor))
+
+    subgraph = G.subgraph(candidate_nodes).copy()
+    if subgraph.number_of_nodes() == 0:
+        return set()
+
+    personalization = {n: 1.0 for n in anchor_set if n in subgraph}
+    pagerank_exception = getattr(nx, "PowerIterationFailedConvergence", RuntimeError)
+    try:
+        pagerank_scores = nx.pagerank(
+            subgraph,
+            alpha=pagerank_alpha,
+            personalization=personalization if personalization else None,
+        )
+    except pagerank_exception:
+        pagerank_scores = {n: 1.0 for n in subgraph}
+
+    if pagerank_score_threshold > 0.0:
+        candidate_nodes = {
+            n
+            for n in candidate_nodes
+            if pagerank_scores.get(n, 0.0) >= pagerank_score_threshold
+            or n in anchor_set
+        }
+        if not candidate_nodes:
+            candidate_nodes = set(anchor_set)
+
+        pagerank_scores = {
+            n: pagerank_scores.get(n, 0.0) for n in candidate_nodes
+        }
+
+    if anchor_sources:
+        distances = {n: distances_full.get(n, float("inf")) for n in candidate_nodes}
     else:
         distances = {}
 
     ordered_nodes: List[str] = []
     seen: Set[str] = set()
     for anchor in anchors:
-        if anchor in coverage_nodes and anchor not in seen:
+        if anchor in candidate_nodes and anchor not in seen:
             ordered_nodes.append(anchor)
             seen.add(anchor)
-    for node in sorted(
-        (coverage_nodes - seen),
-        key=lambda n: (distances.get(n, float("inf")), n.lower()),
-    ):
-        ordered_nodes.append(node)
+
+    remaining_nodes = [n for n in candidate_nodes if n not in seen]
+    remaining_nodes.sort(
+        key=lambda n: (
+            distances.get(n, float("inf")),
+            -pagerank_scores.get(n, 0.0),
+            n.lower(),
+        )
+    )
+    ordered_nodes.extend(remaining_nodes)
 
     allowed: Set[str] = set()
+    for anchor in anchors:
+        if anchor not in candidate_nodes or not G.has_node(anchor):
+            continue
+        path = ancestors_to_root(G, anchor)
+        new_nodes = [n for n in path if n not in allowed]
+        if max_total_nodes > 0 and len(allowed) + len(new_nodes) > max_total_nodes:
+            for node in path:
+                if node in allowed:
+                    continue
+                if max_total_nodes > 0 and len(allowed) >= max_total_nodes:
+                    break
+                allowed.add(node)
+            if len(allowed) >= max_total_nodes:
+                return allowed
+            continue
+        allowed.update(new_nodes)
+        if max_total_nodes > 0 and len(allowed) >= max_total_nodes:
+            return allowed
+
     for node in ordered_nodes:
-        if not G.has_node(node):
+        if node in allowed or not G.has_node(node):
             continue
         path = ancestors_to_root(G, node)
         new_nodes = [n for n in path if n not in allowed]
+        if not new_nodes:
+            continue
         if max_total_nodes > 0 and len(allowed) + len(new_nodes) > max_total_nodes:
             continue
-        allowed.update(path)
+        allowed.update(new_nodes)
+        if max_total_nodes > 0 and len(allowed) >= max_total_nodes:
+            break
 
     return allowed
 
@@ -360,6 +415,9 @@ def pruned_tree_markdown_for_item(
     lexical_anchor_count: int = 3,
     community_k: int = 2,
     community_max_size: Optional[int] = 400,
+    pagerank_alpha: float = 0.85,
+    pagerank_score_threshold: float = 0.0,
+    pagerank_max_candidates: int = 256,
 ) -> Tuple[str, List[str]]:
     """Return pruned tree markdown and ranked candidate labels for ``item``."""
 
@@ -405,6 +463,9 @@ def pruned_tree_markdown_for_item(
         max_total_nodes=max_total_nodes,
         community_k=max(2, int(community_k)) if community_k else 0,
         community_max_size=community_max_size_int,
+        pagerank_alpha=float(pagerank_alpha),
+        pagerank_score_threshold=float(pagerank_score_threshold),
+        pagerank_max_candidates=max(0, int(pagerank_max_candidates)),
     )
 
     allowed_ranked = _rank_allowed_nodes(anchors, allowed)

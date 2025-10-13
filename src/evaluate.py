@@ -92,6 +92,9 @@ def _collect_predictions(
                     lexical_anchor_count=cfg.lexical_anchor_count,
                     community_k=cfg.community_k,
                     community_max_size=cfg.community_max_size,
+                    pagerank_alpha=cfg.pagerank_alpha,
+                    pagerank_score_threshold=cfg.pagerank_score_threshold,
+                    pagerank_max_candidates=cfg.pagerank_max_candidates,
                 )
 
                 allowed_has_gold: Optional[bool] = None
