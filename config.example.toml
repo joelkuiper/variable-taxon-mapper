@@ -3,11 +3,12 @@ variables_csv = "data/Variables.csv"
 keywords_csv = "data/Keywords_summarized.csv"
 
 [embedder]
-model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
+#model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
+model_name = "BAAI/bge-large-en"
 max_length = 512
-batch_size = 128
+batch_size = 256
 fp16 = true
-mean_pool = false
+mean_pool = true
 
 [taxonomy_embeddings]
 gamma = 0.125
@@ -24,14 +25,11 @@ num_threads = 0
 endpoint = "http://127.0.0.1:8080/completions"
 n = 1000
 seed = 37
-n_predict = 32
+n_predict = 128
 dedupe_on = ["name"]
-top_k_nodes = 40
-desc_max_depth = 5
-max_total_nodes = 1024
-max_workers = 4
-num_slots = 4
-pool_maxsize = 64
+top_k_nodes = 36
+desc_max_depth = 6
+max_total_nodes = 1200
 candidate_list_max_items = 40
 anchor_overfetch_mult = 3
 anchor_min_overfetch = 128
@@ -41,6 +39,10 @@ llm_top_p = 0.8
 llm_min_p = 0.0
 llm_cache_prompt = true
 llm_n_keep = -1
+# Parallelism tunables
+num_slots = 4
+pool_maxsize = 4
+max_workers = 4
 http_sock_connect = 10.0
 http_sock_read_floor = 30.0
 progress_log_interval = 10
