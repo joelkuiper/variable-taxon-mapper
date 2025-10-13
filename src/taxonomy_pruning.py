@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import networkx as nx
@@ -10,6 +9,7 @@ import pandas as pd
 from .embedding import Embedder, collect_item_texts, encode_item_texts
 from .taxonomy import (
     ancestors_to_root,
+    collect_descendants,
     make_label_display,
     roots_in_order,
     sort_key_factory,
@@ -100,81 +100,98 @@ def _hnsw_anchor_indices(
     return [int(i) for i in idxs]
 
 
-def _expand_allowed_nodes(
+def _anchor_neighborhood(
+    G: nx.DiGraph, anchors: Sequence[str], *, desc_max_depth: int
+) -> Set[str]:
+    """Return nodes in the union of anchor ancestors and shallow descendants."""
+
+    if not anchors:
+        return set()
+
+    neighborhood: Set[str] = set()
+    for anchor in anchors:
+        if not G.has_node(anchor):
+            continue
+        neighborhood.update(ancestors_to_root(G, anchor))
+        if desc_max_depth > 0:
+            neighborhood.update(collect_descendants(G, anchor, desc_max_depth))
+    return neighborhood
+
+
+def _dominant_anchor_forest(
     G: nx.DiGraph,
     anchors: Sequence[str],
     *,
     desc_max_depth: int,
     max_total_nodes: int,
 ) -> Set[str]:
-    """Build allowed-node set containing anchors, relatives, and sampled descendants."""
+    """Select a covering forest rooted at anchors using a dominating-set view."""
 
-    def _descendant_order(node: str) -> List[str]:
-        if desc_max_depth <= 0:
-            return []
-        order: List[str] = []
-        seen: Set[str] = {node}
-        queue: deque[Tuple[str, int]] = deque([(node, 0)])
-        while queue:
-            cur, depth = queue.popleft()
-            if depth >= desc_max_depth:
-                continue
-            for child in G.successors(cur):
-                if child in seen:
-                    continue
-                seen.add(child)
-                order.append(child)
-                queue.append((child, depth + 1))
-        return order
+    if max_total_nodes == 0:
+        return set()
+
+    neighborhood = _anchor_neighborhood(G, anchors, desc_max_depth=desc_max_depth)
+    if not neighborhood:
+        return set()
+
+    undirected = nx.Graph()
+    undirected.add_nodes_from(neighborhood)
+    undirected_base = G.to_undirected()
+    undirected.add_edges_from(
+        (u, v)
+        for u, v in undirected_base.edges()
+        if u in neighborhood and v in neighborhood
+    )
+
+    if not undirected.nodes:
+        return set()
+
+    dominating = set(
+        nx.algorithms.approximation.min_weighted_dominating_set(undirected)
+    )
+    dominating.update(anchors)
+
+    # Include nodes in the closed neighborhood of the dominating set to capture
+    # the covered regions.
+    coverage_nodes: Set[str] = set()
+    for node in dominating:
+        if node not in undirected:
+            continue
+        coverage_nodes.add(node)
+        coverage_nodes.update(undirected.neighbors(node))
+    coverage_nodes.update(a for a in anchors if G.has_node(a))
+
+    # Prioritize anchors, then remaining coverage nodes ordered by distance to
+    # any anchor (fallback to lexical order).
+    anchor_sources = [a for a in anchors if a in undirected]
+    if anchor_sources:
+        distances = nx.multi_source_dijkstra_path_length(
+            undirected, sources=anchor_sources
+        )
+    else:
+        distances = {}
+
+    ordered_nodes: List[str] = []
+    seen: Set[str] = set()
+    for anchor in anchors:
+        if anchor in coverage_nodes and anchor not in seen:
+            ordered_nodes.append(anchor)
+            seen.add(anchor)
+    for node in sorted(
+        (coverage_nodes - seen),
+        key=lambda n: (distances.get(n, float("inf")), n.lower()),
+    ):
+        ordered_nodes.append(node)
 
     allowed: Set[str] = set()
-    if max_total_nodes <= 0:
-        return allowed
-
-    total_anchors = len(anchors)
-
-    for idx, anchor in enumerate(anchors):
-        if len(allowed) >= max_total_nodes:
-            break
-
-        ancestors = ancestors_to_root(G, anchor)
-        new_ancestors = [n for n in ancestors if n not in allowed]
-
-        if len(allowed) + len(new_ancestors) > max_total_nodes:
+    for node in ordered_nodes:
+        if not G.has_node(node):
             continue
-
-        for n in new_ancestors:
-            allowed.add(n)
-
-        descendants_order = _descendant_order(anchor)
-        has_descendants = bool(descendants_order)
-
-        if not has_descendants:
+        path = ancestors_to_root(G, node)
+        new_nodes = [n for n in path if n not in allowed]
+        if max_total_nodes > 0 and len(allowed) + len(new_nodes) > max_total_nodes:
             continue
-
-        remaining_capacity = max_total_nodes - len(allowed)
-        if remaining_capacity <= 0:
-            continue
-
-        remaining_anchors = max(total_anchors - (idx + 1), 0)
-        if remaining_anchors > 0:
-            per_anchor_base = remaining_capacity // (remaining_anchors + 1)
-            extra = remaining_capacity % (remaining_anchors + 1)
-            desc_budget = per_anchor_base + (1 if extra > 0 else 0)
-        else:
-            desc_budget = remaining_capacity
-        desc_budget = max(1, min(desc_budget, remaining_capacity))
-
-        added_descendants: Set[str] = set()
-        for node in descendants_order:
-            if len(allowed) >= max_total_nodes or len(added_descendants) >= desc_budget:
-                break
-            if node in allowed:
-                continue
-            if not any(pred in allowed for pred in G.predecessors(node)):
-                continue
-            allowed.add(node)
-            added_descendants.add(node)
+        allowed.update(path)
 
     return allowed
 
@@ -294,7 +311,7 @@ def pruned_tree_markdown_for_item(
 
     anchors = [tax_names[i] for i in combined_anchor_idxs]
 
-    allowed = _expand_allowed_nodes(
+    allowed = _dominant_anchor_forest(
         G,
         anchors,
         desc_max_depth=desc_max_depth,
@@ -319,7 +336,7 @@ def pruned_tree_markdown_for_item(
         len(allowed_ranked) if max_items <= 0 else min(max_items, len(allowed_ranked))
     )
 
-    md_lines = ["\n## TAXONOMY", tree_md, "\n## SUGGESTIONS"]
+    md_lines = ["\n## TAXONOMY", tree_md, "\n## TOP SUGGESTIONS"]
     for label in allowed_ranked[:top_show]:
         md_lines.append(
             f"- {make_label_display(label, gloss_map or {}, use_summary=False)}"

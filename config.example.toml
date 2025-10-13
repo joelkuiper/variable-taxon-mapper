@@ -3,12 +3,12 @@ variables_csv = "data/Variables.csv"
 keywords_csv = "data/Keywords_summarized.csv"
 
 [embedder]
-#model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
-model_name = "BAAI/bge-large-en"
+model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
+# model_name = "BAAI/bge-large-en"
 max_length = 512
 batch_size = 256
 fp16 = true
-mean_pool = true
+mean_pool = false
 
 [taxonomy_embeddings]
 gamma = 0.125
@@ -25,14 +25,16 @@ num_threads = 0
 endpoint = "http://127.0.0.1:8080/completions"
 n = 1000
 seed = 37
-n_predict = 128
 dedupe_on = ["name"]
-top_k_nodes = 36
-desc_max_depth = 6
-max_total_nodes = 1200
-candidate_list_max_items = 40
+# Tree pruning
+top_k_nodes = 32
+desc_max_depth = 5
+max_total_nodes = 2000
+candidate_list_max_items = 8
 anchor_overfetch_mult = 3
 anchor_min_overfetch = 128
+# LLM tunables
+n_predict = 32
 temperature = 0.0
 llm_top_k = 20
 llm_top_p = 0.8
