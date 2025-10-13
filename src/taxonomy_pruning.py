@@ -1,19 +1,61 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import networkx as nx
 import numpy as np
 import pandas as pd
 
-from .embedding import Embedder, encode_item_texts
+from .embedding import Embedder, collect_item_texts, encode_item_texts
 from .taxonomy import (
     ancestors_to_root,
     make_label_display,
     roots_in_order,
     sort_key_factory,
 )
+
+import textdistance
+
+
+def _normalized_token_similarity(a: str, b: str) -> float:
+    """Return token-sort based similarity score in ``[0, 1]`` for two strings."""
+
+    return 1 - textdistance.entropy_ncd(a, b)
+
+
+def _lexical_anchor_indices(
+    item_texts: Iterable[str],
+    tax_names: Sequence[str],
+    *,
+    existing: Sequence[int],
+    max_anchors: int = 3,
+) -> List[int]:
+    """Return indices of lexically similar taxonomy names using token sorting."""
+
+    if textdistance is None or max_anchors <= 0:
+        return []
+
+    normalized_item_texts = [t.lower() for t in item_texts if t]
+    if not normalized_item_texts:
+        return []
+
+    existing_set = set(existing)
+    scored: List[Tuple[float, int]] = []
+    for idx, name in enumerate(tax_names):
+        if idx in existing_set:
+            continue
+        norm_name = name.lower()
+        best = 0.0
+        for text in normalized_item_texts:
+            best = max(best, _normalized_token_similarity(norm_name, text))
+            if best >= 1.0:
+                break
+        if best > 0.0:
+            scored.append((best, idx))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [idx for _, idx in scored[:max_anchors]]
 
 
 def _hnsw_anchor_indices(
@@ -103,37 +145,6 @@ def _expand_allowed_nodes(
 
         for n in new_ancestors:
             allowed.add(n)
-
-        # Adding siblings and direct children before sampling deeper
-        # descendants, ensuring the rendered TREE includes those makes intuitive
-        # sense but it doesn't work performance wise
-        # if len(allowed) >= max_total_nodes:
-        #     continue
-
-        # siblings: Set[str] = set()
-        # for parent in G.predecessors(anchor):
-        #     if len(allowed) >= max_total_nodes:
-        #         break
-        #     if parent not in allowed:
-        #         allowed.add(parent)
-        #     for sib in G.successors(parent):
-        #         if sib == anchor or sib in allowed:
-        #             continue
-        #         siblings.add(sib)
-
-        # for sib in sorted(siblings, key=lambda s: s.lower()):
-        #     if len(allowed) >= max_total_nodes:
-        #         break
-        #     allowed.add(sib)
-
-        # if len(allowed) >= max_total_nodes:
-        #     continue
-
-        # children = [c for c in G.successors(anchor) if c not in allowed]
-        # for child in sorted(children, key=lambda s: s.lower()):
-        #     if len(allowed) >= max_total_nodes:
-        #         break
-        #     allowed.add(child)
 
         descendants_order = _descendant_order(anchor)
         has_descendants = bool(descendants_order)
@@ -251,6 +262,7 @@ def pruned_tree_markdown_for_item(
     anchor_overfetch_mult: int = 3,
     anchor_min_overfetch: int = 128,
     candidate_list_max_items: int = 40,
+    lexical_anchor_count: int = 3,
 ) -> Tuple[str, List[str]]:
     """Return pruned tree markdown and ranked candidate labels for ``item``."""
 
@@ -267,7 +279,20 @@ def pruned_tree_markdown_for_item(
             overfetch_mult=max(1, int(anchor_overfetch_mult)),
             min_overfetch=max(1, int(anchor_min_overfetch)),
         )
-    anchors = [tax_names[i] for i in anchor_idxs]
+    item_texts = collect_item_texts(item)
+    lexical_anchor_idxs = _lexical_anchor_indices(
+        item_texts,
+        tax_names,
+        existing=anchor_idxs,
+        max_anchors=max(0, int(lexical_anchor_count)),
+    )
+
+    combined_anchor_idxs: List[int] = []
+    for idx in list(anchor_idxs) + lexical_anchor_idxs:
+        if idx not in combined_anchor_idxs:
+            combined_anchor_idxs.append(idx)
+
+    anchors = [tax_names[i] for i in combined_anchor_idxs]
 
     allowed = _expand_allowed_nodes(
         G,
