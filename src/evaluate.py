@@ -63,113 +63,141 @@ def _collect_predictions(
             limit=max(1, cfg.pool_maxsize), limit_per_host=max(1, cfg.pool_maxsize)
         )
 
-        rows: List[Dict[str, Any]] = []
+        total = len(jobs)
+        rows: List[Optional[Dict[str, Any]]] = [None] * total
         start = time.time()
         correct_sum = 0
-        total = len(jobs)
+        gold_progress_seen = False
+
+        slot_limit = max(1, getattr(cfg, "num_slots", 1) or 1)
+        pool_limit = max(1, getattr(cfg, "pool_maxsize", slot_limit) or slot_limit)
+        concurrency_limit = max(1, min(slot_limit, pool_limit))
+        semaphore = asyncio.Semaphore(concurrency_limit)
 
         async with aiohttp.ClientSession(
             timeout=timeout_cfg, connector=connector
         ) as session:
-            for job in jobs:
-                tree_markdown, allowed_labels = pruned_tree_markdown_for_item(
-                    job.item,
-                    G=G,
-                    df=keywords,
-                    embedder=embedder,
-                    tax_names=tax_names,
-                    tax_embs_unit=tax_embs_unit,
-                    hnsw_index=hnsw_index,
-                    name_col="name",
-                    order_col="order",
-                    top_k_nodes=cfg.top_k_nodes,
-                    desc_max_depth=cfg.desc_max_depth,
-                    max_total_nodes=cfg.max_total_nodes,
-                    gloss_map=gloss_map,
-                    anchor_overfetch_mult=cfg.anchor_overfetch_mult,
-                    anchor_min_overfetch=cfg.anchor_min_overfetch,
-                    candidate_list_max_items=cfg.candidate_list_max_items,
-                    lexical_anchor_count=cfg.lexical_anchor_count,
-                    community_k=cfg.community_k,
-                    community_max_size=cfg.community_max_size,
-                    pagerank_alpha=cfg.pagerank_alpha,
-                    pagerank_score_threshold=cfg.pagerank_score_threshold,
-                    pagerank_max_candidates=cfg.pagerank_max_candidates,
-                )
-
-                allowed_has_gold: Optional[bool] = None
-                if job.gold_labels is not None:
-                    if allowed_labels:
-                        allowed_lookup = set(allowed_labels)
-                        allowed_has_gold = any(
-                            g in allowed_lookup for g in job.gold_labels if g
-                        )
-                    else:
-                        allowed_has_gold = False
-
-                match_kwargs = {}
-                if cfg.llm_grammar is not None:
-                    match_kwargs["grammar"] = cfg.llm_grammar
-
-                pred = await match_item_to_tree(
-                    job.item,
-                    tree_markdown=tree_markdown,
-                    allowed_labels=allowed_labels,
-                    name_to_id=name_to_id,
-                    name_to_path=name_to_path,
-                    tax_names=tax_names,
-                    tax_embs=tax_embs_unit,
-                    embedder=embedder,
-                    hnsw_index=hnsw_index,
-                    endpoint=cfg.endpoint,
-                    n_predict=cfg.n_predict,
-                    temperature=cfg.temperature,
-                    slot_id=job.slot_id,
-                    cache_prompt=cfg.llm_cache_prompt,
-                    n_keep=cfg.llm_n_keep,
-                    top_k=cfg.llm_top_k,
-                    top_p=cfg.llm_top_p,
-                    min_p=cfg.llm_min_p,
-                    session=session,
-                    **match_kwargs,
-                )
-
-                resolved_label = pred.get("resolved_label")
-                result: Dict[str, Any] = dict(job.metadata)
-                result.update(
-                    {
-                        "pred_label_raw": pred.get("pred_label_raw"),
-                        "resolved_label": resolved_label,
-                        "resolved_id": pred.get("resolved_id"),
-                        "resolved_path": pred.get("resolved_path"),
-                        "_error": job.metadata.get("_error"),
-                    }
-                )
-
-                if "raw" in pred:
-                    result["raw"] = pred["raw"]
-
-                if job.gold_labels is not None:
-                    match_type = determine_match_type(
-                        resolved_label, job.gold_labels, G=G
+            async def _predict_job(
+                idx: int, job: PredictionJob
+            ) -> tuple[int, Dict[str, Any], int, bool]:
+                async with semaphore:
+                    tree_markdown, allowed_labels = pruned_tree_markdown_for_item(
+                        job.item,
+                        G=G,
+                        df=keywords,
+                        embedder=embedder,
+                        tax_names=tax_names,
+                        tax_embs_unit=tax_embs_unit,
+                        hnsw_index=hnsw_index,
+                        name_col="name",
+                        order_col="order",
+                        top_k_nodes=cfg.top_k_nodes,
+                        desc_max_depth=cfg.desc_max_depth,
+                        max_total_nodes=cfg.max_total_nodes,
+                        gloss_map=gloss_map,
+                        anchor_overfetch_mult=cfg.anchor_overfetch_mult,
+                        anchor_min_overfetch=cfg.anchor_min_overfetch,
+                        candidate_list_max_items=cfg.candidate_list_max_items,
+                        lexical_anchor_count=cfg.lexical_anchor_count,
+                        community_k=cfg.community_k,
+                        community_max_size=cfg.community_max_size,
+                        pagerank_alpha=cfg.pagerank_alpha,
+                        pagerank_score_threshold=cfg.pagerank_score_threshold,
+                        pagerank_max_candidates=cfg.pagerank_max_candidates,
                     )
-                    correct = match_type != "none"
-                    result["gold_labels"] = job.gold_labels
-                    result["match_type"] = match_type
-                    result["correct"] = bool(correct)
-                    allowed_has_gold_flag = bool(allowed_has_gold)
-                    result["possible_correct_under_allowed"] = allowed_has_gold_flag
-                    result["allowed_subtree_contains_gold"] = allowed_has_gold_flag
-                    correct_sum += 1 if correct else 0
 
-                rows.append(result)
+                    allowed_has_gold: Optional[bool] = None
+                    if job.gold_labels is not None:
+                        if allowed_labels:
+                            allowed_lookup = set(allowed_labels)
+                            allowed_has_gold = any(
+                                g in allowed_lookup for g in job.gold_labels if g
+                            )
+                        else:
+                            allowed_has_gold = False
+
+                    match_kwargs = {}
+                    if cfg.llm_grammar is not None:
+                        match_kwargs["grammar"] = cfg.llm_grammar
+
+                    pred = await match_item_to_tree(
+                        job.item,
+                        tree_markdown=tree_markdown,
+                        allowed_labels=allowed_labels,
+                        name_to_id=name_to_id,
+                        name_to_path=name_to_path,
+                        tax_names=tax_names,
+                        tax_embs=tax_embs_unit,
+                        embedder=embedder,
+                        hnsw_index=hnsw_index,
+                        endpoint=cfg.endpoint,
+                        n_predict=cfg.n_predict,
+                        temperature=cfg.temperature,
+                        slot_id=job.slot_id,
+                        cache_prompt=cfg.llm_cache_prompt,
+                        n_keep=cfg.llm_n_keep,
+                        top_k=cfg.llm_top_k,
+                        top_p=cfg.llm_top_p,
+                        min_p=cfg.llm_min_p,
+                        session=session,
+                        **match_kwargs,
+                    )
+
+                    resolved_label = pred.get("resolved_label")
+                    result: Dict[str, Any] = dict(job.metadata)
+                    result.update(
+                        {
+                            "pred_label_raw": pred.get("pred_label_raw"),
+                            "resolved_label": resolved_label,
+                            "resolved_id": pred.get("resolved_id"),
+                            "resolved_path": pred.get("resolved_path"),
+                            "_error": job.metadata.get("_error"),
+                        }
+                    )
+
+                    if "raw" in pred:
+                        result["raw"] = pred["raw"]
+
+                    correct_increment = 0
+                    has_gold_labels = job.gold_labels is not None
+                    if has_gold_labels:
+                        match_type = determine_match_type(
+                            resolved_label, job.gold_labels, G=G
+                        )
+                        correct = match_type != "none"
+                        result["gold_labels"] = job.gold_labels
+                        result["match_type"] = match_type
+                        result["correct"] = bool(correct)
+                        allowed_has_gold_flag = bool(allowed_has_gold)
+                        result["possible_correct_under_allowed"] = allowed_has_gold_flag
+                        result["allowed_subtree_contains_gold"] = allowed_has_gold_flag
+                        correct_increment = 1 if correct else 0
+
+                    return idx, result, correct_increment, has_gold_labels
+
+            tasks = [
+                asyncio.create_task(_predict_job(idx, job)) for idx, job in enumerate(jobs)
+            ]
+
+            completed = 0
+
+            for task in asyncio.as_completed(tasks):
+                idx, result, correct_increment, has_gold_labels = await task
+                rows[idx] = result
+                completed += 1
+                if has_gold_labels:
+                    gold_progress_seen = True
+                    correct_sum += correct_increment
 
                 if progress_hook is not None:
                     elapsed = max(time.time() - start, 0.0)
-                    hook_correct = correct_sum if job.gold_labels is not None else None
-                    progress_hook(len(rows), total, hook_correct, elapsed)
+                    hook_correct = correct_sum if gold_progress_seen else None
+                    progress_hook(completed, total, hook_correct, elapsed)
 
-        return rows
+            for task in tasks:
+                task.result()
+
+        return [r for r in rows if r is not None]
 
     try:
         rows = asyncio.run(_predict_all())
