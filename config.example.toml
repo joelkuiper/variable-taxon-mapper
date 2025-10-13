@@ -8,7 +8,7 @@ model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
 max_length = 512
 batch_size = 256
 fp16 = true
-mean_pool = false
+mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
 gamma = 0.125
@@ -29,12 +29,12 @@ dedupe_on = ["name"]
 # Tree pruning
 top_k_nodes = 32
 desc_max_depth = 5
-max_total_nodes = 2000
+max_total_nodes = 1200
 candidate_list_max_items = 8
 anchor_overfetch_mult = 3
 anchor_min_overfetch = 128
 # LLM tunables
-n_predict = 32
+n_predict = 64
 temperature = 0.0
 llm_top_k = 20
 llm_top_p = 0.8

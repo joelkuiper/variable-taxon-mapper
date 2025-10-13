@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from collections import defaultdict
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, cast
 
 import networkx as nx
 import numpy as np
@@ -100,10 +101,68 @@ def _hnsw_anchor_indices(
     return [int(i) for i in idxs]
 
 
+def _undirected_taxonomy(G: nx.DiGraph) -> nx.Graph:
+    """Return a cached undirected view of ``G`` for reuse in community detection."""
+
+    signature = (G.number_of_nodes(), G.number_of_edges())
+    cached = G.graph.get("_undirected_taxonomy_cache")
+    if not cached or cached.get("signature") != signature:
+        undirected = nx.Graph()
+        undirected.add_nodes_from(G.nodes)
+        undirected.add_edges_from(G.edges())
+        cached = {"signature": signature, "graph": undirected}
+        G.graph["_undirected_taxonomy_cache"] = cached
+    return cached["graph"]
+
+
+def _node_community_memberships(
+    G: nx.DiGraph, *, k: int
+) -> Tuple[Dict[str, List[int]], List[Set[str]]]:
+    """Return ``(node -> community ids, community id -> node set)`` for ``k``-cliques."""
+
+    if k < 2:
+        return {}, []
+
+    signature = (G.number_of_nodes(), G.number_of_edges())
+    cache: Dict[Tuple[str, int], Dict[str, object]] = G.graph.setdefault(
+        "_community_cache", {}
+    )
+    key = ("k_clique", int(k))
+    entry = cache.get(key)
+
+    if not entry or entry.get("signature") != signature:
+        undirected = _undirected_taxonomy(G)
+        communities_iter = nx.algorithms.community.k_clique_communities(
+            undirected, int(max(2, k))
+        )
+        communities = [set(comm) for comm in communities_iter]
+        node_to_comms: Dict[str, List[int]] = defaultdict(list)
+        for idx, nodes in enumerate(communities):
+            for node in nodes:
+                node_to_comms[node].append(idx)
+        for node in undirected.nodes:
+            node_to_comms.setdefault(node, [])
+        entry = {
+            "signature": signature,
+            "node_to": dict(node_to_comms),
+            "communities": communities,
+        }
+        cache[key] = entry
+
+    node_to = cast(Dict[str, List[int]], entry["node_to"])
+    communities = cast(List[Set[str]], entry["communities"])
+    return node_to, communities
+
+
 def _anchor_neighborhood(
-    G: nx.DiGraph, anchors: Sequence[str], *, desc_max_depth: int
+    G: nx.DiGraph,
+    anchors: Sequence[str],
+    *,
+    desc_max_depth: int,
+    community_k: int,
+    community_max_size: Optional[int],
 ) -> Set[str]:
-    """Return nodes in the union of anchor ancestors and shallow descendants."""
+    """Return nodes reachable via ancestry/descendant rules and clique communities."""
 
     if not anchors:
         return set()
@@ -115,6 +174,17 @@ def _anchor_neighborhood(
         neighborhood.update(ancestors_to_root(G, anchor))
         if desc_max_depth > 0:
             neighborhood.update(collect_descendants(G, anchor, desc_max_depth))
+
+    if community_k >= 2:
+        node_to_comms, communities = _node_community_memberships(G, k=community_k)
+        for anchor in anchors:
+            for comm_idx in node_to_comms.get(anchor, []):
+                members = communities[comm_idx]
+                if community_max_size and community_max_size > 0:
+                    if len(members) > community_max_size:
+                        continue
+                neighborhood.update(members)
+
     return neighborhood
 
 
@@ -124,13 +194,21 @@ def _dominant_anchor_forest(
     *,
     desc_max_depth: int,
     max_total_nodes: int,
+    community_k: int,
+    community_max_size: Optional[int],
 ) -> Set[str]:
     """Select a covering forest rooted at anchors using a dominating-set view."""
 
     if max_total_nodes == 0:
         return set()
 
-    neighborhood = _anchor_neighborhood(G, anchors, desc_max_depth=desc_max_depth)
+    neighborhood = _anchor_neighborhood(
+        G,
+        anchors,
+        desc_max_depth=desc_max_depth,
+        community_k=community_k,
+        community_max_size=community_max_size,
+    )
     if not neighborhood:
         return set()
 
@@ -280,6 +358,8 @@ def pruned_tree_markdown_for_item(
     anchor_min_overfetch: int = 128,
     candidate_list_max_items: int = 40,
     lexical_anchor_count: int = 3,
+    community_k: int = 2,
+    community_max_size: Optional[int] = 400,
 ) -> Tuple[str, List[str]]:
     """Return pruned tree markdown and ranked candidate labels for ``item``."""
 
@@ -311,11 +391,20 @@ def pruned_tree_markdown_for_item(
 
     anchors = [tax_names[i] for i in combined_anchor_idxs]
 
+    if community_max_size is None:
+        community_max_size_int = None
+    else:
+        community_max_size_int = int(community_max_size)
+        if community_max_size_int <= 0:
+            community_max_size_int = None
+
     allowed = _dominant_anchor_forest(
         G,
         anchors,
         desc_max_depth=desc_max_depth,
         max_total_nodes=max_total_nodes,
+        community_k=max(2, int(community_k)) if community_k else 0,
+        community_max_size=community_max_size_int,
     )
 
     allowed_ranked = _rank_allowed_nodes(anchors, allowed)
