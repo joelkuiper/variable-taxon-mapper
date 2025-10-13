@@ -91,6 +91,16 @@ def _collect_predictions(
                     candidate_list_max_items=cfg.candidate_list_max_items,
                 )
 
+                allowed_has_gold: Optional[bool] = None
+                if job.gold_labels is not None:
+                    if allowed_labels:
+                        allowed_lookup = set(allowed_labels)
+                        allowed_has_gold = any(
+                            g in allowed_lookup for g in job.gold_labels if g
+                        )
+                    else:
+                        allowed_has_gold = False
+
                 match_kwargs = {}
                 if cfg.llm_grammar is not None:
                     match_kwargs["grammar"] = cfg.llm_grammar
@@ -134,13 +144,6 @@ def _collect_predictions(
                     result["raw"] = pred["raw"]
 
                 if job.gold_labels is not None:
-                    allowed_has_gold = False
-                    if allowed_labels:
-                        allowed_lookup = set(allowed_labels)
-                        allowed_has_gold = any(
-                            g in allowed_lookup for g in job.gold_labels if g
-                        )
-
                     match_type = determine_match_type(
                         resolved_label, job.gold_labels, G=G
                     )
@@ -148,9 +151,9 @@ def _collect_predictions(
                     result["gold_labels"] = job.gold_labels
                     result["match_type"] = match_type
                     result["correct"] = bool(correct)
-                    result["possible_correct_under_allowed"] = bool(
-                        allowed_has_gold
-                    )
+                    allowed_has_gold_flag = bool(allowed_has_gold)
+                    result["possible_correct_under_allowed"] = allowed_has_gold_flag
+                    result["allowed_subtree_contains_gold"] = allowed_has_gold_flag
                     correct_sum += 1 if correct else 0
 
                 rows.append(result)
