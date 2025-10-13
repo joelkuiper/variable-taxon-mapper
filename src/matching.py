@@ -99,7 +99,7 @@ def _canonicalize_label_text(
         return normalized, direct_resolved
 
     while True:
-        trimmed = re.sub(r"\s*\([^()]*\)\s*$", "", normalized)
+        trimmed = re.sub(r"\s*\[[^()]*\]\s*$", "", normalized)
         if trimmed == normalized:
             break
         normalized = trimmed.strip()

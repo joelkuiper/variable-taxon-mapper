@@ -27,11 +27,11 @@ n = 1000
 seed = 37
 dedupe_on = ["name"]
 # Tree pruning
-top_k_nodes = 32
-desc_max_depth = 5
-max_total_nodes = 560
-candidate_list_max_items = 8
-lexical_anchor_count = 3
+top_k_nodes = 20
+desc_max_depth = 3
+max_total_nodes = 640
+candidate_list_max_items = 16
+lexical_anchor_count = 5
 community_k = 2
 community_max_size = 256
 anchor_overfetch_mult = 3

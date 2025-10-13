@@ -169,7 +169,7 @@ def build_gloss_map(keywords_df: Optional[pd.DataFrame]) -> Dict[str, str]:
 def make_label_display(
     name: str, gloss_map: Dict[str, str], use_summary: bool = True
 ) -> str:
-    """Render 'Label — summary' for display; fall back to plain label."""
+    """Render 'Label [summary]' for display; fall back to plain label."""
     if not isinstance(name, str) or not name:
         return str(name)
     if not use_summary:
@@ -177,7 +177,7 @@ def make_label_display(
     else:
         g = gloss_map.get(name, "")
         g = g.strip() if isinstance(g, str) else ""
-        return f"{name} ({g})" if g else name
+        return f"{name} [{g}]" if g else name
 
 
 def ancestors_inclusive(G: nx.DiGraph, node: str) -> List[str]:
