@@ -89,6 +89,9 @@ def _collect_predictions(
                     anchor_overfetch_mult=cfg.anchor_overfetch_mult,
                     anchor_min_overfetch=cfg.anchor_min_overfetch,
                     candidate_list_max_items=cfg.candidate_list_max_items,
+                    lexical_anchor_count=cfg.lexical_anchor_count,
+                    community_k=cfg.community_k,
+                    community_max_size=cfg.community_max_size,
                 )
 
                 allowed_has_gold: Optional[bool] = None

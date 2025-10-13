@@ -78,6 +78,9 @@ class EvaluationConfig:
     candidate_list_max_items: int = 40
     anchor_overfetch_mult: int = 3
     anchor_min_overfetch: int = 128
+    lexical_anchor_count: int = 3
+    community_k: int = 2
+    community_max_size: Optional[int] = 400
     llm_top_k: int = 20
     llm_top_p: float = 0.8
     llm_min_p: float = 0.0

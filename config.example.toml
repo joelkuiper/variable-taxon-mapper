@@ -31,6 +31,9 @@ top_k_nodes = 32
 desc_max_depth = 5
 max_total_nodes = 1200
 candidate_list_max_items = 8
+lexical_anchor_count = 3
+community_k = 2
+community_max_size = 400
 anchor_overfetch_mult = 3
 anchor_min_overfetch = 128
 # LLM tunables

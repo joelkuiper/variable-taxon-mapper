@@ -250,6 +250,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             anchor_overfetch_mult=config.evaluation.anchor_overfetch_mult,
             anchor_min_overfetch=config.evaluation.anchor_min_overfetch,
             candidate_list_max_items=config.evaluation.candidate_list_max_items,
+            lexical_anchor_count=config.evaluation.lexical_anchor_count,
+            community_k=config.evaluation.community_k,
+            community_max_size=config.evaluation.community_max_size,
         )
 
         allowed_set = set(allowed_ranked)
