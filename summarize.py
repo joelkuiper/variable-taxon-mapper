@@ -21,11 +21,14 @@ import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Optional
+from dataclasses import dataclass
+from typing import Dict, Optional, Set
 
 import pandas as pd
 import requests
 from tqdm.auto import tqdm
+
+from src.taxonomy import build_name_maps_from_graph, build_taxonomy_graph
 
 
 # -------------------------------
@@ -79,8 +82,15 @@ Rewrite the provided definition as a SINGLE sentence fragment suitable for a des
 
 Rules:
 - Maximum {max_words} words.
-- Expand uncommon abbreviations only if needed for clarity.
+- Expand biomedical acronyms when needed for clarity (e.g., spell out uncommon abbreviations on first mention).
 """.strip()
+
+
+@dataclass(frozen=True)
+class SummaryContext:
+    definition: str
+    label: str
+    path: str
 
 
 def normalize(s: Optional[str]) -> str:
@@ -97,9 +107,17 @@ def trim_to_words(s: str, max_words: int) -> str:
     return s
 
 
-def make_prompt(def_text: str, max_words: int) -> str:
+def make_prompt(context: SummaryContext, max_words: int) -> str:
     sysmsg = SYSTEM_INSTRUCTIONS_TEMPLATE.format(max_words=max_words)
-    user = f"Original definition: {normalize(def_text)}\n"
+
+    user_lines = []
+    if context.label:
+        user_lines.append(f"Label: {context.label}")
+    if context.path:
+        user_lines.append(f"Full path to root: {context.path}")
+    user_lines.append(f"Definition: {context.definition}")
+    user = "\n".join(user_lines)
+
     # Chat-style markers commonly supported by llama.cpp chat templates
     return (
         "<|im_start|>system\n" + sysmsg + "\n<|im_end|>\n"
@@ -108,10 +126,10 @@ def make_prompt(def_text: str, max_words: int) -> str:
     )
 
 
-def summarize_once(def_text: str, endpoint: str, max_words: int) -> str:
-    if not def_text:
+def summarize_once(context: SummaryContext, endpoint: str, max_words: int) -> str:
+    if not context.definition:
         return ""
-    prompt = make_prompt(def_text, max_words)
+    prompt = make_prompt(context, max_words)
     out = llama_completion(
         endpoint=endpoint,
         prompt=prompt,
@@ -165,25 +183,94 @@ def main():
         print("ERROR: Input CSV lacks 'definition' column.", file=sys.stderr)
         sys.exit(2)
 
-    # Deduplicate work by definition text
-    defs = df["definition"].fillna("").astype(str).map(normalize)
-    unique_defs = sorted({d for d in defs if d})
-    summary_map: Dict[str, str] = {}
+    name_to_path: Dict[str, str] = {}
+    name_to_label_path: Dict[str, str] = {}
+    if {"name", "parent"}.issubset(df.columns):
+        work_df = df.copy()
+        if "order" not in work_df.columns:
+            work_df = work_df.copy()
+            work_df["order"] = pd.NA
+        try:
+            G = build_taxonomy_graph(
+                work_df,
+                name_col="name",
+                parent_col="parent",
+                order_col="order",
+            )
+            _, raw_name_to_path = build_name_maps_from_graph(G)
+
+            if "label" in work_df.columns:
+                name_to_label: Dict[str, str] = {}
+                for _, row in work_df[["name", "label"]].dropna(subset=["name"]).iterrows():
+                    key = str(row["name"])
+                    value = normalize(row.get("label")) if isinstance(row.get("label"), str) else ""
+                    if key not in name_to_label or value:
+                        name_to_label[key] = value
+
+                for node, path_str in raw_name_to_path.items():
+                    path_text = str(path_str)
+                    name_to_path[node] = path_text
+                    parts = [p.strip() for p in path_text.split("/") if p.strip()]
+                    normalized_parts = []
+                    for part in parts:
+                        label_part = name_to_label.get(part, "")
+                        normalized_parts.append(label_part if label_part else part)
+                    name_to_label_path[node] = " / ".join(normalized_parts)
+            else:
+                name_to_path = raw_name_to_path
+        except Exception as exc:
+            print(
+                f"[WARN] Unable to build taxonomy paths; continuing without them: {exc}",
+                file=sys.stderr,
+            )
+
+    def _row_to_context(row) -> SummaryContext:
+        definition = normalize(row.get("definition"))
+        label_raw = row.get("label") if "label" in row else None
+        if not isinstance(label_raw, str) or not label_raw.strip():
+            label_raw = row.get("name") if "name" in row else None
+        label = normalize(label_raw)
+        name_val = row.get("name") if "name" in row else None
+        path_lookup = ""
+        if isinstance(name_val, str) and name_val:
+            path_lookup = name_to_label_path.get(name_val) or name_to_path.get(name_val, "")
+        elif name_val is not None and pd.notna(name_val):
+            key = str(name_val)
+            path_lookup = name_to_label_path.get(key) or name_to_path.get(key, "")
+        path = normalize(path_lookup)
+        return SummaryContext(definition=definition, label=label, path=path)
+
+    summary_map: Dict[SummaryContext, str] = {}
+    contexts_to_summarize: Set[SummaryContext] = set()
+    row_contexts: list[SummaryContext] = []
+
+    for _, row in df.iterrows():
+        ctx = _row_to_context(row)
+        row_contexts.append(ctx)
+        if ctx.definition:
+            contexts_to_summarize.add(ctx)
+        else:
+            summary_map[ctx] = ""
+
+    unique_contexts = sorted(
+        contexts_to_summarize,
+        key=lambda c: (c.definition, c.label, c.path),
+    )
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {
-            ex.submit(summarize_once, d, endpoint, max_words): d for d in unique_defs
+            ex.submit(summarize_once, ctx, endpoint, max_words): ctx for ctx in unique_contexts
         }
         for fut in tqdm(as_completed(futures), total=len(futures), desc="Summarizing"):
-            d = futures[fut]
+            ctx = futures[fut]
             try:
-                summary_map[d] = fut.result()
+                summary_map[ctx] = fut.result()
             except Exception as e:
                 # Leave empty on failure
-                summary_map[d] = ""
+                summary_map[ctx] = ""
                 print(f"[WARN] Summarization failed: {e}", file=sys.stderr)
 
-    df["definition_summary"] = defs.map(lambda s: summary_map.get(s, ""))
+    df["definition_summary"] = [summary_map.get(ctx, "") for ctx in row_contexts]
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     df.to_csv(out_path, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
