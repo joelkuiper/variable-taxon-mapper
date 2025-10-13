@@ -49,9 +49,9 @@ def llama_completion(
     endpoint: str,
     prompt: str,
     *,
-    temperature: float = 0.2,
-    top_k: int = 40,
-    top_p: float = 0.95,
+    temperature: float = 0.8,
+    top_k: int = 20,
+    top_p: float = 0.8,
     min_p: float = 0.0,
     n_predict: int = 96,
     timeout: float = 120.0,
@@ -77,12 +77,11 @@ def llama_completion(
 # -------------------------------
 
 SYSTEM_INSTRUCTIONS_TEMPLATE = """\
-You are a biomedical lexicographer.
-Rewrite the provided definition as a SINGLE sentence fragment suitable for a description in a taxonomy.
+Rewrite the provided definition as a SINGLE sentence fragment suitable for a description in a biomedical taxonomy.
 
 Rules:
 - Maximum {max_words} words.
-- Expand biomedical acronyms when needed for clarity (e.g., spell out uncommon abbreviations on first mention).
+- Expand biomedical acronyms when needed for clarity (e.g., spell out uncommon abbreviations).
 """.strip()
 
 
@@ -201,9 +200,15 @@ def main():
 
             if "label" in work_df.columns:
                 name_to_label: Dict[str, str] = {}
-                for _, row in work_df[["name", "label"]].dropna(subset=["name"]).iterrows():
+                for _, row in (
+                    work_df[["name", "label"]].dropna(subset=["name"]).iterrows()
+                ):
                     key = str(row["name"])
-                    value = normalize(row.get("label")) if isinstance(row.get("label"), str) else ""
+                    value = (
+                        normalize(row.get("label"))
+                        if isinstance(row.get("label"), str)
+                        else ""
+                    )
                     if key not in name_to_label or value:
                         name_to_label[key] = value
 
@@ -233,7 +238,9 @@ def main():
         name_val = row.get("name") if "name" in row else None
         path_lookup = ""
         if isinstance(name_val, str) and name_val:
-            path_lookup = name_to_label_path.get(name_val) or name_to_path.get(name_val, "")
+            path_lookup = name_to_label_path.get(name_val) or name_to_path.get(
+                name_val, ""
+            )
         elif name_val is not None and pd.notna(name_val):
             key = str(name_val)
             path_lookup = name_to_label_path.get(key) or name_to_path.get(key, "")
@@ -259,7 +266,8 @@ def main():
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {
-            ex.submit(summarize_once, ctx, endpoint, max_words): ctx for ctx in unique_contexts
+            ex.submit(summarize_once, ctx, endpoint, max_words): ctx
+            for ctx in unique_contexts
         }
         for fut in tqdm(as_completed(futures), total=len(futures), desc="Summarizing"):
             ctx = futures[fut]
