@@ -27,18 +27,19 @@ n = 1000
 seed = 37
 dedupe_on = ["name"]
 # Tree pruning
-top_k_nodes = 32
-desc_max_depth = 3
-max_total_nodes = 720
-candidate_list_max_items = 16
-lexical_anchor_count = 3
-community_k = 2
-community_max_size = 386
-anchor_overfetch_mult = 3
+anchor_top_k = 32 # ANN anchors to fetch per item before pruning
+max_descendant_depth = 4 # limit descendants pulled under each anchor
+node_budget = 400 # hard cap on nodes retained in the final allowed set
+suggestion_list_limit = 16 # number of candidates surfaced alongside the tree
+lexical_anchor_limit = 3 # additional anchors sourced from lexical overlap
+community_clique_size = 2 # k for k-clique community expansion
+max_community_size = 256 # max nodes pulled from any single community, if set
+anchor_overfetch_multiplier = 3 # ANN search overfetch multiplier (before pruning)
 anchor_min_overfetch = 128
-pagerank_alpha = 0.85
-pagerank_score_threshold = 0.0
-pagerank_max_candidates = 386
+pagerank_damping = 0.85
+pagerank_score_floor = 0.0
+# Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
+pagerank_candidate_limit = 386
 # LLM tunables
 n_predict = 128
 temperature = 0.0
