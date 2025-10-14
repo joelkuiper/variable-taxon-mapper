@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set
 
 import aiohttp
+import networkx as nx
 import numpy as np
 import pandas as pd
 
@@ -23,6 +24,32 @@ from .utils import clean_str_or_none, split_keywords_comma
 
 
 ProgressHook = Callable[[int, int, Optional[int], float], None]
+
+
+def _compute_node_depths(G) -> Dict[str, Optional[int]]:
+    depth_map: Dict[str, Optional[int]] = {}
+    if G is None:
+        return depth_map
+
+    try:
+        topo_nodes = list(nx.topological_sort(G))
+    except nx.NetworkXUnfeasible:
+        topo_nodes = list(G.nodes())
+
+    for node in topo_nodes:
+        preds = list(G.predecessors(node))
+        if not preds:
+            depth_map[node] = 0
+            continue
+        parent = preds[0]
+        parent_depth = depth_map.get(parent)
+        depth_map[node] = parent_depth + 1 if parent_depth is not None else None
+
+    for node in G.nodes():
+        if node not in depth_map:
+            depth_map[node] = 0
+
+    return depth_map
 
 
 @dataclass
@@ -53,6 +80,9 @@ def _collect_predictions(
     gloss_map: Dict[str, str],
     progress_hook: ProgressHook | None,
 ) -> List[Dict[str, Any]]:
+    undirected_G = nx.Graph(G) if G is not None else None
+    depth_map = _compute_node_depths(G) if G is not None else {}
+
     async def _predict_all() -> List[Dict[str, Any]]:
         timeout_cfg = aiohttp.ClientTimeout(
             total=None,
@@ -173,6 +203,86 @@ def _collect_predictions(
                         result["possible_correct_under_allowed"] = allowed_has_gold_flag
                         result["allowed_subtree_contains_gold"] = allowed_has_gold_flag
                         correct_increment = 1 if correct else 0
+
+                        min_distance: Optional[int] = None
+                        min_depth_delta: Optional[int] = None
+                        min_gold_depth: Optional[int] = None
+                        min_gold_label: Optional[str] = None
+                        pred_depth: Optional[int] = None
+
+                        if (
+                            undirected_G is not None
+                            and isinstance(resolved_label, str)
+                            and undirected_G.has_node(resolved_label)
+                        ):
+                            pred_depth = depth_map.get(resolved_label)
+                            gold_candidates = [
+                                g
+                                for g in (job.gold_labels or [])
+                                if isinstance(g, str) and undirected_G.has_node(g)
+                            ]
+
+                            for gold_label in gold_candidates:
+                                try:
+                                    distance = nx.shortest_path_length(
+                                        undirected_G, resolved_label, gold_label
+                                    )
+                                except (nx.NetworkXNoPath, nx.NodeNotFound):
+                                    continue
+
+                                gold_depth = depth_map.get(gold_label)
+                                new_depth_delta: Optional[int] = None
+                                if (
+                                    pred_depth is not None
+                                    and gold_depth is not None
+                                ):
+                                    new_depth_delta = pred_depth - gold_depth
+
+                                prefer = False
+                                if min_distance is None or distance < min_distance:
+                                    prefer = True
+                                elif min_distance is not None and distance == min_distance:
+                                    if (
+                                        new_depth_delta is not None
+                                        and (
+                                            min_depth_delta is None
+                                            or abs(new_depth_delta)
+                                            < abs(min_depth_delta)
+                                        )
+                                    ):
+                                        prefer = True
+
+                                if prefer:
+                                    min_distance = int(distance)
+                                    min_depth_delta = (
+                                        int(new_depth_delta)
+                                        if new_depth_delta is not None
+                                        else None
+                                    )
+                                    min_gold_depth = (
+                                        int(gold_depth)
+                                        if gold_depth is not None
+                                        else None
+                                    )
+                                    min_gold_label = gold_label
+
+                        result["hierarchical_distance_min"] = (
+                            int(min_distance) if min_distance is not None else None
+                        )
+                        result["hierarchical_distance_pred_depth"] = (
+                            int(pred_depth) if pred_depth is not None else None
+                        )
+                        result["hierarchical_distance_gold_depth_at_min"] = (
+                            int(min_gold_depth) if min_gold_depth is not None else None
+                        )
+                        result["hierarchical_distance_depth_delta"] = (
+                            int(min_depth_delta)
+                            if min_depth_delta is not None
+                            else None
+                        )
+                        result["hierarchical_distance_gold_label_at_min"] = (
+                            str(min_gold_label) if min_gold_label is not None else None
+                        )
 
                     return idx, result, correct_increment, has_gold_labels
 
@@ -480,5 +590,43 @@ def run_label_benchmark(
                     strat: float(stats["n_correct"] / total_correct)
                     for strat, stats in strategy_stats.items()
                 }
+
+    if "hierarchical_distance_min" in df.columns:
+        distance_series = pd.to_numeric(
+            df["hierarchical_distance_min"], errors="coerce"
+        )
+        distance_nonnull = distance_series.dropna()
+        metrics["hierarchical_distance_count"] = int(distance_nonnull.shape[0])
+        if not distance_nonnull.empty:
+            metrics["hierarchical_distance_min_mean"] = float(distance_nonnull.mean())
+            metrics["hierarchical_distance_min_median"] = float(
+                distance_nonnull.median()
+            )
+            metrics["hierarchical_distance_within_1_rate"] = float(
+                (distance_nonnull <= 1).mean()
+            )
+            metrics["hierarchical_distance_within_2_rate"] = float(
+                (distance_nonnull <= 2).mean()
+            )
+
+        if "correct" in df.columns:
+            incorrect_mask = df["correct"] == False
+            incorrect_distances = distance_series[incorrect_mask].dropna()
+            metrics["hierarchical_distance_error_count"] = int(
+                incorrect_distances.shape[0]
+            )
+            if not incorrect_distances.empty:
+                metrics["hierarchical_distance_error_mean"] = float(
+                    incorrect_distances.mean()
+                )
+                metrics["hierarchical_distance_error_median"] = float(
+                    incorrect_distances.median()
+                )
+                metrics["hierarchical_distance_error_within_1_rate"] = float(
+                    (incorrect_distances <= 1).mean()
+                )
+                metrics["hierarchical_distance_error_within_2_rate"] = float(
+                    (incorrect_distances <= 2).mean()
+                )
 
     return df, metrics
