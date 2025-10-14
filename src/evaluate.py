@@ -135,6 +135,7 @@ def _collect_predictions(
                         pagerank_score_floor=cfg.pagerank_score_floor,
                         pagerank_candidate_limit=cfg.pagerank_candidate_limit,
                         enable_taxonomy_pruning=cfg.enable_taxonomy_pruning,
+                        tree_sort_mode=cfg.tree_sort_mode,
                     )
 
                     allowed_has_gold: Optional[bool] = None

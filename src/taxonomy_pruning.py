@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, cast
+from typing import (
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    cast,
+)
 
 import networkx as nx
 import numpy as np
@@ -360,23 +371,71 @@ def _dominant_anchor_forest(
     return allowed
 
 
+def _normalize_tree_sort_mode(mode: Optional[str]) -> str:
+    """Return normalized tree sort mode with fallbacks."""
+
+    if not mode:
+        return "relevance"
+    normalized = mode.strip().lower()
+    if normalized in {"topological", "topology", "order"}:
+        return "topological"
+    if normalized in {"alphabetical", "alpha", "name", "id"}:
+        return "alphabetical"
+    return "relevance"
+
+
+def _tree_sort_key_factory(
+    mode: Optional[str],
+    *,
+    similarity_map: Mapping[str, float],
+    order_map: Mapping[str, float],
+) -> Callable[[str], Tuple]:
+    """Return a key function used to order nodes in the rendered tree."""
+
+    normalized = _normalize_tree_sort_mode(mode)
+
+    if normalized == "topological":
+
+        def sort_key(node_name: str) -> Tuple[float, str]:
+            order_val = order_map.get(node_name, float("inf"))
+            return (
+                order_val if pd.notna(order_val) else float("inf"),
+                node_name.lower(),
+            )
+
+        return sort_key
+
+    if normalized == "alphabetical":
+
+        def sort_key(node_name: str) -> Tuple[str]:
+            return (node_name.lower(),)
+
+        return sort_key
+
+    def sort_key(node_name: str) -> Tuple[float, float, str]:
+        score = similarity_map.get(node_name, float("-inf"))
+        order_val = order_map.get(node_name, float("inf"))
+        return (
+            -score,
+            order_val if pd.notna(order_val) else float("inf"),
+            node_name.lower(),
+        )
+
+    return sort_key
+
+
 def _rank_allowed_nodes(
     allowed: Set[str],
     *,
     similarity_map: Mapping[str, float],
     order_map: Mapping[str, float],
+    tree_sort_mode: Optional[str],
 ) -> List[str]:
-    """Return allowed nodes ranked by similarity (desc) with deterministic fallback."""
+    """Return allowed nodes ranked using the configured tree sort mode."""
 
-    def sort_key(name: str) -> Tuple[float, float, str]:
-        score = similarity_map.get(name, float("-inf"))
-        order_val = order_map.get(name, float("inf"))
-        return (
-            -score,
-            order_val if pd.notna(order_val) else float("inf"),
-            name.lower(),
-        )
-
+    sort_key = _tree_sort_key_factory(
+        tree_sort_mode, similarity_map=similarity_map, order_map=order_map
+    )
     return sorted(allowed, key=sort_key)
 
 
@@ -390,17 +449,13 @@ def _render_tree_markdown(
     gloss_map: Optional[Dict[str, str]],
     similarity_map: Mapping[str, float],
     order_map: Mapping[str, float],
+    tree_sort_mode: Optional[str],
 ) -> Tuple[str, Optional[List[str]]]:
     """Render the allowed subtree as markdown; fallback to full taxonomy if empty."""
 
-    def sort_key(node_name: str) -> Tuple[float, float, str]:
-        score = similarity_map.get(node_name, float("-inf"))
-        order_val = order_map.get(node_name, float("inf"))
-        return (
-            -score,
-            order_val if pd.notna(order_val) else float("inf"),
-            node_name.lower(),
-        )
+    sort_key = _tree_sort_key_factory(
+        tree_sort_mode, similarity_map=similarity_map, order_map=order_map
+    )
 
     lines: List[str] = []
 
@@ -462,6 +517,7 @@ def pruned_tree_markdown_for_item(
     pagerank_score_floor: float = 0.0,
     pagerank_candidate_limit: int = 256,
     enable_taxonomy_pruning: bool = True,
+    tree_sort_mode: str = "relevance",
 ) -> Tuple[str, List[str]]:
     """Return pruned tree markdown and ranked candidate labels for ``item``."""
 
@@ -528,6 +584,7 @@ def pruned_tree_markdown_for_item(
         allowed,
         similarity_map=similarity_map,
         order_map=order_map,
+        tree_sort_mode=tree_sort_mode,
     )
 
     tree_md, fallback_ranked = _render_tree_markdown(
@@ -539,6 +596,7 @@ def pruned_tree_markdown_for_item(
         gloss_map=gloss_map,
         similarity_map=similarity_map,
         order_map=order_map,
+        tree_sort_mode=tree_sort_mode,
     )
     if fallback_ranked is not None:
         allowed_ranked = fallback_ranked
