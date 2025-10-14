@@ -461,6 +461,7 @@ def pruned_tree_markdown_for_item(
     pagerank_damping: float = 0.85,
     pagerank_score_floor: float = 0.0,
     pagerank_candidate_limit: int = 256,
+    enable_taxonomy_pruning: bool = True,
 ) -> Tuple[str, List[str]]:
     """Return pruned tree markdown and ranked candidate labels for ``item``."""
 
@@ -473,52 +474,55 @@ def pruned_tree_markdown_for_item(
         similarity_map[tax_names[i]] = float(similarity_scores[i])
     order_map = df.groupby(name_col)[order_col].min().to_dict()
 
-    if item_embs.size == 0:
-        anchor_idxs = list(range(min(anchor_top_k, len(tax_names))))
-    else:
-        anchor_idxs = _hnsw_anchor_indices(
-            item_embs,
-            hnsw_index,
-            N=len(tax_names),
-            anchor_top_k=anchor_top_k,
-            overfetch_mult=max(1, int(anchor_overfetch_multiplier)),
-            min_overfetch=max(1, int(anchor_min_overfetch)),
+    if enable_taxonomy_pruning:
+        if item_embs.size == 0:
+            anchor_idxs = list(range(min(anchor_top_k, len(tax_names))))
+        else:
+            anchor_idxs = _hnsw_anchor_indices(
+                item_embs,
+                hnsw_index,
+                N=len(tax_names),
+                anchor_top_k=anchor_top_k,
+                overfetch_mult=max(1, int(anchor_overfetch_multiplier)),
+                min_overfetch=max(1, int(anchor_min_overfetch)),
+            )
+        item_texts = collect_item_texts(item)
+        lexical_anchor_idxs = _lexical_anchor_indices(
+            item_texts,
+            tax_names,
+            existing=anchor_idxs,
+            max_anchors=max(0, int(lexical_anchor_limit)),
         )
-    item_texts = collect_item_texts(item)
-    lexical_anchor_idxs = _lexical_anchor_indices(
-        item_texts,
-        tax_names,
-        existing=anchor_idxs,
-        max_anchors=max(0, int(lexical_anchor_limit)),
-    )
 
-    combined_anchor_idxs: List[int] = []
-    for idx in list(anchor_idxs) + lexical_anchor_idxs:
-        if idx not in combined_anchor_idxs:
-            combined_anchor_idxs.append(idx)
+        combined_anchor_idxs: List[int] = []
+        for idx in list(anchor_idxs) + lexical_anchor_idxs:
+            if idx not in combined_anchor_idxs:
+                combined_anchor_idxs.append(idx)
 
-    anchors = [tax_names[i] for i in combined_anchor_idxs]
+        anchors = [tax_names[i] for i in combined_anchor_idxs]
 
-    if max_community_size is None:
-        max_community_size_int = None
-    else:
-        max_community_size_int = int(max_community_size)
-        if max_community_size_int <= 0:
+        if max_community_size is None:
             max_community_size_int = None
+        else:
+            max_community_size_int = int(max_community_size)
+            if max_community_size_int <= 0:
+                max_community_size_int = None
 
-    allowed = _dominant_anchor_forest(
-        G,
-        anchors,
-        max_descendant_depth=max_descendant_depth,
-        node_budget=node_budget,
-        community_clique_size=max(2, int(community_clique_size))
-        if community_clique_size
-        else 0,
-        max_community_size=max_community_size_int,
-        pagerank_damping=float(pagerank_damping),
-        pagerank_score_floor=float(pagerank_score_floor),
-        pagerank_candidate_limit=max(0, int(pagerank_candidate_limit)),
-    )
+        allowed = _dominant_anchor_forest(
+            G,
+            anchors,
+            max_descendant_depth=max_descendant_depth,
+            node_budget=node_budget,
+            community_clique_size=max(2, int(community_clique_size))
+            if community_clique_size
+            else 0,
+            max_community_size=max_community_size_int,
+            pagerank_damping=float(pagerank_damping),
+            pagerank_score_floor=float(pagerank_score_floor),
+            pagerank_candidate_limit=max(0, int(pagerank_candidate_limit)),
+        )
+    else:
+        allowed = set(G.nodes)
 
     allowed_ranked = _rank_allowed_nodes(
         allowed,

@@ -256,6 +256,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             pagerank_damping=config.evaluation.pagerank_damping,
             pagerank_score_floor=config.evaluation.pagerank_score_floor,
             pagerank_candidate_limit=config.evaluation.pagerank_candidate_limit,
+            enable_taxonomy_pruning=config.evaluation.enable_taxonomy_pruning,
         )
 
         allowed_set = set(allowed_ranked)

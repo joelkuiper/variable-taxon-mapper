@@ -28,6 +28,7 @@ n = 10_000
 seed = 37
 dedupe_on = ["name"]
 # Tree pruning
+enable_taxonomy_pruning = false # disable to send the full taxonomy without pruning
 anchor_top_k = 36 # ANN anchors to fetch per item before pruning
 max_descendant_depth = 5 # limit descendants pulled under each anchor
 suggestion_list_limit = 8 # number of candidates surfaced alongside the tree

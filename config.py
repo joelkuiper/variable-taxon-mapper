@@ -94,6 +94,7 @@ class EvaluationConfig:
     http_sock_read_floor: float = 30.0
     progress_log_interval: int = 10
     results_csv: Optional[str] = None
+    enable_taxonomy_pruning: bool = True
 
     def to_kwargs(self) -> dict[str, Any]:
         data = asdict(self)
