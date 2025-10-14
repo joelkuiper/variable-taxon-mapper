@@ -29,7 +29,7 @@ seed = 37
 dedupe_on = ["name"]
 # Tree pruning
 enable_taxonomy_pruning = true # disable to send the full taxonomy without pruning
-tree_sort_mode = "proximity" # options: relevance, topological, alphabetical, proximity (distance-first)
+tree_sort_mode = "relevance" # options: relevance, topological, alphabetical, proximity, pagerank
 pruning_mode = "anchor_hull" # options: dominant_forest, anchor_hull, similarity_threshold, radius
 similarity_threshold = 0.0 # cosine threshold used when pruning_mode="similarity_threshold"
 pruning_radius = 2 # undirected hop limit when pruning_mode="radius"
@@ -38,14 +38,14 @@ max_descendant_depth = 5 # limit descendants pulled under each anchor
 suggestion_list_limit = 8 # number of candidates surfaced alongside the tree
 lexical_anchor_limit = 3 # additional anchors sourced from lexical overlap
 community_clique_size = 2 # k for k-clique community expansion
-max_community_size = 256 # max nodes pulled from any single community, if set
+max_community_size = 128 # max nodes pulled from any single community, if set
 anchor_overfetch_multiplier = 3 # ANN search overfetch multiplier (before pruning)
 anchor_min_overfetch = 128
 pagerank_damping = 0.85
 pagerank_score_floor = 0.0
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
-pagerank_candidate_limit = 512
-node_budget = 640 # hard cap on nodes retained in the final allowed set
+# pagerank_candidate_limit = 512
+node_budget = 400 # hard cap on nodes retained in the final allowed set
 # LLM tunables
 n_predict = 32
 temperature = 0.0

@@ -268,11 +268,11 @@ def _dominant_anchor_forest(
     pagerank_damping: float,
     pagerank_score_floor: float,
     pagerank_candidate_limit: int,
-) -> Set[str]:
+) -> Tuple[Set[str], Dict[str, float]]:
     """Select a covering forest rooted at anchors using a dominating-set view."""
 
     if node_budget == 0:
-        return set()
+        return set(), {}
 
     neighborhood = _anchor_neighborhood(
         G,
@@ -282,7 +282,7 @@ def _dominant_anchor_forest(
         max_community_size=max_community_size,
     )
     if not neighborhood:
-        return set()
+        return set(), {}
 
     anchor_set: Set[str] = {a for a in anchors if G.has_node(a)}
     candidate_nodes: Set[str] = set(neighborhood)
@@ -290,7 +290,7 @@ def _dominant_anchor_forest(
         candidate_nodes.update(ancestors_to_root(G, anchor))
 
     if not candidate_nodes:
-        return set()
+        return set(), {}
 
     undirected = _undirected_taxonomy(G)
     anchor_sources = [a for a in anchors if a in undirected]
@@ -316,7 +316,7 @@ def _dominant_anchor_forest(
 
     subgraph = G.subgraph(candidate_nodes).copy()
     if subgraph.number_of_nodes() == 0:
-        return set()
+        return set(), {}
 
     personalization = {n: 1.0 for n in anchor_set if n in subgraph}
     pagerank_exception = getattr(nx, "PowerIterationFailedConvergence", RuntimeError)
@@ -376,11 +376,11 @@ def _dominant_anchor_forest(
                     break
                 allowed.add(node)
             if len(allowed) >= node_budget:
-                return allowed
+                return allowed, pagerank_scores
             continue
         allowed.update(new_nodes)
         if node_budget > 0 and len(allowed) >= node_budget:
-            return allowed
+            return allowed, pagerank_scores
 
     for node in ordered_nodes:
         if node in allowed or not G.has_node(node):
@@ -395,7 +395,7 @@ def _dominant_anchor_forest(
         if node_budget > 0 and len(allowed) >= node_budget:
             break
 
-    return allowed
+    return allowed, pagerank_scores
 
 
 def _anchor_hull_subtree(
@@ -525,6 +525,8 @@ def _normalize_tree_sort_mode(mode: Optional[str]) -> str:
         return "alphabetical"
     if normalized in {"proximity", "distance"}:
         return "proximity"
+    if normalized in {"pagerank", "rank", "centrality"}:
+        return "pagerank"
     return "relevance"
 
 
@@ -534,6 +536,7 @@ def _tree_sort_key_factory(
     similarity_map: Mapping[str, float],
     order_map: Mapping[str, float],
     distance_map: Optional[Mapping[str, float]] = None,
+    pagerank_map: Optional[Mapping[str, float]] = None,
 ) -> Callable[[str], Tuple]:
     """Return a key function used to order nodes in the rendered tree."""
 
@@ -579,6 +582,26 @@ def _tree_sort_key_factory(
 
         return sort_key
 
+    if normalized == "pagerank":
+
+        def sort_key(node_name: str) -> Tuple[float, float, float, str]:
+            pagerank_val = 0.0
+            if pagerank_map is not None:
+                raw_pagerank = pagerank_map.get(node_name, 0.0)
+                pagerank_val = (
+                    float(raw_pagerank) if pd.notna(raw_pagerank) else 0.0
+                )
+            score = similarity_map.get(node_name, float("-inf"))
+            order_val = order_map.get(node_name, float("inf"))
+            return (
+                -pagerank_val,
+                -score,
+                order_val if pd.notna(order_val) else float("inf"),
+                node_name.lower(),
+            )
+
+        return sort_key
+
     def sort_key(node_name: str) -> Tuple[float, float, str]:
         score = similarity_map.get(node_name, float("-inf"))
         order_val = order_map.get(node_name, float("inf"))
@@ -616,6 +639,7 @@ def _rank_allowed_nodes(
     order_map: Mapping[str, float],
     tree_sort_mode: Optional[str],
     distance_map: Optional[Mapping[str, float]] = None,
+    pagerank_map: Optional[Mapping[str, float]] = None,
 ) -> List[str]:
     """Return allowed nodes ranked using the configured tree sort mode."""
 
@@ -624,6 +648,7 @@ def _rank_allowed_nodes(
         similarity_map=similarity_map,
         order_map=order_map,
         distance_map=distance_map,
+        pagerank_map=pagerank_map,
     )
     return sorted(allowed, key=sort_key)
 
@@ -640,6 +665,7 @@ def _render_tree_markdown(
     order_map: Mapping[str, float],
     tree_sort_mode: Optional[str],
     distance_map: Optional[Mapping[str, float]] = None,
+    pagerank_map: Optional[Mapping[str, float]] = None,
 ) -> Tuple[str, Optional[List[str]]]:
     """Render the allowed subtree as markdown; fallback to full taxonomy if empty."""
 
@@ -648,6 +674,7 @@ def _render_tree_markdown(
         similarity_map=similarity_map,
         order_map=order_map,
         distance_map=distance_map,
+        pagerank_map=pagerank_map,
     )
 
     lines: List[str] = []
@@ -734,6 +761,7 @@ def pruned_tree_markdown_for_item(
 
     normalized_tree_sort_mode = _normalize_tree_sort_mode(tree_sort_mode)
     distance_map: Dict[str, float] = {}
+    pagerank_map: Dict[str, float] = {}
     anchors: List[str] = []
 
     if enable_taxonomy_pruning:
@@ -824,7 +852,7 @@ def pruned_tree_markdown_for_item(
                 sort_key=sort_key_for_budget,
             )
         else:
-            allowed = _dominant_anchor_forest(
+            allowed, pagerank_map = _dominant_anchor_forest(
                 G,
                 anchors,
                 max_descendant_depth=max_descendant_depth,
@@ -839,6 +867,7 @@ def pruned_tree_markdown_for_item(
             )
     else:
         allowed = set(G.nodes)
+        pagerank_map = {}
 
     allowed_ranked = _rank_allowed_nodes(
         allowed,
@@ -846,6 +875,7 @@ def pruned_tree_markdown_for_item(
         order_map=order_map,
         tree_sort_mode=tree_sort_mode,
         distance_map=distance_map,
+        pagerank_map=pagerank_map,
     )
 
     tree_md, fallback_ranked = _render_tree_markdown(
@@ -859,6 +889,7 @@ def pruned_tree_markdown_for_item(
         order_map=order_map,
         tree_sort_mode=tree_sort_mode,
         distance_map=distance_map,
+        pagerank_map=pagerank_map,
     )
     if fallback_ranked is not None:
         allowed_ranked = fallback_ranked
