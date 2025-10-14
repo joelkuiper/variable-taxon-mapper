@@ -63,16 +63,16 @@ def _hnsw_anchor_indices(
     hnsw_index,
     *,
     N: int,
-    anchor_top_k: int,
+    top_k_nodes: int,
     overfetch_mult: int = 3,
     min_overfetch: int = 128,
 ) -> List[int]:
     """Return HNSW anchor indices using max-pooled similarities across item parts."""
 
     if item_embs.size == 0:
-        return list(range(min(anchor_top_k, N)))
+        return list(range(min(top_k_nodes, N)))
 
-    Kq = min(max(min_overfetch, anchor_top_k * overfetch_mult), N)
+    Kq = min(max(min_overfetch, top_k_nodes * overfetch_mult), N)
 
     scores = np.full(N, -np.inf, dtype=np.float32)
     seen = np.zeros(N, dtype=bool)
@@ -88,11 +88,11 @@ def _hnsw_anchor_indices(
                 scores[idx] = sim
 
     if not seen.any():
-        return list(range(min(anchor_top_k, N)))
+        return list(range(min(top_k_nodes, N)))
 
     scores[~seen] = -np.inf
 
-    idxs = np.argpartition(-scores, kth=min(anchor_top_k - 1, N - 1))[:anchor_top_k]
+    idxs = np.argpartition(-scores, kth=min(top_k_nodes - 1, N - 1))[:top_k_nodes]
     idxs = idxs[np.argsort(-scores[idxs])]
     filtered = [int(i) for i in idxs if seen[int(i)]]
     if filtered:
@@ -187,9 +187,9 @@ def _anchor_neighborhood(
     G: nx.DiGraph,
     anchors: Sequence[str],
     *,
-    max_descendant_depth: int,
-    community_clique_size: int,
-    max_community_size: Optional[int],
+    desc_max_depth: int,
+    community_k: int,
+    community_max_size: Optional[int],
 ) -> Set[str]:
     """Return nodes reachable via ancestry/descendant rules and clique communities."""
 
@@ -201,20 +201,16 @@ def _anchor_neighborhood(
         if not G.has_node(anchor):
             continue
         neighborhood.update(ancestors_to_root(G, anchor))
-        if max_descendant_depth > 0:
-            neighborhood.update(
-                collect_descendants(G, anchor, max_descendant_depth)
-            )
+        if desc_max_depth > 0:
+            neighborhood.update(collect_descendants(G, anchor, desc_max_depth))
 
-    if community_clique_size >= 2:
-        node_to_comms, communities = _node_community_memberships(
-            G, k=community_clique_size
-        )
+    if community_k >= 2:
+        node_to_comms, communities = _node_community_memberships(G, k=community_k)
         for anchor in anchors:
             for comm_idx in node_to_comms.get(anchor, []):
                 members = communities[comm_idx]
-                if max_community_size and max_community_size > 0:
-                    if len(members) > max_community_size:
+                if community_max_size and community_max_size > 0:
+                    if len(members) > community_max_size:
                         continue
                 neighborhood.update(members)
 
@@ -225,25 +221,25 @@ def _dominant_anchor_forest(
     G: nx.DiGraph,
     anchors: Sequence[str],
     *,
-    max_descendant_depth: int,
-    node_budget: int,
-    community_clique_size: int,
-    max_community_size: Optional[int],
-    pagerank_damping: float,
-    pagerank_score_floor: float,
-    pagerank_candidate_limit: int,
+    desc_max_depth: int,
+    max_total_nodes: int,
+    community_k: int,
+    community_max_size: Optional[int],
+    pagerank_alpha: float,
+    pagerank_score_threshold: float,
+    pagerank_max_candidates: int,
 ) -> Set[str]:
     """Select a covering forest rooted at anchors using a dominating-set view."""
 
-    if node_budget == 0:
+    if max_total_nodes == 0:
         return set()
 
     neighborhood = _anchor_neighborhood(
         G,
         anchors,
-        max_descendant_depth=max_descendant_depth,
-        community_clique_size=community_clique_size,
-        max_community_size=max_community_size,
+        desc_max_depth=desc_max_depth,
+        community_k=community_k,
+        community_max_size=community_max_size,
     )
     if not neighborhood:
         return set()
@@ -265,16 +261,13 @@ def _dominant_anchor_forest(
     else:
         distances_full = {}
 
-    if pagerank_candidate_limit and pagerank_candidate_limit > 0:
-        # Trim the candidate set before running PageRank. The later ``node_budget``
-        # cap still applies, so the stricter of the two limits controls the final
-        # number of retained nodes.
-        if len(candidate_nodes) > pagerank_candidate_limit:
+    if pagerank_max_candidates and pagerank_max_candidates > 0:
+        if len(candidate_nodes) > pagerank_max_candidates:
             ordered_candidates = sorted(
                 candidate_nodes,
                 key=lambda n: (distances_full.get(n, float("inf")), n.lower()),
             )
-            candidate_nodes = set(ordered_candidates[:pagerank_candidate_limit])
+            candidate_nodes = set(ordered_candidates[:pagerank_max_candidates])
             for anchor in anchor_set:
                 candidate_nodes.update(ancestors_to_root(G, anchor))
 
@@ -287,17 +280,17 @@ def _dominant_anchor_forest(
     try:
         pagerank_scores = nx.pagerank(
             subgraph,
-            alpha=pagerank_damping,
+            alpha=pagerank_alpha,
             personalization=personalization if personalization else None,
         )
     except pagerank_exception:
         pagerank_scores = {n: 1.0 for n in subgraph}
 
-    if pagerank_score_floor > 0.0:
+    if pagerank_score_threshold > 0.0:
         candidate_nodes = {
             n
             for n in candidate_nodes
-            if pagerank_scores.get(n, 0.0) >= pagerank_score_floor
+            if pagerank_scores.get(n, 0.0) >= pagerank_score_threshold
             or n in anchor_set
         }
         if not candidate_nodes:
@@ -333,18 +326,18 @@ def _dominant_anchor_forest(
             continue
         path = ancestors_to_root(G, anchor)
         new_nodes = [n for n in path if n not in allowed]
-        if node_budget > 0 and len(allowed) + len(new_nodes) > node_budget:
+        if max_total_nodes > 0 and len(allowed) + len(new_nodes) > max_total_nodes:
             for node in path:
                 if node in allowed:
                     continue
-                if node_budget > 0 and len(allowed) >= node_budget:
+                if max_total_nodes > 0 and len(allowed) >= max_total_nodes:
                     break
                 allowed.add(node)
-            if len(allowed) >= node_budget:
+            if len(allowed) >= max_total_nodes:
                 return allowed
             continue
         allowed.update(new_nodes)
-        if node_budget > 0 and len(allowed) >= node_budget:
+        if max_total_nodes > 0 and len(allowed) >= max_total_nodes:
             return allowed
 
     for node in ordered_nodes:
@@ -354,10 +347,10 @@ def _dominant_anchor_forest(
         new_nodes = [n for n in path if n not in allowed]
         if not new_nodes:
             continue
-        if node_budget > 0 and len(allowed) + len(new_nodes) > node_budget:
+        if max_total_nodes > 0 and len(allowed) + len(new_nodes) > max_total_nodes:
             continue
         allowed.update(new_nodes)
-        if node_budget > 0 and len(allowed) >= node_budget:
+        if max_total_nodes > 0 and len(allowed) >= max_total_nodes:
             break
 
     return allowed
@@ -451,19 +444,19 @@ def pruned_tree_markdown_for_item(
     hnsw_index,
     name_col: str = "name",
     order_col: str = "order",
-    anchor_top_k: int = 128,
-    max_descendant_depth: int = 3,
-    node_budget: int = 1200,
+    top_k_nodes: int = 128,
+    desc_max_depth: int = 3,
+    max_total_nodes: int = 1200,
     gloss_map: Optional[Dict[str, str]] = None,
-    anchor_overfetch_multiplier: int = 3,
+    anchor_overfetch_mult: int = 3,
     anchor_min_overfetch: int = 128,
-    suggestion_list_limit: int = 40,
-    lexical_anchor_limit: int = 3,
-    community_clique_size: int = 2,
-    max_community_size: Optional[int] = 400,
-    pagerank_damping: float = 0.85,
-    pagerank_score_floor: float = 0.0,
-    pagerank_candidate_limit: int = 256,
+    candidate_list_max_items: int = 40,
+    lexical_anchor_count: int = 3,
+    community_k: int = 2,
+    community_max_size: Optional[int] = 400,
+    pagerank_alpha: float = 0.85,
+    pagerank_score_threshold: float = 0.0,
+    pagerank_max_candidates: int = 256,
 ) -> Tuple[str, List[str]]:
     """Return pruned tree markdown and ranked candidate labels for ``item``."""
 
@@ -477,14 +470,14 @@ def pruned_tree_markdown_for_item(
     order_map = df.groupby(name_col)[order_col].min().to_dict()
 
     if item_embs.size == 0:
-        anchor_idxs = list(range(min(anchor_top_k, len(tax_names))))
+        anchor_idxs = list(range(min(top_k_nodes, len(tax_names))))
     else:
         anchor_idxs = _hnsw_anchor_indices(
             item_embs,
             hnsw_index,
             N=len(tax_names),
-            anchor_top_k=anchor_top_k,
-            overfetch_mult=max(1, int(anchor_overfetch_multiplier)),
+            top_k_nodes=top_k_nodes,
+            overfetch_mult=max(1, int(anchor_overfetch_mult)),
             min_overfetch=max(1, int(anchor_min_overfetch)),
         )
     item_texts = collect_item_texts(item)
@@ -492,7 +485,7 @@ def pruned_tree_markdown_for_item(
         item_texts,
         tax_names,
         existing=anchor_idxs,
-        max_anchors=max(0, int(lexical_anchor_limit)),
+        max_anchors=max(0, int(lexical_anchor_count)),
     )
 
     combined_anchor_idxs: List[int] = []
@@ -502,25 +495,23 @@ def pruned_tree_markdown_for_item(
 
     anchors = [tax_names[i] for i in combined_anchor_idxs]
 
-    if max_community_size is None:
-        max_community_size_int = None
+    if community_max_size is None:
+        community_max_size_int = None
     else:
-        max_community_size_int = int(max_community_size)
-        if max_community_size_int <= 0:
-            max_community_size_int = None
+        community_max_size_int = int(community_max_size)
+        if community_max_size_int <= 0:
+            community_max_size_int = None
 
     allowed = _dominant_anchor_forest(
         G,
         anchors,
-        max_descendant_depth=max_descendant_depth,
-        node_budget=node_budget,
-        community_clique_size=max(2, int(community_clique_size))
-        if community_clique_size
-        else 0,
-        max_community_size=max_community_size_int,
-        pagerank_damping=float(pagerank_damping),
-        pagerank_score_floor=float(pagerank_score_floor),
-        pagerank_candidate_limit=max(0, int(pagerank_candidate_limit)),
+        desc_max_depth=desc_max_depth,
+        max_total_nodes=max_total_nodes,
+        community_k=max(2, int(community_k)) if community_k else 0,
+        community_max_size=community_max_size_int,
+        pagerank_alpha=float(pagerank_alpha),
+        pagerank_score_threshold=float(pagerank_score_threshold),
+        pagerank_max_candidates=max(0, int(pagerank_max_candidates)),
     )
 
     allowed_ranked = _rank_allowed_nodes(
@@ -542,7 +533,7 @@ def pruned_tree_markdown_for_item(
     if fallback_ranked is not None:
         allowed_ranked = fallback_ranked
 
-    max_items = int(suggestion_list_limit)
+    max_items = int(candidate_list_max_items)
     top_show = (
         len(allowed_ranked) if max_items <= 0 else min(max_items, len(allowed_ranked))
     )
