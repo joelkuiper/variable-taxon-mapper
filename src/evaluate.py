@@ -152,6 +152,7 @@ def _collect_predictions(
                             "resolved_id": pred.get("resolved_id"),
                             "resolved_path": pred.get("resolved_path"),
                             "_error": job.metadata.get("_error"),
+                            "match_strategy": pred.get("match_strategy"),
                         }
                     )
 
@@ -416,6 +417,16 @@ def run_label_benchmark(
         "n_errors": int(df["_error"].notna().sum()) if "_error" in df.columns else 0,
     }
 
+    if "match_strategy" in df.columns:
+        strategy_series = df["match_strategy"].fillna("unknown").astype(str)
+        df["match_strategy"] = strategy_series
+        strategy_counts = strategy_series.value_counts(sort=False)
+        metrics["match_strategy_volume"] = {
+            str(k): int(v) for k, v in strategy_counts.items()
+        }
+    else:
+        strategy_series = None
+
     if evaluate and "correct" in df.columns and total_processed:
         metrics["n_correct"] = int(df["correct"].sum())
         metrics["label_accuracy_any_match"] = float(df["correct"].mean())
@@ -446,5 +457,28 @@ def run_label_benchmark(
                 match_counts.get("descendant", 0) / total_processed
             )
             metrics["n_unmatched"] = int(match_counts.get("none", 0))
+
+        if strategy_series is not None:
+            strategy_stats: Dict[str, Dict[str, float | int]] = {}
+            grouped = df.groupby("match_strategy", dropna=False)
+            for strat, group in grouped:
+                correct_series = group["correct"].dropna()
+                correct_count = int(correct_series.sum())
+                denom = len(correct_series)
+                accuracy = float(correct_count / denom) if denom else 0.0
+                strategy_stats[str(strat)] = {
+                    "n": int(len(group)),
+                    "n_correct": correct_count,
+                    "accuracy": accuracy,
+                }
+
+            metrics["match_strategy_performance"] = strategy_stats
+
+            total_correct = float(df["correct"].sum())
+            if total_correct > 0:
+                metrics["match_strategy_correct_share"] = {
+                    strat: float(stats["n_correct"] / total_correct)
+                    for strat, stats in strategy_stats.items()
+                }
 
     return df, metrics

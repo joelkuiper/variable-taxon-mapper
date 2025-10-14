@@ -278,6 +278,7 @@ async def match_item_to_tree(
             "resolved_path": name_to_path.get(canonical_label),
             "matched": True,
             "no_match": False,
+            "match_strategy": "llm_direct",
         }
 
     mapped = _map_freeform_label_to_allowed(
@@ -298,6 +299,7 @@ async def match_item_to_tree(
             "matched": True,
             "no_match": False,
             "raw": raw,
+            "match_strategy": "embedding_remap",
         }
 
     chosen = _hnsw_fallback_choose_label(
@@ -318,6 +320,7 @@ async def match_item_to_tree(
             "matched": True,
             "no_match": False,
             "raw": raw,
+            "match_strategy": "ann_fallback",
         }
 
     return {
@@ -329,4 +332,5 @@ async def match_item_to_tree(
         "matched": False,
         "no_match": True,
         "raw": raw,
+        "match_strategy": "no_match",
     }
