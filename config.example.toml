@@ -8,6 +8,7 @@ model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
 max_length = 512
 batch_size = 256
 fp16 = true
+device = "cpu"
 mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
@@ -49,9 +50,9 @@ llm_min_p = 0.0
 llm_cache_prompt = true
 llm_n_keep = -1
 # Parallelism tunables
-num_slots = 6
-pool_maxsize = 16
-max_workers = 6
+num_slots = 4
+pool_maxsize = 4
+max_workers = 4
 http_sock_connect = 10.0
 http_sock_read_floor = 30.0
 progress_log_interval = 10

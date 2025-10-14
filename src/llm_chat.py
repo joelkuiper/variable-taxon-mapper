@@ -17,9 +17,10 @@ quote     ::= "\""
 
 string ::=
   quote (
-    [^"\\] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )+ quote
+    [^"\\\x7F\x00-\x1F] |
+    "\\" (["\\bfnrt] | "u" [0-9a-fA-F]{4}) # escapes
+  )* quote
+
 
 obj ::= ("{" quote "concept_label" quote ": " string "}")
 """
@@ -115,12 +116,11 @@ def make_tree_match_prompt(
         {role_prefix}system{role_suffix}
         # TASK
         • From the TAXONOMY or SUGGESTIONS, choose **exactly one** concept label that best matches the ITEM.
-        • Labels may include a short description in square parentheses.
+        • Concepts may include a short description in square parentheses.
           Those descriptions are guidance only; **output must be the exact label text (no description)**.
         • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive (the TAXONOMY is).
         • The TAXONOMY is a nested (indented) Markdown list. Each bullet is: `- <label> [<optional short description>]`
         • Output a single-line JSON, for example `{{"concept_label":"..."}}`{eot}
-
         {role_prefix}user{role_suffix}
         {tree}
 
