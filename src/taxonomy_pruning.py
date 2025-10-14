@@ -202,9 +202,7 @@ def _anchor_neighborhood(
             continue
         neighborhood.update(ancestors_to_root(G, anchor))
         if max_descendant_depth > 0:
-            neighborhood.update(
-                collect_descendants(G, anchor, max_descendant_depth)
-            )
+            neighborhood.update(collect_descendants(G, anchor, max_descendant_depth))
 
     if community_clique_size >= 2:
         node_to_comms, communities = _node_community_memberships(
@@ -297,8 +295,7 @@ def _dominant_anchor_forest(
         candidate_nodes = {
             n
             for n in candidate_nodes
-            if pagerank_scores.get(n, 0.0) >= pagerank_score_floor
-            or n in anchor_set
+            if pagerank_scores.get(n, 0.0) >= pagerank_score_floor or n in anchor_set
         }
         if not candidate_nodes:
             candidate_nodes = set(anchor_set)
@@ -547,7 +544,7 @@ def pruned_tree_markdown_for_item(
         len(allowed_ranked) if max_items <= 0 else min(max_items, len(allowed_ranked))
     )
 
-    md_lines = ["\n## TAXONOMY", tree_md, "\n## SUGGESTIONS"]
+    md_lines = ["\n# TAXONOMY", tree_md, "\n# SUGGESTIONS"]
     for label in allowed_ranked[:top_show]:
         md_lines.append(
             f"- {make_label_display(label, gloss_map or {}, use_summary=False)}"

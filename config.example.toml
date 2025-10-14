@@ -23,14 +23,14 @@ num_threads = 0
 
 [evaluation]
 endpoint = "http://127.0.0.1:8080/completions"
-n = 1000
+n = 500
 seed = 37
 dedupe_on = ["name"]
 # Tree pruning
-anchor_top_k = 32 # ANN anchors to fetch per item before pruning
-max_descendant_depth = 4 # limit descendants pulled under each anchor
-node_budget = 400 # hard cap on nodes retained in the final allowed set
-suggestion_list_limit = 16 # number of candidates surfaced alongside the tree
+anchor_top_k = 36 # ANN anchors to fetch per item before pruning
+max_descendant_depth = 5 # limit descendants pulled under each anchor
+node_budget = 512 # hard cap on nodes retained in the final allowed set
+suggestion_list_limit = 8 # number of candidates surfaced alongside the tree
 lexical_anchor_limit = 3 # additional anchors sourced from lexical overlap
 community_clique_size = 2 # k for k-clique community expansion
 max_community_size = 256 # max nodes pulled from any single community, if set
@@ -39,7 +39,7 @@ anchor_min_overfetch = 128
 pagerank_damping = 0.85
 pagerank_score_floor = 0.0
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
-pagerank_candidate_limit = 386
+pagerank_candidate_limit = 512
 # LLM tunables
 n_predict = 128
 temperature = 0.0

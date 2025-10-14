@@ -118,10 +118,10 @@ def make_tree_match_prompt(
         • Labels may include a short description in square parentheses.
           Those descriptions are guidance only; **output must be the exact label text (no description)**.
         • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive (the TAXONOMY is).
-        • The TAXONOMY in TREE is a nested (indented) Markdown list. Each bullet is: `- <label> [<optional short description>]`
+        • The TAXONOMY is a nested (indented) Markdown list. Each bullet is: `- <label> [<optional short description>]`
         • Output a single-line JSON, for example `{{"concept_label":"..."}}`{eot}
+
         {role_prefix}user{role_suffix}
-        # TREE
         {tree}
 
         # ITEM:
