@@ -115,24 +115,24 @@ def make_tree_match_prompt(
         {role_prefix}system{role_suffix}
         # TASK
         - From the TAXONOMY or SUGGESTIONS, choose **exactly one** label that best matches the ITEM.
-        - Labels may include a short description in square brackets.
-          Those descriptions are guidance only; **output must be the exact label text**.
-        - SUGGESTIONS are based on similarity to ITEM, they are not exhaustive (the TAXONOMY is).
+        - Labels may include a short summary in square parentheses.
+          Those summaries are guidance only; **output must be the exact label text (no summary)**.
+        - SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive (the TAXONOMY is).
 
-        The TAXONOMY is a nested (indented) Markdown list. Each bullet is:
-        - <label> [<optional short description>]
+        The TAXONOMY in TREE is a nested (indented) Markdown list. Each bullet is:
+        - <label> [<optional short summary>]
 
         # OUTPUT (single-line JSON)
         {{"node_label":"..."}}{eot}
 
         {role_prefix}user{role_suffix}
-        # INPUT
+        # TREE
         {tree}
 
-        ## ITEM:
-        {item_name}
-        {item_label}
-        {item_desc}{eot}
+        # ITEM:
+        - label: {item_label}
+        - name: {item_name}
+        - description: {item_desc}{eot}
         {role_prefix}assistant{role_suffix}
 
     """
