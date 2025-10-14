@@ -258,6 +258,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             pagerank_candidate_limit=config.evaluation.pagerank_candidate_limit,
             enable_taxonomy_pruning=config.evaluation.enable_taxonomy_pruning,
             tree_sort_mode=config.evaluation.tree_sort_mode,
+            pruning_mode=config.evaluation.pruning_mode,
+            similarity_threshold=config.evaluation.similarity_threshold,
+            pruning_radius=config.evaluation.pruning_radius,
         )
 
         allowed_set = set(allowed_ranked)

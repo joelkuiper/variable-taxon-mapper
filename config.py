@@ -96,6 +96,9 @@ class EvaluationConfig:
     results_csv: Optional[str] = None
     enable_taxonomy_pruning: bool = True
     tree_sort_mode: str = "relevance"
+    pruning_mode: str = "dominant_forest"
+    similarity_threshold: float = 0.0
+    pruning_radius: int = 2
 
     def to_kwargs(self) -> dict[str, Any]:
         data = asdict(self)

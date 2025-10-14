@@ -136,6 +136,9 @@ def _collect_predictions(
                         pagerank_candidate_limit=cfg.pagerank_candidate_limit,
                         enable_taxonomy_pruning=cfg.enable_taxonomy_pruning,
                         tree_sort_mode=cfg.tree_sort_mode,
+                        pruning_mode=cfg.pruning_mode,
+                        similarity_threshold=cfg.similarity_threshold,
+                        pruning_radius=cfg.pruning_radius,
                     )
 
                     allowed_has_gold: Optional[bool] = None

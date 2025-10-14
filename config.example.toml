@@ -30,6 +30,9 @@ dedupe_on = ["name"]
 # Tree pruning
 enable_taxonomy_pruning = true # disable to send the full taxonomy without pruning
 tree_sort_mode = "relevance" # options: relevance, topological, alphabetical
+pruning_mode = "anchor_hull" # options: dominant_forest, anchor_hull, similarity_threshold, radius
+similarity_threshold = 0.0 # cosine threshold used when pruning_mode="similarity_threshold"
+pruning_radius = 2 # undirected hop limit when pruning_mode="radius"
 anchor_top_k = 36 # ANN anchors to fetch per item before pruning
 max_descendant_depth = 5 # limit descendants pulled under each anchor
 suggestion_list_limit = 8 # number of candidates surfaced alongside the tree

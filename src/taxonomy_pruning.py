@@ -230,6 +230,33 @@ def _anchor_neighborhood(
     return neighborhood
 
 
+def _enforce_node_budget_with_ancestors(
+    G: nx.DiGraph,
+    candidates: Iterable[str],
+    *,
+    node_budget: int,
+    sort_key: Callable[[str], Tuple],
+) -> Set[str]:
+    """Return at most ``node_budget`` nodes, keeping ancestor closure intact."""
+
+    if node_budget <= 0:
+        return set() if node_budget == 0 else {n for n in candidates if G.has_node(n)}
+
+    ordered = sorted({n for n in candidates if G.has_node(n)}, key=sort_key)
+    allowed: Set[str] = set()
+    for node in ordered:
+        path = [n for n in ancestors_to_root(G, node) if G.has_node(n)]
+        new_nodes = [n for n in path if n not in allowed]
+        if not new_nodes:
+            continue
+        if len(allowed) + len(new_nodes) > node_budget:
+            continue
+        allowed.update(new_nodes)
+        if len(allowed) >= node_budget:
+            break
+    return allowed
+
+
 def _dominant_anchor_forest(
     G: nx.DiGraph,
     anchors: Sequence[str],
@@ -371,6 +398,121 @@ def _dominant_anchor_forest(
     return allowed
 
 
+def _anchor_hull_subtree(
+    G: nx.DiGraph,
+    anchors: Sequence[str],
+    *,
+    max_descendant_depth: int,
+    community_clique_size: int,
+    max_community_size: Optional[int],
+    node_budget: int,
+    sort_key: Callable[[str], Tuple],
+) -> Set[str]:
+    """Return the ancestor/descendant hull surrounding the anchors."""
+
+    if not anchors:
+        return set()
+
+    if node_budget == 0:
+        return set()
+
+    neighborhood = _anchor_neighborhood(
+        G,
+        anchors,
+        max_descendant_depth=max_descendant_depth,
+        community_clique_size=community_clique_size,
+        max_community_size=max_community_size,
+    )
+    for anchor in anchors:
+        if G.has_node(anchor):
+            neighborhood.update(ancestors_to_root(G, anchor))
+
+    if node_budget > 0:
+        return _enforce_node_budget_with_ancestors(
+            G, neighborhood, node_budget=node_budget, sort_key=sort_key
+        )
+    return {n for n in neighborhood if G.has_node(n)}
+
+
+def _similarity_threshold_subtree(
+    G: nx.DiGraph,
+    *,
+    anchors: Sequence[str],
+    similarity_map: Mapping[str, float],
+    threshold: float,
+    node_budget: int,
+    sort_key: Callable[[str], Tuple],
+) -> Set[str]:
+    """Return nodes whose similarity meets ``threshold`` plus their ancestors."""
+
+    if node_budget == 0:
+        return set()
+
+    allowed: Set[str] = {
+        name
+        for name, score in similarity_map.items()
+        if score >= threshold and G.has_node(name)
+    }
+
+    for anchor in anchors:
+        if G.has_node(anchor):
+            allowed.add(anchor)
+
+    expanded: Set[str] = set()
+    for node in allowed:
+        expanded.update(ancestors_to_root(G, node))
+
+    if node_budget > 0 and expanded:
+        return _enforce_node_budget_with_ancestors(
+            G, expanded, node_budget=node_budget, sort_key=sort_key
+        )
+
+    return {n for n in expanded if G.has_node(n)}
+
+
+def _radius_limited_subtree(
+    G: nx.DiGraph,
+    anchors: Sequence[str],
+    *,
+    radius: int,
+    node_budget: int,
+    sort_key: Callable[[str], Tuple],
+) -> Set[str]:
+    """Return nodes within ``radius`` undirected hops of any anchor."""
+
+    if not anchors:
+        return set()
+
+    if radius < 0:
+        return set()
+
+    if node_budget == 0:
+        return set()
+
+    undirected = _undirected_taxonomy(G)
+    anchor_nodes = [a for a in anchors if a in undirected]
+    if not anchor_nodes:
+        return set()
+
+    distances = nx.multi_source_dijkstra_path_length(
+        undirected, sources=anchor_nodes, cutoff=radius
+    )
+    neighborhood = {n for n, dist in distances.items() if dist <= radius}
+    neighborhood.update(anchor_nodes)
+
+    expanded: Set[str] = set()
+    for node in neighborhood:
+        if G.has_node(node):
+            expanded.update(ancestors_to_root(G, node))
+
+    if node_budget > 0 and expanded:
+        return _enforce_node_budget_with_ancestors(
+            G, expanded, node_budget=node_budget, sort_key=sort_key
+        )
+
+    return {n for n in expanded if G.has_node(n)}
+
+
 def _normalize_tree_sort_mode(mode: Optional[str]) -> str:
     """Return normalized tree sort mode with fallbacks."""
 
@@ -422,6 +564,24 @@ def _tree_sort_key_factory(
         )
 
     return sort_key
+
+
+def _normalize_pruning_mode(mode: Optional[str]) -> str:
+    """Return normalized pruning strategy identifier."""
+
+    if not mode:
+        return "dominant_forest"
+
+    normalized = mode.strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized in {"dominant", "dominant_forest", "forest"}:
+        return "dominant_forest"
+    if normalized in {"anchor_hull", "hull", "anchor"}:
+        return "anchor_hull"
+    if normalized in {"similarity", "similarity_threshold", "threshold"}:
+        return "similarity_threshold"
+    if normalized in {"radius", "radius_limited", "radius_based"}:
+        return "radius"
+    return "dominant_forest"
 
 
 def _rank_allowed_nodes(
@@ -518,8 +678,17 @@ def pruned_tree_markdown_for_item(
     pagerank_candidate_limit: int = 256,
     enable_taxonomy_pruning: bool = True,
     tree_sort_mode: str = "relevance",
+    pruning_mode: str = "dominant_forest",
+    similarity_threshold: float = 0.0,
+    pruning_radius: int = 2,
 ) -> Tuple[str, List[str]]:
-    """Return pruned tree markdown and ranked candidate labels for ``item``."""
+    """Return pruned tree markdown and ranked candidate labels for ``item``.
+
+    Available ``pruning_mode`` values are ``"dominant_forest"`` (current default),
+    ``"anchor_hull"`` for a lighter ancestor/descendant hull, ``"similarity_threshold"``
+    which keeps nodes at or above ``similarity_threshold``, and ``"radius"`` to retain
+    nodes within ``pruning_radius`` undirected hops of any anchor.
+    """
 
     item_embs = encode_item_texts(item, embedder)
 
@@ -529,6 +698,9 @@ def pruned_tree_markdown_for_item(
     for i in range(limit):
         similarity_map[tax_names[i]] = float(similarity_scores[i])
     order_map = df.groupby(name_col)[order_col].min().to_dict()
+    sort_key_for_budget = _tree_sort_key_factory(
+        tree_sort_mode, similarity_map=similarity_map, order_map=order_map
+    )
 
     if enable_taxonomy_pruning:
         if item_embs.size == 0:
@@ -564,19 +736,51 @@ def pruned_tree_markdown_for_item(
             if max_community_size_int <= 0:
                 max_community_size_int = None
 
-        allowed = _dominant_anchor_forest(
-            G,
-            anchors,
-            max_descendant_depth=max_descendant_depth,
-            node_budget=node_budget,
-            community_clique_size=max(2, int(community_clique_size))
-            if community_clique_size
-            else 0,
-            max_community_size=max_community_size_int,
-            pagerank_damping=float(pagerank_damping),
-            pagerank_score_floor=float(pagerank_score_floor),
-            pagerank_candidate_limit=max(0, int(pagerank_candidate_limit)),
-        )
+        pruning_mode_normalized = _normalize_pruning_mode(pruning_mode)
+
+        if pruning_mode_normalized == "anchor_hull":
+            allowed = _anchor_hull_subtree(
+                G,
+                anchors,
+                max_descendant_depth=max_descendant_depth,
+                community_clique_size=max(2, int(community_clique_size))
+                if community_clique_size
+                else 0,
+                max_community_size=max_community_size_int,
+                node_budget=node_budget,
+                sort_key=sort_key_for_budget,
+            )
+        elif pruning_mode_normalized == "similarity_threshold":
+            allowed = _similarity_threshold_subtree(
+                G,
+                anchors=anchors,
+                similarity_map=similarity_map,
+                threshold=float(similarity_threshold),
+                node_budget=node_budget,
+                sort_key=sort_key_for_budget,
+            )
+        elif pruning_mode_normalized == "radius":
+            allowed = _radius_limited_subtree(
+                G,
+                anchors,
+                radius=int(pruning_radius),
+                node_budget=node_budget,
+                sort_key=sort_key_for_budget,
+            )
+        else:
+            allowed = _dominant_anchor_forest(
+                G,
+                anchors,
+                max_descendant_depth=max_descendant_depth,
+                node_budget=node_budget,
+                community_clique_size=max(2, int(community_clique_size))
+                if community_clique_size
+                else 0,
+                max_community_size=max_community_size_int,
+                pagerank_damping=float(pagerank_damping),
+                pagerank_score_floor=float(pagerank_score_floor),
+                pagerank_candidate_limit=max(0, int(pagerank_candidate_limit)),
+            )
     else:
         allowed = set(G.nodes)
 
