@@ -95,7 +95,7 @@ class EvaluationConfig:
     progress_log_interval: int = 10
     results_csv: Optional[str] = None
     enable_taxonomy_pruning: bool = True
-    tree_sort_mode: str = "relevance"
+    tree_sort_mode: str = "relevance"  # e.g., "relevance", "topological", "alphabetical", "proximity"
     pruning_mode: str = "dominant_forest"
     similarity_threshold: float = 0.0
     pruning_radius: int = 2

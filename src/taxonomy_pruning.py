@@ -523,6 +523,8 @@ def _normalize_tree_sort_mode(mode: Optional[str]) -> str:
         return "topological"
     if normalized in {"alphabetical", "alpha", "name", "id"}:
         return "alphabetical"
+    if normalized in {"proximity", "distance"}:
+        return "proximity"
     return "relevance"
 
 
@@ -531,6 +533,7 @@ def _tree_sort_key_factory(
     *,
     similarity_map: Mapping[str, float],
     order_map: Mapping[str, float],
+    distance_map: Optional[Mapping[str, float]] = None,
 ) -> Callable[[str], Tuple]:
     """Return a key function used to order nodes in the rendered tree."""
 
@@ -551,6 +554,28 @@ def _tree_sort_key_factory(
 
         def sort_key(node_name: str) -> Tuple[str]:
             return (node_name.lower(),)
+
+        return sort_key
+
+    if normalized == "proximity":
+
+        def sort_key(node_name: str) -> Tuple[float, float, float, str]:
+            distance_val = float("inf")
+            if distance_map is not None:
+                raw_distance = distance_map.get(node_name, float("inf"))
+                distance_val = (
+                    float(raw_distance)
+                    if pd.notna(raw_distance)
+                    else float("inf")
+                )
+            score = similarity_map.get(node_name, float("-inf"))
+            order_val = order_map.get(node_name, float("inf"))
+            return (
+                distance_val,
+                -score,
+                order_val if pd.notna(order_val) else float("inf"),
+                node_name.lower(),
+            )
 
         return sort_key
 
@@ -590,11 +615,15 @@ def _rank_allowed_nodes(
     similarity_map: Mapping[str, float],
     order_map: Mapping[str, float],
     tree_sort_mode: Optional[str],
+    distance_map: Optional[Mapping[str, float]] = None,
 ) -> List[str]:
     """Return allowed nodes ranked using the configured tree sort mode."""
 
     sort_key = _tree_sort_key_factory(
-        tree_sort_mode, similarity_map=similarity_map, order_map=order_map
+        tree_sort_mode,
+        similarity_map=similarity_map,
+        order_map=order_map,
+        distance_map=distance_map,
     )
     return sorted(allowed, key=sort_key)
 
@@ -610,11 +639,15 @@ def _render_tree_markdown(
     similarity_map: Mapping[str, float],
     order_map: Mapping[str, float],
     tree_sort_mode: Optional[str],
+    distance_map: Optional[Mapping[str, float]] = None,
 ) -> Tuple[str, Optional[List[str]]]:
     """Render the allowed subtree as markdown; fallback to full taxonomy if empty."""
 
     sort_key = _tree_sort_key_factory(
-        tree_sort_mode, similarity_map=similarity_map, order_map=order_map
+        tree_sort_mode,
+        similarity_map=similarity_map,
+        order_map=order_map,
+        distance_map=distance_map,
     )
 
     lines: List[str] = []
@@ -698,9 +731,10 @@ def pruned_tree_markdown_for_item(
     for i in range(limit):
         similarity_map[tax_names[i]] = float(similarity_scores[i])
     order_map = df.groupby(name_col)[order_col].min().to_dict()
-    sort_key_for_budget = _tree_sort_key_factory(
-        tree_sort_mode, similarity_map=similarity_map, order_map=order_map
-    )
+
+    normalized_tree_sort_mode = _normalize_tree_sort_mode(tree_sort_mode)
+    distance_map: Dict[str, float] = {}
+    anchors: List[str] = []
 
     if enable_taxonomy_pruning:
         if item_embs.size == 0:
@@ -729,6 +763,21 @@ def pruned_tree_markdown_for_item(
 
         anchors = [tax_names[i] for i in combined_anchor_idxs]
 
+        if normalized_tree_sort_mode == "proximity" and anchors:
+            undirected = _undirected_taxonomy(G)
+            anchor_nodes = [a for a in anchors if a in undirected]
+            if anchor_nodes:
+                distances_full = nx.multi_source_dijkstra_path_length(
+                    undirected, sources=anchor_nodes
+                )
+                distance_map = {
+                    node: float(dist) for node, dist in distances_full.items()
+                }
+                for anchor_node in anchor_nodes:
+                    distance_map.setdefault(anchor_node, 0.0)
+            else:
+                distance_map = {}
+
         if max_community_size is None:
             max_community_size_int = None
         else:
@@ -737,6 +786,13 @@ def pruned_tree_markdown_for_item(
                 max_community_size_int = None
 
         pruning_mode_normalized = _normalize_pruning_mode(pruning_mode)
+
+        sort_key_for_budget = _tree_sort_key_factory(
+            tree_sort_mode,
+            similarity_map=similarity_map,
+            order_map=order_map,
+            distance_map=distance_map,
+        )
 
         if pruning_mode_normalized == "anchor_hull":
             allowed = _anchor_hull_subtree(
@@ -789,6 +845,7 @@ def pruned_tree_markdown_for_item(
         similarity_map=similarity_map,
         order_map=order_map,
         tree_sort_mode=tree_sort_mode,
+        distance_map=distance_map,
     )
 
     tree_md, fallback_ranked = _render_tree_markdown(
@@ -801,6 +858,7 @@ def pruned_tree_markdown_for_item(
         similarity_map=similarity_map,
         order_map=order_map,
         tree_sort_mode=tree_sort_mode,
+        distance_map=distance_map,
     )
     if fallback_ranked is not None:
         allowed_ranked = fallback_ranked
