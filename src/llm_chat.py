@@ -21,7 +21,7 @@ string ::=
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
   )+ quote
 
-obj ::= ("{" quote "node_label" quote ": " string "}")
+obj ::= ("{" quote "concept_label" quote ": " string "}")
 """
 
 
@@ -114,17 +114,12 @@ def make_tree_match_prompt(
     template = """\
         {role_prefix}system{role_suffix}
         # TASK
-        - From the TAXONOMY or SUGGESTIONS, choose **exactly one** label that best matches the ITEM.
-        - Labels may include a short summary in square parentheses.
-          Those summaries are guidance only; **output must be the exact label text (no summary)**.
-        - SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive (the TAXONOMY is).
-
-        The TAXONOMY in TREE is a nested (indented) Markdown list. Each bullet is:
-        - <label> [<optional short summary>]
-
-        # OUTPUT (single-line JSON)
-        {{"node_label":"..."}}{eot}
-
+        • From the TAXONOMY or SUGGESTIONS, choose **exactly one** concept label that best matches the ITEM.
+        • Labels may include a short description in square parentheses.
+          Those descriptions are guidance only; **output must be the exact label text (no description)**.
+        • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive (the TAXONOMY is).
+        • The TAXONOMY in TREE is a nested (indented) Markdown list. Each bullet is: `- <label> [<optional short description>]`
+        • Output a single-line JSON, for example `{{"concept_label":"..."}}`{eot}
         {role_prefix}user{role_suffix}
         # TREE
         {tree}

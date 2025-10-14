@@ -261,7 +261,7 @@ async def match_item_to_tree(
     node_label_raw: Optional[str] = None
     try:
         payload = json.loads(raw)
-        node_label_raw = payload.get("node_label")
+        node_label_raw = payload.get("concept_label")
     except Exception:
         node_label_raw = None
 
