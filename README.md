@@ -22,20 +22,17 @@ The **Variable Taxon Mapper** is a tool designed to map free-text variable metad
 
 -   **Taxonomy Pruning**: Using the above anchors as starting points, the tool **prunes the taxonomy graph** to a small subgraph likely to contain the correct label. The pruning is quite sophisticated:
 
-  - It will include the anchors, their close neighbors (children/ancestors up to a depth), and possibly other nodes that are in the same *communities* or connected components as the anchor. There are different modes for pruning (configurable via `pruning_mode`), including selecting the connected component (via "dominant forest" or "anchor hull") around anchors, or keeping everything above a similarity threshold, or within a certain radius in the graph. By default it uses a **"dominant_forest"** strategy that combines descendant expansion with a PageRank-based filtering to keep the subgraph size under a budget.
-  - The result of pruning is a reduced set of allowed nodes (typically a few dozen out of potentially thousands). This subset retains the most relevant terms for the given variable.
+    - It will include the anchors, their close neighbors (children/ancestors up to a depth), and possibly other nodes that are in the same *communities* or connected components as the anchor. There are different modes for pruning (configurable via `pruning_mode`), including selecting the connected component (via "dominant forest" or "anchor hull") around anchors, or keeping everything above a similarity threshold, or within a certain radius in the graph. By default it uses a **"dominant_forest"** strategy that combines descendant expansion with a PageRank-based filtering to keep the subgraph size under a budget.
+    - The result of pruning is a reduced set of allowed nodes. This subset retains the most relevant terms for the given variable.
 
 -   **LLM Matching**: The pruned taxonomy subgraph is then turned into a **nested markdown list** (indentation representing hierarchy) and included in a prompt to a local LLM. The prompt essentially asks the LLM (running via a `llama.cpp` server) to pick the most appropriate taxonomy label for the variable, given its name/description and the pruned list of candidates. The LLM is constrained by a context grammar so that it returns a JSON with a field for the chosen concept label. In practice, it sends a request to a `POST /completions` endpoint of a running `llama.cpp` instance with the prompt, and the LLM responds with a proposed label.
 
 -   **Post-processing & Fallbacks**: After the LLM returns a candidate label, the system checks if that label exactly matches one of the allowed taxonomy terms. If it does, great -- that's the prediction. If not (e.g. the LLM output some phrase not exactly in the taxonomy), the code will **attempt to map it back** to a valid node:
 
-  - It first normalizes the LLM's text (trimming punctuation or quotes) and sees if it matches a taxonomy label case-insensitively.
-
-  - If not, it embeds that LLM-proposed text and finds the closest taxonomy label embedding among the allowed set (this is a semantic **remapping** of the LLM output).
-
-  - If that still fails to produce a match, as a final fallback it simply takes the variable's own embedding and finds the nearest label among the allowed subset (essentially defaulting to pure ANN prediction).
-
-  - These fallbacks ensure the system always returns *some* taxonomy node rather than failing, and they improve robustness when the LLM output is slightly off. The code clearly labels the strategy used for each prediction (e.g., `"match_strategy": "llm_direct"` for direct LLM picks, versus `"embedding_remap"` or `"ann_fallback"`).
+    - It first normalizes the LLM's text (trimming punctuation or quotes) and sees if it matches a taxonomy label case-insensitively.
+    - If not, it embeds that LLM-proposed text and finds the closest taxonomy label embedding among the allowed set (this is a semantic **remapping** of the LLM output).
+    - If that still fails to produce a match, as a final fallback it simply takes the variable's own embedding and finds the nearest label among the allowed subset (essentially defaulting to pure ANN prediction).
+    - These fallbacks ensure the system always returns *some* taxonomy node rather than failing, and they improve robustness when the LLM output is slightly off. The code clearly labels the strategy used for each prediction (e.g., `"match_strategy": "llm_direct"` for direct LLM picks, versus `"embedding_remap"` or `"ann_fallback"`).
 
 -   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output CSV of results and prints them to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). It also prints a summary of evaluation metrics (detailed below).
 
