@@ -5,22 +5,22 @@ import numpy as np
 from typing import Any, List, Optional
 
 
-def clean_text(value: Any) -> str:
-    """Normalize arbitrary values to a trimmed string or ``"(empty)"``."""
+def clean_text(value: Any, empty="(empty)") -> str:
+    """Normalize arbitrary values to a trimmed string or `empty`."""
 
     if value is None:
-        return "(empty)"
+        return empty
     if isinstance(value, str):
         text = value.strip()
-        return text if text else "(empty)"
+        return text if text else empty
     try:
         if isinstance(value, float) and math.isnan(value):
-            return "(empty)"
+            return empty
     except Exception:
         # ``math.isnan`` may raise on non-numeric types; ignore and fall back.
         pass
     text = str(value).strip()
-    return text if text else "(empty)"
+    return text if text else empty
 
 
 def clean_str_or_none(v) -> Optional[str]:
