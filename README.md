@@ -29,7 +29,7 @@ This is a tool designed to map free-text variable metadata (from datasets) to a 
 
 -   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output CSV of results and prints them to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). It also prints a summary of evaluation metrics.
 
-In summary, the tool's idea is to use semantic embedding search to narrow the taxonomy and then leverage an LLM's contextual understanding to pick the best-fitting category, with careful pruning and fallback logic to balance accuracy and efficiency. All operational parameters (model names, number of neighbors, pruning depth, LLM endpoint, etc.) are defined in a config TOML file for flexibility, making it easy to tweak the pipeline without changing code.
+In summary, the tool's idea is to use semantic embedding search to narrow the taxonomy and then leverage an LLM's contextual understanding to pick the best-fitting category. All operational parameters (model names, number of neighbors, pruning depth, LLM endpoint, etc.) are defined in a config TOML file for flexibility, making it easy to tweak the pipeline without changing code.
 
 
 ## Dependencies
@@ -40,7 +40,7 @@ uv sync
 source .venv/bin/activate
 ipython
 ```
-Download and install [llama.cpp](https://github.com/ggml-org/llama.cpp) (or run via Docker). The system has been tested with [Qwen3-4B-Instruct-2507-GUFF](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF, you can either download a GUFF and pass it via the `--model` parameter, or let the server download and cache it (as below). 
+Download and install [llama.cpp](https://github.com/ggml-org/llama.cpp) (or run via Docker). The system has been tested with [Qwen3-4B-Instruct-2507-GUFF](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF), you can either download a GUFF and pass it via the `--model` parameter, or let the server download and cache it (as below). 
 
 ``` shell
 llama-server -hf  unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
