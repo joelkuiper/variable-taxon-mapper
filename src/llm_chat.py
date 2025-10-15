@@ -125,9 +125,8 @@ def make_tree_match_prompt(
         {tree}
 
         # ITEM:
-        - label: {item_label}
-        - name: {item_name}
-        - description: {item_desc}{eot}
+        **{item_label}** ({item_name})
+        {item_desc}{eot}
         {role_prefix}assistant{role_suffix}
 
     """

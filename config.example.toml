@@ -1,5 +1,6 @@
 [data]
-variables_csv = "data/Variables.csv"
+# variables_csv = "data/Variables.csv"
+variables_csv = "data/Variables_with_keywords_and_desc.csv"
 keywords_csv = "data/Keywords_summarized.csv"
 
 [embedder]
@@ -41,11 +42,11 @@ community_clique_size = 2 # k for k-clique community expansion
 max_community_size = 128 # max nodes pulled from any single community, if set
 anchor_overfetch_multiplier = 3 # ANN search overfetch multiplier (before pruning)
 anchor_min_overfetch = 128
-pagerank_damping = 0.85
+pagerank_damping = 0.9
 pagerank_score_floor = 0.0
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
 # pagerank_candidate_limit = 512
-node_budget = 340 # hard cap on nodes retained in the final allowed set
+node_budget = 256 # hard cap on nodes retained in the final allowed set
 # LLM tunables
 n_predict = 32
 temperature = 0.0

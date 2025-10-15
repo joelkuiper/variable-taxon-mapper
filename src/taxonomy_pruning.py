@@ -257,22 +257,21 @@ def _enforce_node_budget_with_ancestors(
     return allowed
 
 
-def _dominant_anchor_forest(
+def _prepare_pagerank_scores(
     G: nx.DiGraph,
     anchors: Sequence[str],
     *,
     max_descendant_depth: int,
-    node_budget: int,
     community_clique_size: int,
     max_community_size: Optional[int],
     pagerank_damping: float,
     pagerank_score_floor: float,
     pagerank_candidate_limit: int,
-) -> Tuple[Set[str], Dict[str, float]]:
-    """Select a covering forest rooted at anchors using a dominating-set view."""
+) -> Tuple[Set[str], Dict[str, float], Dict[str, float]]:
+    """Return candidate nodes, PageRank scores, and anchor distances."""
 
-    if node_budget == 0:
-        return set(), {}
+    if not anchors:
+        return set(), {}, {}
 
     neighborhood = _anchor_neighborhood(
         G,
@@ -282,15 +281,18 @@ def _dominant_anchor_forest(
         max_community_size=max_community_size,
     )
     if not neighborhood:
-        return set(), {}
+        return set(), {}, {}
 
     anchor_set: Set[str] = {a for a in anchors if G.has_node(a)}
+    if not anchor_set:
+        return set(), {}, {}
+
     candidate_nodes: Set[str] = set(neighborhood)
     for anchor in anchor_set:
         candidate_nodes.update(ancestors_to_root(G, anchor))
 
     if not candidate_nodes:
-        return set(), {}
+        return set(), {}, {}
 
     undirected = _undirected_taxonomy(G)
     anchor_sources = [a for a in anchors if a in undirected]
@@ -302,9 +304,6 @@ def _dominant_anchor_forest(
         distances_full = {}
 
     if pagerank_candidate_limit and pagerank_candidate_limit > 0:
-        # Trim the candidate set before running PageRank. The later ``node_budget``
-        # cap still applies, so the stricter of the two limits controls the final
-        # number of retained nodes.
         if len(candidate_nodes) > pagerank_candidate_limit:
             ordered_candidates = sorted(
                 candidate_nodes,
@@ -316,13 +315,13 @@ def _dominant_anchor_forest(
 
     subgraph = G.subgraph(candidate_nodes).copy()
     if subgraph.number_of_nodes() == 0:
-        return set(), {}
+        return set(), {}, distances_full
 
     personalization = {n: 1.0 for n in anchor_set if n in subgraph}
     pagerank_exception = getattr(nx, "PowerIterationFailedConvergence", RuntimeError)
     try:
         pagerank_scores = nx.pagerank(
-            subgraph,
+            subgraph.reverse(copy=True),
             alpha=pagerank_damping,
             personalization=personalization if personalization else None,
         )
@@ -338,9 +337,53 @@ def _dominant_anchor_forest(
         if not candidate_nodes:
             candidate_nodes = set(anchor_set)
 
-        pagerank_scores = {n: pagerank_scores.get(n, 0.0) for n in candidate_nodes}
+    pagerank_filtered = {n: pagerank_scores.get(n, 0.0) for n in candidate_nodes}
 
-    if anchor_sources:
+    return candidate_nodes, pagerank_filtered, distances_full
+
+
+def _dominant_anchor_forest(
+    G: nx.DiGraph,
+    anchors: Sequence[str],
+    *,
+    max_descendant_depth: int,
+    node_budget: int,
+    community_clique_size: int,
+    max_community_size: Optional[int],
+    pagerank_damping: float,
+    pagerank_score_floor: float,
+    pagerank_candidate_limit: int,
+    precomputed: Optional[Tuple[Set[str], Dict[str, float], Dict[str, float]]] = None,
+) -> Tuple[Set[str], Dict[str, float]]:
+    """Select a covering forest rooted at anchors using a dominating-set view."""
+
+    if node_budget == 0:
+        return set(), {}
+
+    if precomputed is not None:
+        candidate_nodes, pagerank_scores, distances_full = precomputed
+    else:
+        (
+            candidate_nodes,
+            pagerank_scores,
+            distances_full,
+        ) = _prepare_pagerank_scores(
+            G,
+            anchors,
+            max_descendant_depth=max_descendant_depth,
+            community_clique_size=community_clique_size,
+            max_community_size=max_community_size,
+            pagerank_damping=pagerank_damping,
+            pagerank_score_floor=pagerank_score_floor,
+            pagerank_candidate_limit=pagerank_candidate_limit,
+        )
+
+    if not candidate_nodes:
+        return set(), pagerank_scores
+
+    anchor_set: Set[str] = {a for a in anchors if G.has_node(a)}
+
+    if distances_full:
         distances = {n: distances_full.get(n, float("inf")) for n in candidate_nodes}
     else:
         distances = {}
@@ -763,6 +806,7 @@ def pruned_tree_markdown_for_item(
     distance_map: Dict[str, float] = {}
     pagerank_map: Dict[str, float] = {}
     anchors: List[str] = []
+    pagerank_data: Optional[Tuple[Set[str], Dict[str, float], Dict[str, float]]] = None
 
     if enable_taxonomy_pruning:
         if item_embs.size == 0:
@@ -813,6 +857,26 @@ def pruned_tree_markdown_for_item(
             if max_community_size_int <= 0:
                 max_community_size_int = None
 
+        if community_clique_size:
+            community_clique_size_int = max(2, int(community_clique_size))
+        else:
+            community_clique_size_int = 0
+
+        if normalized_tree_sort_mode == "pagerank" and anchors:
+            pagerank_data = _prepare_pagerank_scores(
+                G,
+                anchors,
+                max_descendant_depth=max_descendant_depth,
+                community_clique_size=community_clique_size_int,
+                max_community_size=max_community_size_int,
+                pagerank_damping=float(pagerank_damping),
+                pagerank_score_floor=float(pagerank_score_floor),
+                pagerank_candidate_limit=max(0, int(pagerank_candidate_limit)),
+            )
+            pagerank_map = pagerank_data[1]
+        else:
+            pagerank_map = {}
+
         pruning_mode_normalized = _normalize_pruning_mode(pruning_mode)
 
         sort_key_for_budget = _tree_sort_key_factory(
@@ -820,6 +884,7 @@ def pruned_tree_markdown_for_item(
             similarity_map=similarity_map,
             order_map=order_map,
             distance_map=distance_map,
+            pagerank_map=pagerank_map,
         )
 
         if pruning_mode_normalized == "anchor_hull":
@@ -827,9 +892,7 @@ def pruned_tree_markdown_for_item(
                 G,
                 anchors,
                 max_descendant_depth=max_descendant_depth,
-                community_clique_size=max(2, int(community_clique_size))
-                if community_clique_size
-                else 0,
+                community_clique_size=community_clique_size_int,
                 max_community_size=max_community_size_int,
                 node_budget=node_budget,
                 sort_key=sort_key_for_budget,
@@ -857,13 +920,12 @@ def pruned_tree_markdown_for_item(
                 anchors,
                 max_descendant_depth=max_descendant_depth,
                 node_budget=node_budget,
-                community_clique_size=max(2, int(community_clique_size))
-                if community_clique_size
-                else 0,
+                community_clique_size=community_clique_size_int,
                 max_community_size=max_community_size_int,
                 pagerank_damping=float(pagerank_damping),
                 pagerank_score_floor=float(pagerank_score_floor),
                 pagerank_candidate_limit=max(0, int(pagerank_candidate_limit)),
+                precomputed=pagerank_data,
             )
     else:
         allowed = set(G.nodes)
