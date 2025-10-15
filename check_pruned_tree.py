@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import networkx as nx
 import pandas as pd
 from tqdm.auto import tqdm
 
@@ -285,6 +286,37 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         gold_in_allowed = sorted(set(gold_labels) & allowed_set)
         allowed_has_gold_flag = bool(gold_in_allowed)
 
+        gold_parent_chain_matches: List[Dict[str, Any]] = []
+        gold_parent_chain_nodes: List[str] = []
+        n_gold_or_parent_in_allowed = 0
+        allowed_has_gold_or_parent_flag = allowed_has_gold_flag
+
+        if gold_labels and G is not None:
+            digraph = G
+            for gold_label in gold_labels:
+                if not isinstance(gold_label, str):
+                    continue
+                matches: List[str] = []
+                if gold_label in allowed_set:
+                    matches.append(gold_label)
+                if digraph.has_node(gold_label):
+                    ancestors = nx.ancestors(digraph, gold_label)
+                    ancestor_matches = sorted(allowed_set & ancestors)
+                    if ancestor_matches:
+                        matches.extend(ancestor_matches)
+                if matches:
+                    unique_matches = list(dict.fromkeys(matches))
+                    gold_parent_chain_matches.append(
+                        {"gold_label": gold_label, "matches": unique_matches}
+                    )
+                    gold_parent_chain_nodes.extend(unique_matches)
+                    n_gold_or_parent_in_allowed += 1
+
+            if gold_parent_chain_nodes and not allowed_has_gold_or_parent_flag:
+                allowed_has_gold_or_parent_flag = True
+
+        gold_parent_chain_nodes_sorted = sorted(dict.fromkeys(gold_parent_chain_nodes))
+
         evaluation_rows.append(
             {
                 "dataset": row.get("dataset"),
@@ -303,6 +335,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 "gold_in_allowed": gold_in_allowed,
                 "allowed_subtree_contains_gold": allowed_has_gold_flag,
                 "possible_correct_under_allowed": allowed_has_gold_flag,
+                "gold_or_parent_in_allowed": gold_parent_chain_nodes_sorted,
+                "gold_parent_chain_matches": gold_parent_chain_matches,
+                "n_gold_or_parent_in_allowed": n_gold_or_parent_in_allowed,
+                "allowed_subtree_contains_gold_or_parent": allowed_has_gold_or_parent_flag,
+                "possible_correct_under_allowed_including_parents": allowed_has_gold_or_parent_flag,
                 "resolved_path_candidates": [name_to_path.get(lbl) for lbl in gold_in_allowed],
             }
         )
@@ -311,6 +348,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     n_evaluated = int(len(result_df))
     n_allowed_contains = int(result_df["allowed_subtree_contains_gold"].sum()) if n_evaluated else 0
+    n_allowed_contains_parent = (
+        int(result_df["allowed_subtree_contains_gold_or_parent"].sum())
+        if n_evaluated
+        else 0
+    )
     metrics: Dict[str, Any] = {
         **meta,
         "n_evaluated": n_evaluated,
@@ -318,7 +360,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "allowed_subtree_contains_gold_rate": float(
             n_allowed_contains / n_evaluated if n_evaluated else 0.0
         ),
+        "n_allowed_subtree_contains_gold_or_parent": n_allowed_contains_parent,
+        "allowed_subtree_contains_gold_or_parent_rate": float(
+            n_allowed_contains_parent / n_evaluated if n_evaluated else 0.0
+        ),
         "n_without_gold_in_allowed": int(n_evaluated - n_allowed_contains),
+        "n_without_gold_or_parent_in_allowed": int(
+            n_evaluated - n_allowed_contains_parent
+        ),
         "taxonomy_total_nodes": total_nodes_in_graph,
         "mean_nodes_saved": float(result_df["n_allowed_labels"].mean())
         if n_evaluated
@@ -337,11 +386,13 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     summary_cols = [
         "dataset",
         "allowed_subtree_contains_gold",
+        "allowed_subtree_contains_gold_or_parent",
         "n_allowed_labels",
         "n_pruned_labels",
         "pct_saved",
         "pct_pruned",
         "n_gold_labels",
+        "n_gold_or_parent_in_allowed",
     ]
     summary_present = [c for c in summary_cols if c in result_df.columns]
     summary_df = pd.DataFrame()
@@ -352,11 +403,23 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 total_rows=("allowed_subtree_contains_gold", "size"),
                 contains_gold=("allowed_subtree_contains_gold", "sum"),
                 contains_gold_rate=("allowed_subtree_contains_gold", "mean"),
+                contains_gold_or_parent=(
+                    "allowed_subtree_contains_gold_or_parent",
+                    "sum",
+                ),
+                contains_gold_or_parent_rate=(
+                    "allowed_subtree_contains_gold_or_parent",
+                    "mean",
+                ),
                 mean_allowed_labels=("n_allowed_labels", "mean"),
                 mean_pruned_labels=("n_pruned_labels", "mean"),
                 mean_saved_percentage=("pct_saved", "mean"),
                 mean_pruned_percentage=("pct_pruned", "mean"),
                 mean_gold_labels=("n_gold_labels", "mean"),
+                mean_gold_or_parent_in_allowed=(
+                    "n_gold_or_parent_in_allowed",
+                    "mean",
+                ),
             )
             .reset_index()
         )
