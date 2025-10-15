@@ -221,6 +221,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     evaluation_rows: List[Dict[str, Any]] = []
     tax_name_set = set(tax_names)
     iterator = range(len(work_df))
+    total_nodes_in_graph = int(G.number_of_nodes())
+
     for idx in tqdm(iterator, desc="Evaluating", unit="item"):
         row = work_df.iloc[idx]
         token_set = token_sets.iloc[idx]
@@ -264,6 +266,22 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         )
 
         allowed_set = set(allowed_ranked)
+        allowed_count = len(allowed_set)
+        pruned_count = (
+            max(total_nodes_in_graph - allowed_count, 0)
+            if total_nodes_in_graph
+            else 0
+        )
+        pct_saved = (
+            float(allowed_count) / float(total_nodes_in_graph)
+            if total_nodes_in_graph
+            else 0.0
+        )
+        pct_pruned = (
+            float(pruned_count) / float(total_nodes_in_graph)
+            if total_nodes_in_graph
+            else 0.0
+        )
         gold_in_allowed = sorted(set(gold_labels) & allowed_set)
         allowed_has_gold_flag = bool(gold_in_allowed)
 
@@ -276,7 +294,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 "keywords": row.get("keywords"),
                 "gold_labels": gold_labels,
                 "allowed_labels": allowed_ranked,
-                "n_allowed_labels": len(allowed_ranked),
+                "n_allowed_labels": allowed_count,
+                "n_pruned_labels": pruned_count,
+                "pct_saved": pct_saved,
+                "pct_pruned": pct_pruned,
                 "n_gold_labels": len(gold_labels),
                 "n_gold_in_allowed": len(gold_in_allowed),
                 "gold_in_allowed": gold_in_allowed,
@@ -298,9 +319,30 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             n_allowed_contains / n_evaluated if n_evaluated else 0.0
         ),
         "n_without_gold_in_allowed": int(n_evaluated - n_allowed_contains),
+        "taxonomy_total_nodes": total_nodes_in_graph,
+        "mean_nodes_saved": float(result_df["n_allowed_labels"].mean())
+        if n_evaluated
+        else 0.0,
+        "mean_nodes_pruned": float(result_df["n_pruned_labels"].mean())
+        if n_evaluated
+        else 0.0,
+        "mean_saved_percentage": float(result_df["pct_saved"].mean())
+        if n_evaluated
+        else 0.0,
+        "mean_pruned_percentage": float(result_df["pct_pruned"].mean())
+        if n_evaluated
+        else 0.0,
     }
 
-    summary_cols = ["dataset", "allowed_subtree_contains_gold", "n_allowed_labels", "n_gold_labels"]
+    summary_cols = [
+        "dataset",
+        "allowed_subtree_contains_gold",
+        "n_allowed_labels",
+        "n_pruned_labels",
+        "pct_saved",
+        "pct_pruned",
+        "n_gold_labels",
+    ]
     summary_present = [c for c in summary_cols if c in result_df.columns]
     summary_df = pd.DataFrame()
     if summary_present and not result_df.empty:
@@ -311,6 +353,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 contains_gold=("allowed_subtree_contains_gold", "sum"),
                 contains_gold_rate=("allowed_subtree_contains_gold", "mean"),
                 mean_allowed_labels=("n_allowed_labels", "mean"),
+                mean_pruned_labels=("n_pruned_labels", "mean"),
+                mean_saved_percentage=("pct_saved", "mean"),
+                mean_pruned_percentage=("pct_pruned", "mean"),
                 mean_gold_labels=("n_gold_labels", "mean"),
             )
             .reset_index()
