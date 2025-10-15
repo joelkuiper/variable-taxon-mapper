@@ -13,6 +13,7 @@ import aiohttp
 import networkx as nx
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from config import EvaluationConfig
 
@@ -476,26 +477,28 @@ def run_label_benchmark(
         )
 
     default_progress_hook: ProgressHook | None = None
+    progress_bar: tqdm | None = None
     if progress_hook is None and evaluate:
-        interval = max(1, int(cfg.progress_log_interval))
+        total_jobs = len(jobs)
+        progress_bar = tqdm(total=total_jobs, desc="Evaluating", unit="rows")
+        last_done = 0
 
         def _default_progress(
             done: int, total: int, correct_sum: Optional[int], elapsed: float
         ) -> None:
-            if not total:
+            nonlocal last_done
+            if progress_bar is None or total == 0:
                 return
-            if done % interval != 0 and done != total:
-                return
-            acc = (
-                (correct_sum or 0) / done if correct_sum is not None and done else 0.0
-            )
-            rps = done / elapsed if elapsed > 0 else 0.0
-            sys.stderr.write(
-                f"\rEvaluating: {done}/{total} (acc≈{acc:.3f}, {rps:.1f} rows/s)"
-            )
-            if done == total:
-                sys.stderr.write("\n")
-            sys.stderr.flush()
+            increment = done - last_done
+            if increment > 0:
+                progress_bar.update(increment)
+                last_done = done
+            if done and correct_sum is not None:
+                acc = (correct_sum or 0) / done
+                rps = done / elapsed if elapsed > 0 else 0.0
+                progress_bar.set_postfix({"acc≈": f"{acc:.3f}", "rows/s": f"{rps:.1f}"})
+            if done >= total:
+                progress_bar.close()
 
         default_progress_hook = _default_progress
 
@@ -513,6 +516,9 @@ def run_label_benchmark(
         gloss_map=gloss_map,
         progress_hook=progress_hook or default_progress_hook,
     )
+
+    if progress_bar is not None:
+        progress_bar.close()
 
     rows.sort(key=lambda r: r.get("_j", 0))
     for r in rows:
