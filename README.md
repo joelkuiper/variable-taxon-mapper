@@ -20,7 +20,7 @@ This is a tool designed to map free-text variable metadata (from datasets) to a 
 
 -   **LLM Matching**: The pruned taxonomy subgraph is then turned into a nested Markdown list (indentation representing hierarchy) and included in a prompt to a local LLM. The prompt essentially asks the LLM (running via a `llama.cpp` server) to pick the most appropriate taxonomy label for the variable, given its name/description and the pruned list of candidates. The LLM is constrained by a context grammar so that it returns a JSON with a field for the chosen concept label. In practice, it sends a request to a `POST /completions` endpoint of a running `llama.cpp` instance with the prompt, and the LLM responds with a proposed label.
 
--   **Post-processing & Fallbacks**: After the LLM returns a candidate label, the system checks if that label exactly matches one of the allowed taxonomy terms. If it does, great -- that's the prediction. If not (e.g. the LLM output some phrase not exactly in the taxonomy), the code will attempt to map it back to a valid node:
+-   **Post-processing & Fallbacks**: After the LLM returns a candidate label, the system checks if that label exactly matches one of the allowed taxonomy terms. If it does, great. If not (e.g. the LLM output some phrase not exactly in the taxonomy), the code will attempt to map it back to a valid node:
 
     - It first normalizes the LLM's text (trimming punctuation or quotes) and sees if it matches a taxonomy label case-insensitively.
     - If not, it embeds that LLM-proposed text and finds the closest taxonomy label embedding among the allowed set (this is a semantic remapping of the LLM output).
