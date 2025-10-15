@@ -16,9 +16,8 @@ The **Variable Taxon Mapper** is a tool designed to map free-text variable metad
 
 -   **Processing Each Variable**: For each variable record (with fields like *label*, *name*, *description*), the pipeline generates a composite text (concatenating or considering these fields) and computes an **embedding for the variable** using the same embedder. It then uses two strategies to find candidate taxonomy nodes relevant to this variable:
 
--   **ANN Search (Semantic)** -- The variable's embedding is used to query the HNSW index to retrieve the top `K` most similar taxonomy nodes (by cosine similarity). These serve as *semantic anchors* in the taxonomy.
-
--   **Lexical Match (Textual)** -- The variable's text (name/description) is also compared lexically to taxonomy labels using a token-based similarity measure. Up to a few top terms that have high token overlap or similarity (e.g. edit distance or normalized compression distance) are taken as *lexical anchors*. This catches cases where a variable's name closely matches a taxonomy label even if embeddings might not rank it highest.
+    -  **ANN Search (Semantic)** -- The variable's embedding is used to query the HNSW index to retrieve the top `K` most similar taxonomy nodes (by cosine similarity). These serve as *semantic anchors* in the taxonomy.
+    -  **Lexical Match (Textual)** -- The variable's text (name/description) is also compared lexically to taxonomy labels using a token-based similarity measure. Up to a few top terms that have high token overlap or similarity (e.g. edit distance or normalized compression distance) are taken as *lexical anchors*. This catches cases where a variable's name closely matches a taxonomy label even if embeddings might not rank it highest.
 
 -   **Taxonomy Pruning**: Using the above anchors as starting points, the tool **prunes the taxonomy graph** to a small subgraph likely to contain the correct label. The pruning is quite sophisticated:
 
@@ -30,9 +29,9 @@ The **Variable Taxon Mapper** is a tool designed to map free-text variable metad
 -   **Post-processing & Fallbacks**: After the LLM returns a candidate label, the system checks if that label exactly matches one of the allowed taxonomy terms. If it does, great -- that's the prediction. If not (e.g. the LLM output some phrase not exactly in the taxonomy), the code will **attempt to map it back** to a valid node:
 
     - It first normalizes the LLM's text (trimming punctuation or quotes) and sees if it matches a taxonomy label case-insensitively.
-    - If not, it embeds that LLM-proposed text and finds the closest taxonomy label embedding among the allowed set (this is a semantic **remapping** of the LLM output).
+    - If not, it embeds that LLM-proposed text and finds the closest taxonomy label embedding among the allowed set (this is a semantic remapping of the LLM output).
     - If that still fails to produce a match, as a final fallback it simply takes the variable's own embedding and finds the nearest label among the allowed subset (essentially defaulting to pure ANN prediction).
-    - These fallbacks ensure the system always returns *some* taxonomy node rather than failing, and they improve robustness when the LLM output is slightly off. The code clearly labels the strategy used for each prediction (e.g., `"match_strategy": "llm_direct"` for direct LLM picks, versus `"embedding_remap"` or `"ann_fallback"`).
+    - These fallbacks ensure the system always returns *some* taxonomy node rather than failing, and they improve robustness when the LLM output is slightly off. The code labels the strategy used for each prediction (e.g., `"match_strategy": "llm_direct"` for direct LLM picks, versus `"embedding_remap"` or `"ann_fallback"`) when generating the results.
 
 -   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output CSV of results and prints them to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). It also prints a summary of evaluation metrics (detailed below).
 
