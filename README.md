@@ -1,12 +1,6 @@
 # LLM-assisted Taxonomy Matcher (embedding + llama.cpp)
 
-This script benchmarks an LLM-assisted pipeline for mapping free-text variable metadata to a curated biomedical taxonomy. It loads `data/Variables.csv` and `data/Keywords.csv`, builds a directed acyclic taxonomy (with `networkx`). Taxonomy labels are embedded with an embedder to enable cosine similarity using [hsnwlib](https://github.com/nmslib/hnswlib). For each item (unique `(dataset, label, name, description)`), it prunes the tree to a small, relevant subgraph by nearest-neighbor and lexicographical similarity, then prompts a local [llama.cpp](https://github.com/ggml-org/llama.cpp) `/completions` endpoint to select one node label.
-
-Evaluation uses comma-split `variables['keywords']` as the gold set (intersected with the taxonomy) and counts a prediction as correct if it matches the gold label **or** lies on the same ancestor/descendant chain. Execution is optionally multithreaded with pooled HTTP sessions.
-
-## General Set-Up and Idea
-
-The **Variable Taxon Mapper** is a tool designed to map free-text variable metadata (from datasets) to a curated biomedical taxonomy. It achieves this by combining embedding-based similarity search with a Large Language Model (LLM) for final label selection. At a high level, the pipeline works as follows:
+This is a tool designed to map free-text variable metadata (from datasets) to a curated biomedical taxonomy. It achieves this by combining embedding-based similarity search with a Large Language Model (LLM) for final label selection. At a high level, the pipeline works as follows:
 
 -   **Input Data**: The tool expects two CSV files as input: one containing the variables (with fields like dataset name, variable label, variable name, description, etc.), and another containing the taxonomy (a list of *keywords* or terms with their parent relationships). The taxonomy is treated as a directed acyclic graph (essentially a hierarchy/forest) where each node has at most one parent.
 
@@ -16,7 +10,7 @@ The **Variable Taxon Mapper** is a tool designed to map free-text variable metad
 
 -   **Processing Each Variable**: For each variable record (with fields like *label*, *name*, *description*), the pipeline generates a composite text (concatenating or considering these fields) and computes an **embedding for the variable** using the same embedder. It then uses two strategies to find candidate taxonomy nodes relevant to this variable:
 
-    -  **ANN Search (Semantic)** -- The variable's embedding is used to query the HNSW index to retrieve the top `K` most similar taxonomy nodes (by cosine similarity). These serve as *semantic anchors* in the taxonomy.
+    -  **ANN Search (Semantic)** -- The variable's embedding is used to query the [hsnwlib](https://github.com/nmslib/hnswlib) index to retrieve the top `K` most similar taxonomy nodes (by cosine similarity). These serve as *semantic anchors* in the taxonomy.
     -  **Lexical Match (Textual)** -- The variable's text (name/description) is also compared lexically to taxonomy labels using a token-based similarity measure. Up to a few top terms that have high token overlap or similarity (e.g. edit distance or normalized compression distance) are taken as *lexical anchors*. This catches cases where a variable's name closely matches a taxonomy label even if embeddings might not rank it highest.
 
 -   **Taxonomy Pruning**: Using the above anchors as starting points, the tool **prunes the taxonomy graph** to a small subgraph likely to contain the correct label. The pruning is quite sophisticated:
