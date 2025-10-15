@@ -1,7 +1,7 @@
 [data]
 # variables_csv = "data/Variables.csv"
 variables_csv = "data/Variables_with_keywords_and_desc.csv"
-keywords_csv = "data/Keywords_summarized.csv"
+keywords_csv = "data/Keywords_summarized_new.csv"
 
 [embedder]
 model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
@@ -13,8 +13,8 @@ fp16 = true
 mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
-gamma = 0.125
-summary_weight = 0.5
+gamma = 0.1
+summary_weight = 0.667
 
 [hnsw]
 space = "cosine"
@@ -34,10 +34,10 @@ tree_sort_mode = "relevance" # options: relevance, topological, alphabetical, pr
 pruning_mode = "anchor_hull" # options: dominant_forest, anchor_hull, similarity_threshold, radius
 similarity_threshold = 0.0 # cosine threshold used when pruning_mode="similarity_threshold"
 pruning_radius = 2 # undirected hop limit when pruning_mode="radius"
-anchor_top_k = 32 # ANN anchors to fetch per item before pruning
-max_descendant_depth = 3 # limit descendants pulled under each anchor
-suggestion_list_limit = 8 # number of candidates surfaced alongside the tree
-lexical_anchor_limit = 2 # additional anchors sourced from lexical overlap
+anchor_top_k = 18 # ANN anchors to fetch per item before pruning
+max_descendant_depth = 2 # limit descendants pulled under each anchor
+suggestion_list_limit = 5 # number of candidates surfaced alongside the tree
+lexical_anchor_limit = 4 # additional anchors sourced from lexical overlap
 community_clique_size = 2 # k for k-clique community expansion
 max_community_size = 128 # max nodes pulled from any single community, if set
 anchor_overfetch_multiplier = 3 # ANN search overfetch multiplier (before pruning)

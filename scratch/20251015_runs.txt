@@ -1,0 +1,119 @@
+NEW:
+Evaluation Metrics:
+  - n_total_rows_after_dedupe: 1376
+  - n_with_any_keyword: 1376
+  - n_eligible: 1363
+  - n_excluded_not_in_taxonomy: 13
+  - n_evaluated: 1363
+  - n_correct: 1086
+  - n_unmatched: 277
+  - label_accuracy_any_match: 0.7968
+  - label_accuracy_exact_only: 0.5216
+  - label_accuracy_ancestor_only: 0.2715
+  - label_accuracy_descendant_only: 0.0037
+  - n_errors: 0
+  - match_type_counts:
+      • ancestor: 370
+      • descendant: 5
+      • exact: 711
+      • none: 277
+  - match_type_rates:
+      • ancestor: 0.2715
+      • descendant: 0.0037
+      • exact: 0.5216
+      • none: 0.2032
+  - other_metrics:
+      {
+          "hierarchical_distance_count": 1239,
+          "hierarchical_distance_error_count": 153,
+          "hierarchical_distance_error_mean": 2.6405228758169934,
+          "hierarchical_distance_error_median": 2.0,
+          "hierarchical_distance_error_within_1_rate": 0.0,
+          "hierarchical_distance_error_within_2_rate": 0.5620915032679739,
+          "hierarchical_distance_min_mean": 0.7788539144471348,
+          "hierarchical_distance_min_median": 0.0,
+          "hierarchical_distance_within_1_rate": 0.7280064568200162,
+          "hierarchical_distance_within_2_rate": 0.9443099273607748,
+          "match_strategy_correct_share": {
+              "embedding_remap": 0.0027624309392265192,
+              "llm_direct": 0.9972375690607734
+          },
+          "match_strategy_performance": {
+              "embedding_remap": {
+                  "accuracy": 0.3,
+                  "n": 10,
+                  "n_correct": 3
+              },
+              "llm_direct": {
+                  "accuracy": 0.8004434589800443,
+                  "n": 1353,
+                  "n_correct": 1083
+              }
+          },
+          "match_strategy_volume": {
+              "embedding_remap": 10,
+              "llm_direct": 1353
+          },
+          "n_possible_correct_under_allowed": 1303,
+          "possible_correct_under_allowed_rate": 0.9559794570799707
+      }
+
+OLD
+Evaluation Metrics:
+  - n_total_rows_after_dedupe: 1376
+  - n_with_any_keyword: 1376
+  - n_eligible: 1363
+  - n_excluded_not_in_taxonomy: 13
+  - n_evaluated: 1363
+  - n_correct: 1099
+  - n_unmatched: 264
+  - label_accuracy_any_match: 0.8063
+  - label_accuracy_exact_only: 0.5048
+  - label_accuracy_ancestor_only: 0.2964
+  - label_accuracy_descendant_only: 0.0051
+  - n_errors: 0
+  - match_type_counts:
+      • ancestor: 404
+      • descendant: 7
+      • exact: 688
+      • none: 264
+  - match_type_rates:
+      • ancestor: 0.2964
+      • descendant: 0.0051
+      • exact: 0.5048
+      • none: 0.1937
+  - other_metrics:
+      {
+          "hierarchical_distance_count": 1240,
+          "hierarchical_distance_error_count": 141,
+          "hierarchical_distance_error_mean": 2.652482269503546,
+          "hierarchical_distance_error_median": 2.0,
+          "hierarchical_distance_error_within_1_rate": 0.0,
+          "hierarchical_distance_error_within_2_rate": 0.5035460992907801,
+          "hierarchical_distance_min_mean": 0.8467741935483871,
+          "hierarchical_distance_min_median": 0.0,
+          "hierarchical_distance_within_1_rate": 0.675,
+          "hierarchical_distance_within_2_rate": 0.9411290322580645,
+          "match_strategy_correct_share": {
+              "embedding_remap": 0.0,
+              "llm_direct": 1.0
+          },
+          "match_strategy_performance": {
+              "embedding_remap": {
+                  "accuracy": 0.0,
+                  "n": 6,
+                  "n_correct": 0
+              },
+              "llm_direct": {
+                  "accuracy": 0.8098747236551216,
+                  "n": 1357,
+                  "n_correct": 1099
+              }
+          },
+          "match_strategy_volume": {
+              "embedding_remap": 6,
+              "llm_direct": 1357
+          },
+          "n_possible_correct_under_allowed": 1247,
+          "possible_correct_under_allowed_rate": 0.9148936170212766
+      }
