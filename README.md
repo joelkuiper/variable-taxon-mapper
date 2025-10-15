@@ -27,9 +27,9 @@ This is a tool designed to map free-text variable metadata (from datasets) to a 
     - If that still fails to produce a match, as a final fallback it simply takes the variable's own embedding and finds the nearest label among the allowed subset (essentially defaulting to pure ANN prediction).
     - These fallbacks ensure the system always returns *some* taxonomy node rather than failing, and they improve robustness when the LLM output is slightly off. The code labels the strategy used for each prediction (e.g., `"match_strategy": "llm_direct"` for direct LLM picks, versus `"embedding_remap"` or `"ann_fallback"`) when generating the results.
 
--   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output CSV of results and prints them to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). It also prints a summary of evaluation metrics (detailed below).
+-   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output CSV of results and prints them to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). It also prints a summary of evaluation metrics.
 
-In summary, the tool's idea is to use **semantic embedding search to narrow the taxonomy** and then leverage an **LLM's contextual understanding to pick the best-fitting category**, with careful pruning and fallback logic to balance **accuracy** and **efficiency**. All operational parameters (model names, number of neighbors, pruning depth, LLM endpoint, etc.) are defined in a config TOML file for flexibility, making it easy to tweak the pipeline without changing code.
+In summary, the tool's idea is to use semantic embedding search to narrow the taxonomy and then leverage an LLM's contextual understanding to pick the best-fitting category, with careful pruning and fallback logic to balance accuracy and efficiency. All operational parameters (model names, number of neighbors, pruning depth, LLM endpoint, etc.) are defined in a config TOML file for flexibility, making it easy to tweak the pipeline without changing code.
 
 
 ## Dependencies
