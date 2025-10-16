@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import re
 import sys
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import aiohttp
 import numpy as np
 
-from .embedding import Embedder, encode_item_texts
+from .embedding import Embedder
 from .llm_chat import (
     GRAMMAR_RESPONSE,
     llama_completion_async,
@@ -163,54 +163,6 @@ def _map_freeform_label_to_allowed(
     )
 
 
-def _hnsw_fallback_choose_label(
-    item: Dict[str, Optional[str]],
-    *,
-    allowed_labels: Sequence[str],
-    tax_names: Sequence[str],
-    tax_embs: np.ndarray,
-    embedder: Embedder,
-    hnsw_index,
-    fanout_min: int = 256,
-    fanout_multiplier: int = 4,
-) -> Optional[str]:
-    """HNSW-backed fallback restricted to the allowed labels."""
-
-    if not allowed_labels:
-        return None
-
-    item_embs = encode_item_texts(item, embedder, clean=False)
-    if item_embs.size == 0:
-        return None
-
-    N = len(tax_names)
-    multiplier = max(1, int(fanout_multiplier))
-    Kq = min(max(int(fanout_min), multiplier * max(1, len(allowed_labels))), N)
-
-    allowed_idx_map = _build_allowed_index_map(allowed_labels, tax_names)
-    if not allowed_idx_map:
-        return None
-
-    scores: Dict[int, float] = {}
-    for query in item_embs:
-        labels, dists = hnsw_index.knn_query(
-            query[np.newaxis, :].astype(np.float32), k=Kq
-        )
-        labels, dists = labels[0], dists[0]
-        sims = 1.0 - dists.astype(np.float32)
-        for idx, sim in zip(labels, sims):
-            if idx < 0:
-                continue
-            if idx in allowed_idx_map and sim > scores.get(idx, -1.0):
-                scores[idx] = float(sim)
-
-    if not scores:
-        return None
-
-    best_idx = max(scores.items(), key=lambda kv: kv[1])[0]
-    return allowed_idx_map[best_idx]
-
-
 async def match_item_to_tree(
     item: Dict[str, Optional[str]],
     *,
@@ -233,8 +185,8 @@ async def match_item_to_tree(
     top_p: float = 0.8,
     min_p: float = 0.0,
     grammar: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Resolve ``item`` to the best taxonomy node using LLM + ANN fallbacks."""
+    ) -> Dict[str, Any]:
+    """Resolve ``item`` to the best taxonomy node via the LLM with embedding remap."""
 
     prompt = make_tree_match_prompt(tree_markdown, item)
     _print_prompt_once(prompt)
@@ -300,27 +252,6 @@ async def match_item_to_tree(
             "no_match": False,
             "raw": raw,
             "match_strategy": "embedding_remap",
-        }
-
-    chosen = _hnsw_fallback_choose_label(
-        item,
-        allowed_labels=allowed_labels,
-        tax_names=tax_names,
-        tax_embs=tax_embs,
-        embedder=embedder,
-        hnsw_index=hnsw_index,
-    )
-    if chosen:
-        return {
-            "input_item": item,
-            "pred_label_raw": node_label_raw,
-            "resolved_label": chosen,
-            "resolved_id": name_to_id.get(chosen),
-            "resolved_path": name_to_path.get(chosen),
-            "matched": True,
-            "no_match": False,
-            "raw": raw,
-            "match_strategy": "ann_fallback",
         }
 
     return {

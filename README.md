@@ -24,8 +24,7 @@ This is a tool designed to map free-text variable metadata (from datasets) to a 
 
     - It first normalizes the LLM's text (trimming punctuation or quotes) and sees if it matches a taxonomy label case-insensitively.
     - If not, it embeds that LLM-proposed text and finds the closest taxonomy label embedding among the allowed set (this is a semantic remapping of the LLM output).
-    - If that still fails to produce a match, as a final fallback it simply takes the variable's own embedding and finds the nearest label among the allowed subset (essentially defaulting to pure ANN prediction).
-    - These fallbacks ensure the system always returns *some* taxonomy node rather than failing, and they improve robustness when the LLM output is slightly off. The code labels the strategy used for each prediction (e.g., `"match_strategy": "llm_direct"` for direct LLM picks, versus `"embedding_remap"` or `"ann_fallback"`) when generating the results.
+    - These fallbacks ensure the system always returns a taxonomy node rather than failin. The code labels the strategy used for each prediction (e.g., `"match_strategy": "llm_direct"` for direct LLM picks, versus `"embedding_remap"`) when generating the results.
 
 -   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output CSV of results and prints them to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). It also prints a summary of evaluation metrics.
 
