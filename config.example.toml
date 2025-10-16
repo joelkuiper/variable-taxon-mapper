@@ -13,8 +13,8 @@ fp16 = true
 mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
-gamma = 0.125
-summary_weight = 0.67
+gamma = 0.105
+summary_weight = 0.7
 
 [hnsw]
 space = "cosine"
@@ -32,6 +32,7 @@ progress_log_interval = 10
 [pruning]
 enable_taxonomy_pruning = true # disable to send the full taxonomy without pruning
 tree_sort_mode = "relevance" # options: relevance, topological, alphabetical, proximity, pagerank
+suggestion_sort_mode = "relevance" # independent ranking for the suggestion list; options mirror tree_sort_mode
 pruning_mode = "anchor_hull" # options: dominant_forest, anchor_hull, similarity_threshold, radius
 similarity_threshold = 0.0 # cosine threshold used when pruning_mode="similarity_threshold"
 pruning_radius = 2 # undirected hop limit when pruning_mode="radius"

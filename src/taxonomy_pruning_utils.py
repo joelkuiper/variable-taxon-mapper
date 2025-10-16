@@ -677,14 +677,14 @@ def rank_allowed_nodes(
     *,
     similarity_map: Mapping[str, float],
     order_map: Mapping[str, float],
-    tree_sort_mode: Optional[str],
+    sort_mode: Optional[str],
     distance_map: Optional[Mapping[str, float]] = None,
     pagerank_map: Optional[Mapping[str, float]] = None,
 ) -> List[str]:
-    """Return allowed nodes ranked using the configured tree sort mode."""
+    """Return allowed nodes ranked using the configured node sort mode."""
 
     sort_key = tree_sort_key_factory(
-        tree_sort_mode,
+        sort_mode,
         similarity_map=similarity_map,
         order_map=order_map,
         distance_map=distance_map,

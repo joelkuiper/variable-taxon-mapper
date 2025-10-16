@@ -55,6 +55,17 @@ def pruned_tree_markdown_for_item(
     cfg = pruning_cfg or PruningConfig()
 
     normalized_tree_sort_mode = normalize_tree_sort_mode(cfg.tree_sort_mode)
+    normalized_suggestion_sort_mode = normalize_tree_sort_mode(
+        cfg.suggestion_sort_mode
+    )
+    requires_proximity = (
+        normalized_tree_sort_mode == "proximity"
+        or normalized_suggestion_sort_mode == "proximity"
+    )
+    needs_pagerank = (
+        normalized_tree_sort_mode == "pagerank"
+        or normalized_suggestion_sort_mode == "pagerank"
+    )
     distance_map: Dict[str, float] = {}
     pagerank_map: Dict[str, float] = {}
     anchors: List[str] = []
@@ -87,7 +98,7 @@ def pruned_tree_markdown_for_item(
 
         anchors = [tax_names[i] for i in combined_anchor_idxs]
 
-        if normalized_tree_sort_mode == "proximity" and anchors:
+        if requires_proximity and anchors:
             undirected = get_undirected_taxonomy(G)
             anchor_nodes = [a for a in anchors if a in undirected]
             if anchor_nodes:
@@ -114,7 +125,7 @@ def pruned_tree_markdown_for_item(
         else:
             community_clique_size_int = 0
 
-        if normalized_tree_sort_mode == "pagerank" and anchors:
+        if needs_pagerank and anchors:
             pagerank_candidate_limit = (
                 0
                 if cfg.pagerank_candidate_limit is None
@@ -196,7 +207,7 @@ def pruned_tree_markdown_for_item(
         allowed,
         similarity_map=similarity_map,
         order_map=order_map,
-        tree_sort_mode=cfg.tree_sort_mode,
+        sort_mode=cfg.suggestion_sort_mode,
         distance_map=distance_map,
         pagerank_map=pagerank_map,
     )
@@ -215,7 +226,14 @@ def pruned_tree_markdown_for_item(
         pagerank_map=pagerank_map,
     )
     if fallback_ranked is not None:
-        allowed_ranked = fallback_ranked
+        allowed_ranked = rank_allowed_nodes(
+            set(fallback_ranked),
+            similarity_map=similarity_map,
+            order_map=order_map,
+            sort_mode=cfg.suggestion_sort_mode,
+            distance_map=distance_map,
+            pagerank_map=pagerank_map,
+        )
 
     max_items = int(cfg.suggestion_list_limit)
     top_show = (
