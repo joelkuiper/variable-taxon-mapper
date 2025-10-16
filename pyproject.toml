@@ -1,7 +1,7 @@
 [project]
-name = "catalogue"
+name = "variable-taxon-mapper"
 version = "0.1.0"
-description = "Add your description here"
+description = "A tool for mapping variables to (ontological) trees."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
