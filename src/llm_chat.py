@@ -117,10 +117,10 @@ def make_tree_match_prompt(
         {role_prefix}system{role_suffix}
         # TASK
         • From the TAXONOMY (or SUGGESTIONS), choose **exactly one** concept that best matches the ITEM.
-        • The TAXONOMY is a nested (indented) Markdown list. Each bullet is: `- <concept label> [<optional short description>]`.
-        • Concepts may include a short description in square parentheses.
-          Those descriptions are guidance only; **output must be the label text (no description)**.
-        • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive (the TAXONOMY is!).
+        • The TAXONOMY is a nested (indented) Markdown list where each bullet is: `- <concept label> [<optional short description>]`.
+        • Concepts may include a short description in square brackets.
+          Those descriptions are guidance only; **output must be the exact concept label (no description)**.
+        • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive.
         • Output a single-line JSON, for example `{{"concept_label":"..."}}`.{eot}
         {role_prefix}user{role_suffix}
         {tree}
