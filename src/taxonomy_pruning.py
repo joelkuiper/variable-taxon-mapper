@@ -55,9 +55,7 @@ def pruned_tree_markdown_for_item(
     cfg = pruning_cfg or PruningConfig()
 
     normalized_tree_sort_mode = normalize_tree_sort_mode(cfg.tree_sort_mode)
-    normalized_suggestion_sort_mode = normalize_tree_sort_mode(
-        cfg.suggestion_sort_mode
-    )
+    normalized_suggestion_sort_mode = normalize_tree_sort_mode(cfg.suggestion_sort_mode)
     requires_proximity = (
         normalized_tree_sort_mode == "proximity"
         or normalized_suggestion_sort_mode == "proximity"
@@ -212,7 +210,7 @@ def pruned_tree_markdown_for_item(
         pagerank_map=pagerank_map,
     )
 
-    tree_md, fallback_ranked = render_tree_markdown(
+    tree_md = render_tree_markdown(
         G,
         allowed,
         df,
@@ -225,15 +223,6 @@ def pruned_tree_markdown_for_item(
         distance_map=distance_map,
         pagerank_map=pagerank_map,
     )
-    if fallback_ranked is not None:
-        allowed_ranked = rank_allowed_nodes(
-            set(fallback_ranked),
-            similarity_map=similarity_map,
-            order_map=order_map,
-            sort_mode=cfg.suggestion_sort_mode,
-            distance_map=distance_map,
-            pagerank_map=pagerank_map,
-        )
 
     max_items = int(cfg.suggestion_list_limit)
     top_show = (

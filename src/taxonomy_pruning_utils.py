@@ -606,9 +606,7 @@ def tree_sort_key_factory(
             if distance_map is not None:
                 raw_distance = distance_map.get(node_name, float("inf"))
                 distance_val = (
-                    float(raw_distance)
-                    if pd.notna(raw_distance)
-                    else float("inf")
+                    float(raw_distance) if pd.notna(raw_distance) else float("inf")
                 )
             score = similarity_map.get(node_name, float("-inf"))
             order_val = order_map.get(node_name, float("inf"))
@@ -627,9 +625,7 @@ def tree_sort_key_factory(
             pagerank_val = 0.0
             if pagerank_map is not None:
                 raw_pagerank = pagerank_map.get(node_name, 0.0)
-                pagerank_val = (
-                    float(raw_pagerank) if pd.notna(raw_pagerank) else 0.0
-                )
+                pagerank_val = float(raw_pagerank) if pd.notna(raw_pagerank) else 0.0
             score = similarity_map.get(node_name, float("-inf"))
             order_val = order_map.get(node_name, float("inf"))
             return (
@@ -733,40 +729,6 @@ def render_tree_markdown(
             _walk(root, 0)
 
     if lines:
-        return "\n".join(lines), None
-
-    fallback_lines: List[str] = []
-
-    def _walk_full(node: str, depth: int) -> None:
-        label_display = make_label_display(node, gloss_map or {})
-        fallback_lines.append("  " * depth + f"- {label_display}")
-        for child in sorted(G.successors(node), key=sort_key):
-            _walk_full(child, depth + 1)
-
-    for root in roots_in_order(G, sort_key):
-        _walk_full(root, 0)
-
-    tree_md = "\n".join(fallback_lines)
-    fallback_ranked = sorted(G.nodes, key=sort_key)
-
-    return tree_md, fallback_ranked
-
-
-__all__ = [
-    "anchor_hull_subtree",
-    "anchor_neighborhood",
-    "dominant_anchor_forest",
-    "enforce_node_budget_with_ancestors",
-    "get_undirected_taxonomy",
-    "hnsw_anchor_indices",
-    "lexical_anchor_indices",
-    "normalize_pruning_mode",
-    "normalize_tree_sort_mode",
-    "prepare_pagerank_scores",
-    "radius_limited_subtree",
-    "rank_allowed_nodes",
-    "render_tree_markdown",
-    "similarity_threshold_subtree",
-    "taxonomy_similarity_scores",
-    "tree_sort_key_factory",
-]
+        return "\n".join(lines)
+    else:
+        return ""
