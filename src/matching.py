@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import aiohttp
 import numpy as np
 
+from config import LLMConfig
 from .embedding import Embedder
 from .llm_chat import (
     GRAMMAR_RESPONSE,
@@ -174,39 +175,33 @@ async def match_item_to_tree(
     tax_embs: np.ndarray,
     embedder: Embedder,
     hnsw_index,
-    endpoint: str = "http://127.0.0.1:8080/completions",
-    temperature: float = 0.7,
-    n_predict: int = 256,
+    llm_config: LLMConfig,
     slot_id: int = 0,
-    cache_prompt: bool = True,
-    n_keep: int = -1,
     session: Optional[aiohttp.ClientSession] = None,
-    top_k: int = 20,
-    top_p: float = 0.8,
-    min_p: float = 0.0,
-    grammar: Optional[str] = None,
-    ) -> Dict[str, Any]:
+) -> Dict[str, Any]:
     """Resolve ``item`` to the best taxonomy node via the LLM with embedding remap."""
 
     prompt = make_tree_match_prompt(tree_markdown, item)
     _print_prompt_once(prompt)
 
     llama_kwargs: Dict[str, Any] = {
-        "temperature": temperature,
-        "top_k": top_k,
-        "top_p": top_p,
-        "min_p": min_p,
-        "grammar": grammar if grammar is not None else GRAMMAR_RESPONSE,
-        "cache_prompt": cache_prompt,
-        "n_keep": n_keep,
+        "temperature": llm_config.temperature,
+        "top_k": llm_config.top_k,
+        "top_p": llm_config.top_p,
+        "min_p": llm_config.min_p,
+        "grammar": (
+            llm_config.grammar if llm_config.grammar is not None else GRAMMAR_RESPONSE
+        ),
+        "cache_prompt": llm_config.cache_prompt,
+        "n_keep": llm_config.n_keep,
         "slot_id": slot_id,
         "session": session,
     }
-    llama_kwargs["n_predict"] = max(int(n_predict), 64)
+    llama_kwargs["n_predict"] = max(int(llm_config.n_predict), 64)
 
     raw = await llama_completion_async(
         prompt,
-        endpoint,
+        llm_config.endpoint,
         **llama_kwargs,
     )
 

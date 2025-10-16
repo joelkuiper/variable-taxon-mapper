@@ -63,42 +63,11 @@ class HNSWConfig:
 class EvaluationConfig:
     """Runtime options for the label benchmarking pipeline."""
 
-    endpoint: str = "http://127.0.0.1:8080/completions"
     n: int = 1000
     seed: int = 37
-    n_predict: int = 512
-    temperature: float = 0.0
     dedupe_on: list[str] = field(default_factory=lambda: ["name"])
-    anchor_top_k: int = 32
-    max_descendant_depth: int = 3
-    node_budget: int = 800
-    max_workers: int = 4
-    num_slots: int = 4
-    pool_maxsize: int = 64
-    suggestion_list_limit: int = 40
-    anchor_overfetch_multiplier: int = 3
-    anchor_min_overfetch: int = 128
-    lexical_anchor_limit: int = 3
-    community_clique_size: int = 2
-    max_community_size: Optional[int] = 400
-    pagerank_damping: float = 0.85
-    pagerank_score_floor: float = 0.0
-    pagerank_candidate_limit: int = 256
-    llm_top_k: int = 20
-    llm_top_p: float = 0.8
-    llm_min_p: float = 0.0
-    llm_cache_prompt: bool = True
-    llm_n_keep: int = -1
-    llm_grammar: Optional[str] = None
-    http_sock_connect: float = 10.0
-    http_sock_read_floor: float = 30.0
     progress_log_interval: int = 10
     results_csv: Optional[str] = None
-    enable_taxonomy_pruning: bool = True
-    tree_sort_mode: str = "relevance"  # e.g., "relevance", "topological", "alphabetical", "proximity", "pagerank"
-    pruning_mode: str = "dominant_forest"
-    similarity_threshold: float = 0.0
-    pruning_radius: int = 2
 
     def to_kwargs(self) -> dict[str, Any]:
         data = asdict(self)
@@ -123,6 +92,73 @@ class EvaluationConfig:
 
 
 @dataclass
+class PruningConfig:
+    """Configuration controlling taxonomy pruning and candidate generation."""
+
+    enable_taxonomy_pruning: bool = True
+    tree_sort_mode: str = "relevance"
+    pruning_mode: str = "dominant_forest"
+    similarity_threshold: float = 0.0
+    pruning_radius: int = 2
+    anchor_top_k: int = 32
+    max_descendant_depth: int = 3
+    node_budget: int = 800
+    suggestion_list_limit: int = 40
+    lexical_anchor_limit: int = 3
+    community_clique_size: int = 2
+    max_community_size: Optional[int] = 400
+    anchor_overfetch_multiplier: int = 3
+    anchor_min_overfetch: int = 128
+    pagerank_damping: float = 0.85
+    pagerank_score_floor: float = 0.0
+    pagerank_candidate_limit: Optional[int] = 256
+
+    def to_kwargs(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class LLMConfig:
+    """Settings for LLM matching requests."""
+
+    endpoint: str = "http://127.0.0.1:8080/completions"
+    n_predict: int = 512
+    temperature: float = 0.0
+    top_k: int = 20
+    top_p: float = 0.8
+    min_p: float = 0.0
+    cache_prompt: bool = True
+    n_keep: int = -1
+    grammar: Optional[str] = None
+
+    def to_kwargs(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ParallelismConfig:
+    """Client-side concurrency controls for llama.cpp requests."""
+
+    num_slots: int = 4
+    pool_maxsize: int = 64
+    max_workers: int = 4
+
+    def to_kwargs(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class HttpConfig:
+    """HTTP client timeout tuning."""
+
+    sock_connect: float = 10.0
+    sock_read_floor: float = 30.0
+
+    def to_kwargs(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class AppConfig:
     """Full application configuration tree."""
 
@@ -133,6 +169,10 @@ class AppConfig:
     )
     hnsw: HNSWConfig = field(default_factory=HNSWConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    pruning: PruningConfig = field(default_factory=PruningConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    parallelism: ParallelismConfig = field(default_factory=ParallelismConfig)
+    http: HttpConfig = field(default_factory=HttpConfig)
 
 
 def _coerce_section(section: Mapping[str, Any] | None, cls: type[Any]) -> Any:
@@ -159,6 +199,10 @@ def load_config(path: str | Path) -> AppConfig:
     taxonomy_section = raw.get("taxonomy_embeddings")
     hnsw_section = raw.get("hnsw")
     evaluation_section = raw.get("evaluation")
+    pruning_section = raw.get("pruning")
+    llm_section = raw.get("llm")
+    parallel_section = raw.get("parallelism")
+    http_section = raw.get("http")
 
     app_config = AppConfig(
         data=_coerce_section(data_section, DataConfig),
@@ -166,6 +210,10 @@ def load_config(path: str | Path) -> AppConfig:
         taxonomy_embeddings=_coerce_section(taxonomy_section, TaxonomyEmbeddingConfig),
         hnsw=_coerce_section(hnsw_section, HNSWConfig),
         evaluation=_coerce_section(evaluation_section, EvaluationConfig),
+        pruning=_coerce_section(pruning_section, PruningConfig),
+        llm=_coerce_section(llm_section, LLMConfig),
+        parallelism=_coerce_section(parallel_section, ParallelismConfig),
+        http=_coerce_section(http_section, HttpConfig),
     )
 
     return app_config
@@ -176,7 +224,11 @@ __all__ = [
     "DataConfig",
     "EmbedderConfig",
     "EvaluationConfig",
+    "HttpConfig",
     "HNSWConfig",
+    "LLMConfig",
+    "ParallelismConfig",
+    "PruningConfig",
     "TaxonomyEmbeddingConfig",
     "load_config",
 ]

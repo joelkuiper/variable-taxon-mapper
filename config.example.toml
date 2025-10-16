@@ -5,7 +5,7 @@ keywords_csv = "data/Keywords_summarized_new.csv"
 
 [embedder]
 model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
-# model_name = "BAAI/bge-large-en"
+# model_name = "BAAI/bge-large-en-v1.5"
 max_length = 512
 batch_size = 256
 fp16 = true
@@ -24,11 +24,12 @@ ef_search = 128
 num_threads = 0
 
 [evaluation]
-endpoint = "http://127.0.0.1:8080/completions"
 n = 10_000
 seed = 37
 dedupe_on = ["name"]
-# Tree pruning
+progress_log_interval = 10
+
+[pruning]
 enable_taxonomy_pruning = true # disable to send the full taxonomy without pruning
 tree_sort_mode = "relevance" # options: relevance, topological, alphabetical, proximity, pagerank
 pruning_mode = "anchor_hull" # options: dominant_forest, anchor_hull, similarity_threshold, radius
@@ -42,23 +43,27 @@ community_clique_size = 2 # k for k-clique community expansion
 max_community_size = 128 # max nodes pulled from any single community, if set
 anchor_overfetch_multiplier = 3 # ANN search overfetch multiplier (before pruning)
 anchor_min_overfetch = 128
-pagerank_damping = 0.9
+pagerank_damping = 0.8
 pagerank_score_floor = 0.0
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
 # pagerank_candidate_limit = 512
 node_budget = 256 # hard cap on nodes retained in the final allowed set
-# LLM tunables
+
+[llm]
+endpoint = "http://127.0.0.1:8080/completions"
 n_predict = 32
 temperature = 0.0
-llm_top_k = 20
-llm_top_p = 0.8
-llm_min_p = 0.0
-llm_cache_prompt = true
-llm_n_keep = -1
-# Parallelism tunables
+top_k = 20
+top_p = 0.8
+min_p = 0.0
+cache_prompt = true
+n_keep = -1
+
+[parallelism]
 num_slots = 4
 pool_maxsize = 4
 max_workers = 4
-http_sock_connect = 10.0
-http_sock_read_floor = 30.0
-progress_log_interval = 10
+
+[http]
+sock_connect = 10.0
+sock_read_floor = 30.0

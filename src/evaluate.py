@@ -15,7 +15,13 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-from config import EvaluationConfig
+from config import (
+    EvaluationConfig,
+    HttpConfig,
+    LLMConfig,
+    ParallelismConfig,
+    PruningConfig,
+)
 
 from .embedding import Embedder
 from .matching import match_item_to_tree
@@ -61,15 +67,19 @@ class PredictionJob:
     gold_labels: Optional[List[str]] = None
 
 
-def _sock_read_timeout(cfg: EvaluationConfig) -> float:
-    base = float(cfg.http_sock_read_floor)
-    return max(base, float(cfg.n_predict))
+def _sock_read_timeout(http_cfg: HttpConfig, llm_cfg: LLMConfig) -> float:
+    base = float(http_cfg.sock_read_floor)
+    return max(base, float(llm_cfg.n_predict))
 
 
 def _collect_predictions(
     jobs: Sequence[PredictionJob],
     *,
-    cfg: EvaluationConfig,
+    eval_cfg: EvaluationConfig,
+    pruning_cfg: PruningConfig,
+    llm_cfg: LLMConfig,
+    parallel_cfg: ParallelismConfig,
+    http_cfg: HttpConfig,
     keywords: pd.DataFrame,
     G,
     embedder: Embedder,
@@ -87,12 +97,11 @@ def _collect_predictions(
     async def _predict_all() -> List[Dict[str, Any]]:
         timeout_cfg = aiohttp.ClientTimeout(
             total=None,
-            sock_connect=float(cfg.http_sock_connect),
-            sock_read=_sock_read_timeout(cfg),
+            sock_connect=float(http_cfg.sock_connect),
+            sock_read=_sock_read_timeout(http_cfg, llm_cfg),
         )
-        connector = aiohttp.TCPConnector(
-            limit=max(1, cfg.pool_maxsize), limit_per_host=max(1, cfg.pool_maxsize)
-        )
+        pool_limit = max(1, parallel_cfg.pool_maxsize)
+        connector = aiohttp.TCPConnector(limit=pool_limit, limit_per_host=pool_limit)
 
         total = len(jobs)
         rows: List[Optional[Dict[str, Any]]] = [None] * total
@@ -100,8 +109,7 @@ def _collect_predictions(
         correct_sum = 0
         gold_progress_seen = False
 
-        slot_limit = max(1, getattr(cfg, "num_slots", 1) or 1)
-        pool_limit = max(1, getattr(cfg, "pool_maxsize", slot_limit) or slot_limit)
+        slot_limit = max(1, getattr(parallel_cfg, "num_slots", 1) or 1)
         concurrency_limit = max(1, min(slot_limit, pool_limit))
         semaphore = asyncio.Semaphore(concurrency_limit)
 
@@ -120,26 +128,10 @@ def _collect_predictions(
                         tax_names=tax_names,
                         tax_embs_unit=tax_embs_unit,
                         hnsw_index=hnsw_index,
+                        pruning_cfg=pruning_cfg,
                         name_col="name",
                         order_col="order",
-                        anchor_top_k=cfg.anchor_top_k,
-                        max_descendant_depth=cfg.max_descendant_depth,
-                        node_budget=cfg.node_budget,
                         gloss_map=gloss_map,
-                        anchor_overfetch_multiplier=cfg.anchor_overfetch_multiplier,
-                        anchor_min_overfetch=cfg.anchor_min_overfetch,
-                        suggestion_list_limit=cfg.suggestion_list_limit,
-                        lexical_anchor_limit=cfg.lexical_anchor_limit,
-                        community_clique_size=cfg.community_clique_size,
-                        max_community_size=cfg.max_community_size,
-                        pagerank_damping=cfg.pagerank_damping,
-                        pagerank_score_floor=cfg.pagerank_score_floor,
-                        pagerank_candidate_limit=cfg.pagerank_candidate_limit,
-                        enable_taxonomy_pruning=cfg.enable_taxonomy_pruning,
-                        tree_sort_mode=cfg.tree_sort_mode,
-                        pruning_mode=cfg.pruning_mode,
-                        similarity_threshold=cfg.similarity_threshold,
-                        pruning_radius=cfg.pruning_radius,
                     )
 
                     allowed_has_gold: Optional[bool] = None
@@ -152,10 +144,6 @@ def _collect_predictions(
                         else:
                             allowed_has_gold = False
 
-                    match_kwargs = {}
-                    if cfg.llm_grammar is not None:
-                        match_kwargs["grammar"] = cfg.llm_grammar
-
                     pred = await match_item_to_tree(
                         job.item,
                         tree_markdown=tree_markdown,
@@ -166,17 +154,9 @@ def _collect_predictions(
                         tax_embs=tax_embs_unit,
                         embedder=embedder,
                         hnsw_index=hnsw_index,
-                        endpoint=cfg.endpoint,
-                        n_predict=cfg.n_predict,
-                        temperature=cfg.temperature,
+                        llm_config=llm_cfg,
                         slot_id=job.slot_id,
-                        cache_prompt=cfg.llm_cache_prompt,
-                        n_keep=cfg.llm_n_keep,
-                        top_k=cfg.llm_top_k,
-                        top_p=cfg.llm_top_p,
-                        min_p=cfg.llm_min_p,
                         session=session,
-                        **match_kwargs,
                     )
 
                     resolved_label = pred.get("resolved_label")
@@ -369,6 +349,18 @@ def _coerce_eval_config(
     )
 
 
+def _coerce_config(config, cls, label: str):
+    if config is None:
+        return cls()
+    if isinstance(config, cls):
+        return config
+    if isinstance(config, Mapping):
+        return cls(**config)
+    raise TypeError(
+        f"{label} must be a {cls.__name__} or a mapping of keyword arguments"
+    )
+
+
 def run_label_benchmark(
     variables: pd.DataFrame,
     keywords: pd.DataFrame,
@@ -382,10 +374,20 @@ def run_label_benchmark(
     name_to_path: Dict[str, str],
     gloss_map: Dict[str, str],
     eval_config: EvaluationConfig | Mapping[str, Any] | None = None,
+    pruning_config: PruningConfig | Mapping[str, Any] | None = None,
+    llm_config: LLMConfig | Mapping[str, Any] | None = None,
+    parallel_config: ParallelismConfig | Mapping[str, Any] | None = None,
+    http_config: HttpConfig | Mapping[str, Any] | None = None,
     evaluate: bool = True,
     progress_hook: ProgressHook | None = None,
 ) -> tuple[pd.DataFrame, Dict[str, Any]]:
     cfg = _coerce_eval_config(eval_config)
+    pruning_cfg = _coerce_config(pruning_config, PruningConfig, "pruning_config")
+    llm_cfg = _coerce_config(llm_config, LLMConfig, "llm_config")
+    parallel_cfg = _coerce_config(
+        parallel_config, ParallelismConfig, "parallel_config"
+    )
+    http_cfg = _coerce_config(http_config, HttpConfig, "http_config")
 
     dedupe_on = [c for c in (cfg.dedupe_on or []) if c]
 
@@ -439,7 +441,7 @@ def run_label_benchmark(
         n_eligible = len(idxs)
 
     jobs: List[PredictionJob] = []
-    slot_base = max(1, cfg.num_slots)
+    slot_base = max(1, parallel_cfg.num_slots)
 
     for j, i in enumerate(idxs):
         row = work_df.loc[i]
@@ -504,7 +506,11 @@ def run_label_benchmark(
 
     rows = _collect_predictions(
         jobs,
-        cfg=cfg,
+        eval_cfg=cfg,
+        pruning_cfg=pruning_cfg,
+        llm_cfg=llm_cfg,
+        parallel_cfg=parallel_cfg,
+        http_cfg=http_cfg,
         keywords=keywords,
         G=G,
         embedder=embedder,

@@ -82,6 +82,10 @@ def run_pipeline(
         name_to_path=name_to_path,
         gloss_map=gloss_map,
         eval_config=config.evaluation,
+        pruning_config=config.pruning,
+        llm_config=config.llm,
+        parallel_config=config.parallelism,
+        http_config=config.http,
         evaluate=evaluate,
         progress_hook=progress_hook,
     )
