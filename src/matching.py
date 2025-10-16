@@ -46,39 +46,6 @@ def _build_allowed_index_map(
     return idx_map
 
 
-def _hnsw_top_match_for_query_vec(
-    q_vec: np.ndarray,
-    *,
-    allowed_idx_map: Dict[int, str],
-    tax_embs: np.ndarray,
-    hnsw_index,
-    fanout_k: int,
-) -> Optional[str]:
-    """Search the HNSW index and return the best allowed label by cosine similarity."""
-
-    if q_vec.size == 0 or not allowed_idx_map:
-        return None
-
-    N = tax_embs.shape[0]
-    Kq = min(max(64, fanout_k), N)
-
-    labels, dists = hnsw_index.knn_query(q_vec[np.newaxis, :].astype(np.float32), k=Kq)
-    labels, dists = labels[0], dists[0]
-
-    best_label = None
-    best_sim = -1.0
-    for idx, dist in zip(labels, dists):
-        if idx < 0:
-            continue
-        if idx in allowed_idx_map:
-            sim = 1.0 - float(dist)
-            if sim > best_sim:
-                best_sim = sim
-                best_label = allowed_idx_map[idx]
-
-    return best_label
-
-
 def _canonicalize_label_text(
     pred_text: Optional[str],
     *,
@@ -120,48 +87,6 @@ def _canonicalize_label_text(
     resolved = allowed_lookup.get(normalized.lower()) if normalized else None
 
     return normalized if normalized else None, resolved
-
-
-def _map_freeform_label_to_allowed(
-    pred_text: Optional[str],
-    *,
-    allowed_labels: Sequence[str],
-    tax_names: Sequence[str],
-    tax_embs: np.ndarray,
-    embedder: Embedder,
-    hnsw_index,
-    fanout_min: int = 256,
-    fanout_multiplier: int = 4,
-) -> Optional[str]:
-    """Embed the LLM label text and map it to the nearest allowed taxonomy node."""
-
-    normalized, resolved = _canonicalize_label_text(
-        pred_text, allowed_labels=allowed_labels
-    )
-    if resolved:
-        return resolved
-
-    if not normalized or not allowed_labels:
-        return None
-
-    query = embedder.encode([normalized])
-    if query.size == 0:
-        return None
-    q_vec = query.astype(np.float32, copy=False)[0]
-
-    allowed_idx_map = _build_allowed_index_map(allowed_labels, tax_names)
-    if not allowed_idx_map:
-        return None
-
-    multiplier = max(1, int(fanout_multiplier))
-    fanout = max(int(fanout_min), multiplier * max(1, len(allowed_idx_map)))
-    return _hnsw_top_match_for_query_vec(
-        q_vec,
-        allowed_idx_map=allowed_idx_map,
-        tax_embs=tax_embs,
-        hnsw_index=hnsw_index,
-        fanout_k=fanout,
-    )
 
 
 async def match_item_to_tree(
@@ -226,27 +151,6 @@ async def match_item_to_tree(
             "matched": True,
             "no_match": False,
             "match_strategy": "llm_direct",
-        }
-
-    mapped = _map_freeform_label_to_allowed(
-        node_label_raw,
-        allowed_labels=allowed_labels,
-        tax_names=tax_names,
-        tax_embs=tax_embs,
-        embedder=embedder,
-        hnsw_index=hnsw_index,
-    )
-    if mapped:
-        return {
-            "input_item": item,
-            "pred_label_raw": node_label_raw,
-            "resolved_label": mapped,
-            "resolved_id": name_to_id.get(mapped),
-            "resolved_path": name_to_path.get(mapped),
-            "matched": True,
-            "no_match": False,
-            "raw": raw,
-            "match_strategy": "embedding_remap",
         }
 
     return {
