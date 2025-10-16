@@ -110,6 +110,7 @@ def make_tree_match_prompt(
     tree_md = (tree_markdown_labels_only or "").strip()
     lab = clean_text(item.get("label"))
     nam = clean_text(item.get("name"))
+    dat = clean_text(item.get("dataset"))
     desc = clean_text(item.get("description"))
 
     template = """\
@@ -126,6 +127,7 @@ def make_tree_match_prompt(
 
         # ITEM:
         **{item_label}** ({item_name})
+        dataset: {item_dataset}
         {item_desc}{eot}
         {role_prefix}assistant{role_suffix}
 
@@ -138,6 +140,7 @@ def make_tree_match_prompt(
             eot=eot,
             tree=tree_md,
             item_label=lab,
+            item_dataset=dat,
             item_name=nam,
             item_desc=desc,
         )
