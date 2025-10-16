@@ -13,8 +13,8 @@ fp16 = true
 mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
-gamma = 0.1
-summary_weight = 0.667
+gamma = 0.125
+summary_weight = 0.67
 
 [hnsw]
 space = "cosine"
