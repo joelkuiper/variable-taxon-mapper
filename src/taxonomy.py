@@ -99,6 +99,7 @@ def tree_to_markdown(
     df: pd.DataFrame,
     name_col: str = "name",
     order_col: str = "order",
+    surrogate_root_label: Optional[str] = None,
 ) -> str:
     """Nested markdown list with labels only (no ids)."""
     order_map = df.groupby(name_col)[order_col].min().to_dict()
@@ -111,8 +112,14 @@ def tree_to_markdown(
         for c in sorted(G.successors(node), key=sort_key):
             _walk(c, depth + 1)
 
+    surrogate_label = (surrogate_root_label or "").strip()
+    depth_offset = 0
+    if surrogate_label:
+        lines.append(f"- {surrogate_label}")
+        depth_offset = 1
+
     for r in roots_in_order(G, sort_key):
-        _walk(r, 0)
+        _walk(r, depth_offset)
 
     return "\n".join(lines)
 

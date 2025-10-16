@@ -99,6 +99,7 @@ class PruningConfig:
     tree_sort_mode: str = "relevance"
     suggestion_sort_mode: str = "relevance"
     pruning_mode: str = "dominant_forest"
+    surrogate_root_label: Optional[str] = None
     similarity_threshold: float = 0.0
     pruning_radius: int = 2
     anchor_top_k: int = 32

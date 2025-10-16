@@ -702,6 +702,7 @@ def render_tree_markdown(
     tree_sort_mode: Optional[str],
     distance_map: Optional[Mapping[str, float]] = None,
     pagerank_map: Optional[Mapping[str, float]] = None,
+    surrogate_root_label: Optional[str] = None,
 ) -> Tuple[str, Optional[List[str]]]:
     """Render the allowed subtree as markdown; fallback to full taxonomy if empty."""
 
@@ -724,9 +725,18 @@ def render_tree_markdown(
             if child in allowed:
                 _walk(child, depth + 1)
 
+    surrogate_label = (surrogate_root_label or "").strip()
+    depth_offset = 0
+    if surrogate_label:
+        root_display = make_label_display(
+            surrogate_label, gloss_map or {}, use_summary=False
+        )
+        lines.append(f"- {root_display}")
+        depth_offset = 1
+
     for root in roots_in_order(G, sort_key):
         if root in allowed:
-            _walk(root, 0)
+            _walk(root, depth_offset)
 
     if lines:
         return "\n".join(lines)
