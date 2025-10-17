@@ -60,6 +60,7 @@ top_p = 0.8
 min_p = 0.0
 cache_prompt = true
 n_keep = -1
+embedding_remap_threshold = 0.45
 
 [parallelism]
 num_slots = 4

@@ -18,7 +18,6 @@ from .llm_chat import (
 
 _PROMPT_DEBUG_SHOWN = False
 
-
 def _print_prompt_once(prompt: str) -> None:
     """Print the first LLM prompt for debugging."""
 
@@ -137,7 +136,7 @@ async def match_item_to_tree(
     except Exception:
         node_label_raw = None
 
-    _, canonical_label = _canonicalize_label_text(
+    normalized_text, canonical_label = _canonicalize_label_text(
         node_label_raw, allowed_labels=allowed_labels
     )
 
@@ -152,6 +151,35 @@ async def match_item_to_tree(
             "no_match": False,
             "match_strategy": "llm_direct",
         }
+
+    embedding_remap_threshold = getattr(llm_config, "embedding_remap_threshold", 0.45)
+
+    if normalized_text:
+        allowed_idx_map = _build_allowed_index_map(allowed_labels, tax_names)
+        if allowed_idx_map:
+            allowed_items = list(allowed_idx_map.items())
+            allowed_indices = [idx for idx, _ in allowed_items]
+            allowed_embs = tax_embs[allowed_indices]
+
+            query_vecs = embedder.encode([normalized_text])
+            if query_vecs.size:
+                query_vec = query_vecs[0]
+                sims = allowed_embs @ query_vec
+                best_local_idx = int(np.argmax(sims))
+                best_similarity = float(sims[best_local_idx])
+
+                if best_similarity >= embedding_remap_threshold:
+                    _, resolved_label = allowed_items[best_local_idx]
+                    return {
+                        "input_item": item,
+                        "pred_label_raw": node_label_raw,
+                        "resolved_label": resolved_label,
+                        "resolved_id": name_to_id.get(resolved_label),
+                        "resolved_path": name_to_path.get(resolved_label),
+                        "matched": True,
+                        "no_match": False,
+                        "match_strategy": "embedding_remap",
+                    }
 
     return {
         "input_item": item,

@@ -132,6 +132,7 @@ class LLMConfig:
     cache_prompt: bool = True
     n_keep: int = -1
     grammar: Optional[str] = None
+    embedding_remap_threshold: float = 0.45
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)
