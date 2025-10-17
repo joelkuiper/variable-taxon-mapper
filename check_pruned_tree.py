@@ -78,7 +78,9 @@ def _compute_effective_subset(
 
     eligible_idxs = list(work_df.index[eligible_mask])
     rnd = pd.Series(eligible_idxs)
-    rnd = rnd.sample(frac=1.0, random_state=int(cfg.seed) if cfg.seed is not None else None)
+    rnd = rnd.sample(
+        frac=1.0, random_state=int(cfg.seed) if cfg.seed is not None else None
+    )
     effective_limit = row_limit_override
     if effective_limit is None:
         effective_limit = cfg.n
@@ -161,10 +163,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def _resolve_path(base_path: Path, override: Optional[Path], default: Path) -> Path:
     if override is None:
         return default
-    return override.resolve() if override.is_absolute() else (base_path / override).resolve()
+    return (
+        override.resolve()
+        if override.is_absolute()
+        else (base_path / override).resolve()
+    )
 
 
-def _prepare_outputs(base_path: Path, *paths: Optional[Path]) -> Tuple[Optional[Path], ...]:
+def _prepare_outputs(
+    base_path: Path, *paths: Optional[Path]
+) -> Tuple[Optional[Path], ...]:
     resolved: List[Optional[Path]] = []
     for path in paths:
         if path is None:
@@ -254,9 +262,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         allowed_set = set(allowed_ranked)
         allowed_count = len(allowed_set)
         pruned_count = (
-            max(total_nodes_in_graph - allowed_count, 0)
-            if total_nodes_in_graph
-            else 0
+            max(total_nodes_in_graph - allowed_count, 0) if total_nodes_in_graph else 0
         )
         pct_saved = (
             float(allowed_count) / float(total_nodes_in_graph)
@@ -325,14 +331,18 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 "n_gold_or_parent_in_allowed": n_gold_or_parent_in_allowed,
                 "allowed_subtree_contains_gold_or_parent": allowed_has_gold_or_parent_flag,
                 "possible_correct_under_allowed_including_parents": allowed_has_gold_or_parent_flag,
-                "resolved_path_candidates": [name_to_path.get(lbl) for lbl in gold_in_allowed],
+                "resolved_path_candidates": [
+                    name_to_path.get(lbl) for lbl in gold_in_allowed
+                ],
             }
         )
 
     result_df = pd.DataFrame(evaluation_rows)
 
     n_evaluated = int(len(result_df))
-    n_allowed_contains = int(result_df["allowed_subtree_contains_gold"].sum()) if n_evaluated else 0
+    n_allowed_contains = (
+        int(result_df["allowed_subtree_contains_gold"].sum()) if n_evaluated else 0
+    )
     n_allowed_contains_parent = (
         int(result_df["allowed_subtree_contains_gold_or_parent"].sum())
         if n_evaluated

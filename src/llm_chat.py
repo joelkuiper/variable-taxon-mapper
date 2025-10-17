@@ -83,7 +83,9 @@ async def llama_completion_many(
 
     close_session = False
     if session is None:
-        timeout_cfg = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=timeout)
+        timeout_cfg = aiohttp.ClientTimeout(
+            total=None, sock_connect=10, sock_read=timeout
+        )
         session = aiohttp.ClientSession(timeout=timeout_cfg)
         close_session = True
 
@@ -96,7 +98,10 @@ async def llama_completion_many(
         return await llama_completion_async(prompt, endpoint, **payload)
 
     try:
-        tasks = [asyncio.create_task(_run_single(prompt, kwargs)) for prompt, kwargs in requests]
+        tasks = [
+            asyncio.create_task(_run_single(prompt, kwargs))
+            for prompt, kwargs in requests
+        ]
         results = await asyncio.gather(*tasks)
     finally:
         if close_session and session is not None:

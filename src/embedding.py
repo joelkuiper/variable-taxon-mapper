@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-import logging
 
 import numpy as np
 import torch

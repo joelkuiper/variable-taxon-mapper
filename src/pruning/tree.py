@@ -122,7 +122,9 @@ class TreePruner:
 
         distance_map: Dict[str, float] = {}
         pagerank_map: Dict[str, float] = {}
-        pagerank_data: Optional[Tuple[set[str], Dict[str, float], Dict[str, float]]] = None
+        pagerank_data: Optional[Tuple[set[str], Dict[str, float], Dict[str, float]]] = (
+            None
+        )
         anchors: List[str] = []
 
         if cfg.enable_taxonomy_pruning:
@@ -135,7 +137,9 @@ class TreePruner:
                     distances = nx.multi_source_dijkstra_path_length(
                         undirected, sources=anchor_nodes
                     )
-                    distance_map = {node: float(dist) for node, dist in distances.items()}
+                    distance_map = {
+                        node: float(dist) for node, dist in distances.items()
+                    }
                     for anchor in anchor_nodes:
                         distance_map.setdefault(anchor, 0.0)
 
@@ -209,12 +213,14 @@ class TreePruner:
             for label in allowed_ranked[:top_k]
         ]
 
-        markdown = "\n".join([
-            "\n# TREE",
-            tree_markdown,
-            "\n# SUGGESTIONS",
-            *suggestion_lines,
-        ])
+        markdown = "\n".join(
+            [
+                "\n# TREE",
+                tree_markdown,
+                "\n# SUGGESTIONS",
+                *suggestion_lines,
+            ]
+        )
 
         allowed_lookup = set(allowed_ranked)
         allowed_children: Dict[str, List[str]] = {}
@@ -331,7 +337,9 @@ class TreePruner:
             max_descendant_depth=cfg.max_descendant_depth,
             node_budget=cfg.node_budget,
             community_clique_size=(
-                0 if not cfg.community_clique_size else max(2, int(cfg.community_clique_size))
+                0
+                if not cfg.community_clique_size
+                else max(2, int(cfg.community_clique_size))
             ),
             max_community_size=(
                 None

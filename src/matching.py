@@ -162,7 +162,9 @@ async def match_items_to_tree(
     for req in requests:
         prompt = make_tree_match_prompt(req.tree_markdown, req.item)
         _print_prompt_once(prompt)
-        prompt_payloads.append((prompt, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id)))
+        prompt_payloads.append(
+            (prompt, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id))
+        )
 
     raw_responses = await llama_completion_many(
         prompt_payloads,

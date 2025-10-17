@@ -26,7 +26,13 @@ def _normalize_snap_similarity(name: Optional[str]) -> str:
     normalized = name.strip().lower().replace("-", "_")
     if normalized in {"textdistance", "textdistance_cosine", "cosine"}:
         return "textdistance_cosine"
-    if normalized in {"entropy", "entropy_ncd", "ncd", "token_overlap", "token_overlap_cosine"}:
+    if normalized in {
+        "entropy",
+        "entropy_ncd",
+        "ncd",
+        "token_overlap",
+        "token_overlap_cosine",
+    }:
         return "entropy_ncd"
     if normalized in {"sapbert", "sapbert_cosine", "embedding", "embedding_cosine"}:
         return "embedding"
@@ -152,4 +158,3 @@ def maybe_snap_to_child(
         similarity=similarity_mode,
         margin=margin,
     )
-

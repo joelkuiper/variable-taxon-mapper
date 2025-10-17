@@ -21,7 +21,9 @@ from src.taxonomy import (
 )
 
 
-def _prepare_keywords(keywords: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+def _prepare_keywords(
+    keywords: pd.DataFrame,
+) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
     required_columns = {"name", "parent", "order"}
     missing = sorted(required_columns - set(keywords.columns))
     if missing:
