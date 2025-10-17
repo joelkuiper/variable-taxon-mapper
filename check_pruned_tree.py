@@ -236,10 +236,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
         gold_labels = sorted(set(token_set) & tax_name_set)
 
-        _, allowed_ranked = pruned_tree_markdown_for_item(
+        # Helper returns (markdown, allowed_labels); only the latter is needed here.
+        _markdown, allowed_ranked = pruned_tree_markdown_for_item(
             item,
-            G=G,
-            df=keywords,
+            graph=G,
+            frame=keywords,
             embedder=embedder,
             tax_names=tax_names,
             tax_embs_unit=tax_embs,

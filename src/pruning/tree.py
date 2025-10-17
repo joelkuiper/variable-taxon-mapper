@@ -348,3 +348,39 @@ class TreePruner:
             precomputed=pagerank_data,
         )
         return allowed
+
+
+def pruned_tree_markdown_for_item(
+    item: Dict[str, Optional[str]],
+    *,
+    graph: nx.DiGraph,
+    frame: pd.DataFrame,
+    embedder: Embedder,
+    tax_names: Sequence[str],
+    tax_embs_unit: np.ndarray,
+    hnsw_index,
+    pruning_cfg: Optional[PruningConfig] = None,
+    name_col: str = "name",
+    order_col: str = "order",
+    gloss_map: Optional[Dict[str, str]] = None,
+    encode_lock: Optional[threading.Lock] = None,
+    index_lock: Optional[threading.Lock] = None,
+) -> Tuple[str, List[str]]:
+    """Prune ``item`` and return the rendered markdown and allowed labels."""
+
+    pruner = TreePruner(
+        graph=graph,
+        frame=frame,
+        embedder=embedder,
+        tax_names=tax_names,
+        tax_embs_unit=tax_embs_unit,
+        hnsw_index=hnsw_index,
+        pruning_cfg=pruning_cfg,
+        name_col=name_col,
+        order_col=order_col,
+        gloss_map=gloss_map,
+        encode_lock=encode_lock,
+        index_lock=index_lock,
+    )
+    result = pruner.prune(item)
+    return result.markdown, result.allowed_labels
