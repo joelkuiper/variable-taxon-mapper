@@ -8,13 +8,13 @@ import re
 import sys
 import threading
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import aiohttp
 import numpy as np
-
 from config import LLMConfig
-from .embedding import Embedder
+from .embedding import Embedder, collect_item_texts
+from .snap import maybe_snap_to_child
 from .llm_chat import (
     GRAMMAR_RESPONSE,
     llama_completion_many,
@@ -111,11 +111,17 @@ def _canonicalize_label_text(
     return normalized if normalized else None, resolved
 
 
+def _compose_item_text(item: Mapping[str, Optional[str]]) -> str:
+    parts = collect_item_texts(item, clean=True)
+    return " ".join(part for part in parts if part)
+
+
 @dataclass(frozen=True)
 class MatchRequest:
     item: Dict[str, Optional[str]]
     tree_markdown: str
     allowed_labels: Sequence[str]
+    allowed_children: Mapping[str, Sequence[str]] | None = None
     slot_id: int = 0
 
 
@@ -168,8 +174,10 @@ async def match_items_to_tree(
     encode_guard = encode_lock or threading.Lock()
     embedding_remap_threshold = getattr(llm_config, "embedding_remap_threshold", 0.45)
 
+    item_texts = [_compose_item_text(req.item) for req in requests]
+
     results: List[Dict[str, Any]] = []
-    for req, raw in zip(requests, raw_responses):
+    for req, raw, item_text in zip(requests, raw_responses, item_texts):
         node_label_raw: Optional[str] = None
         try:
             payload = json.loads(raw)
@@ -182,16 +190,27 @@ async def match_items_to_tree(
         )
 
         if canonical_label:
+            snapped_label = maybe_snap_to_child(
+                canonical_label,
+                item_text=item_text,
+                allowed_children=req.allowed_children,
+                llm_config=llm_config,
+                embedder=embedder,
+                encode_lock=encode_guard,
+            )
+            snapped = bool(snapped_label and snapped_label != canonical_label)
             results.append(
                 {
                     "input_item": req.item,
                     "pred_label_raw": node_label_raw,
-                    "resolved_label": canonical_label,
-                    "resolved_id": name_to_id.get(canonical_label),
-                    "resolved_path": name_to_path.get(canonical_label),
+                    "resolved_label": snapped_label,
+                    "resolved_id": name_to_id.get(snapped_label),
+                    "resolved_path": name_to_path.get(snapped_label),
                     "matched": True,
                     "no_match": False,
-                    "match_strategy": "llm_direct",
+                    "match_strategy": (
+                        "llm_direct_and_snapped" if snapped else "llm_direct"
+                    ),
                     "raw": raw,
                 }
             )
@@ -214,16 +233,33 @@ async def match_items_to_tree(
 
                     if best_similarity >= embedding_remap_threshold:
                         _, resolved_label = allowed_items[best_local_idx]
+                        snapped_label = maybe_snap_to_child(
+                            resolved_label,
+                            item_text=item_text,
+                            allowed_children=req.allowed_children,
+                            llm_config=llm_config,
+                            embedder=embedder,
+                            encode_lock=encode_guard,
+                        )
+                        snapped = bool(
+                            snapped_label
+                            and resolved_label
+                            and snapped_label != resolved_label
+                        )
                         results.append(
                             {
                                 "input_item": req.item,
                                 "pred_label_raw": node_label_raw,
-                                "resolved_label": resolved_label,
-                                "resolved_id": name_to_id.get(resolved_label),
-                                "resolved_path": name_to_path.get(resolved_label),
+                                "resolved_label": snapped_label,
+                                "resolved_id": name_to_id.get(snapped_label),
+                                "resolved_path": name_to_path.get(snapped_label),
                                 "matched": True,
                                 "no_match": False,
-                                "match_strategy": "embedding_remap",
+                                "match_strategy": (
+                                    "embedding_remap_and_snapped"
+                                    if snapped
+                                    else "embedding_remap"
+                                ),
                                 "raw": raw,
                             }
                         )
@@ -251,6 +287,7 @@ async def match_item_to_tree(
     *,
     tree_markdown: str,
     allowed_labels: Sequence[str],
+    allowed_children: Mapping[str, Sequence[str]] | None = None,
     name_to_id: Dict[str, str],
     name_to_path: Dict[str, str],
     tax_names: Sequence[str],
@@ -270,6 +307,7 @@ async def match_item_to_tree(
                 item=item,
                 tree_markdown=tree_markdown,
                 allowed_labels=tuple(allowed_labels),
+                allowed_children=allowed_children,
                 slot_id=slot_id,
             )
         ],

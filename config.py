@@ -133,6 +133,9 @@ class LLMConfig:
     n_keep: int = -1
     grammar: Optional[str] = None
     embedding_remap_threshold: float = 0.45
+    snap_to_child: bool = False
+    snap_margin: float = 0.1
+    snap_similarity: str = "entropy_ncd"
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)

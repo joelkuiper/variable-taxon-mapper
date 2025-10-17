@@ -58,9 +58,14 @@ temperature = 0.0
 top_k = 20
 top_p = 0.8
 min_p = 0.0
-cache_prompt = false
-n_keep = 0
+cache_prompt = true
+n_keep = 196 # FIXME: Wild guess at prompt length
 embedding_remap_threshold = 0.45
+# Enable snapping ancestor predictions down to a better-matching child label.
+snap_to_child = true
+snap_margin = 0.25
+# Options: "cosine", "entropy_ncd", "embedding"
+snap_similarity = "entropy_ncd"
 
 [parallelism]
 num_slots = 4

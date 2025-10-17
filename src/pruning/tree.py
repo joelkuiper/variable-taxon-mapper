@@ -36,6 +36,7 @@ class PrunedTreeResult:
 
     markdown: str
     allowed_labels: List[str]
+    allowed_children: Dict[str, List[str]]
 
 
 class TreePruner:
@@ -215,7 +216,24 @@ class TreePruner:
             *suggestion_lines,
         ])
 
-        return PrunedTreeResult(markdown=markdown, allowed_labels=list(allowed_ranked))
+        allowed_lookup = set(allowed_ranked)
+        allowed_children: Dict[str, List[str]] = {}
+        for node in allowed_lookup:
+            if not self._graph.has_node(node):
+                continue
+            children = [
+                child
+                for child in self._graph.successors(node)
+                if child in allowed_lookup
+            ]
+            if children:
+                allowed_children[node] = list(children)
+
+        return PrunedTreeResult(
+            markdown=markdown,
+            allowed_labels=list(allowed_ranked),
+            allowed_children=allowed_children,
+        )
 
     def _select_anchors(
         self, item_embs: np.ndarray, item: Dict[str, Optional[str]]

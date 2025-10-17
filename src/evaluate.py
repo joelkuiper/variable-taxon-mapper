@@ -324,6 +324,7 @@ def _collect_predictions(
                             item=job.item,
                             tree_markdown=pruned.markdown,
                             allowed_labels=tuple(pruned.allowed_labels),
+                            allowed_children=pruned.allowed_children,
                             slot_id=job.slot_id,
                         )
                         for _, job, pruned in batch
