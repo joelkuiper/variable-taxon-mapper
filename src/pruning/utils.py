@@ -702,7 +702,7 @@ def render_tree_markdown(
     pagerank_map: Optional[Mapping[str, float]] = None,
     surrogate_root_label: Optional[str] = None,
 ) -> Tuple[str, Optional[List[str]]]:
-    """Render the allowed subtree as markdown; fallback to full taxonomy if empty."""
+    """Render the allowed subtree as markdown"""
 
     sort_key = tree_sort_key_factory(
         tree_sort_mode,
