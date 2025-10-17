@@ -17,10 +17,7 @@ from typing import (
 import networkx as nx
 import numpy as np
 import pandas as pd
-try:  # pragma: no cover - optional dependency in prod
-    import textdistance
-except ImportError:  # pragma: no cover - fallback when not installed
-    textdistance = None
+import textdistance
 
 from ..taxonomy import (
     ancestors_to_root,
@@ -61,10 +58,8 @@ def taxonomy_similarity_scores(
     return scores.astype(np.float32, copy=False)
 
 
-def _normalized_token_similarity(a: str, b: str) -> float:
-    """Return token-sort based similarity score in ``[0, 1]`` for two strings."""
-
-    return 1 - textdistance.entropy_ncd(a, b)
+def token_similarity(a: str, b: str) -> float:
+    return textdistance.entropy_ncd.normalized_similarity(a, b)
 
 
 def lexical_anchor_indices(
@@ -91,7 +86,7 @@ def lexical_anchor_indices(
         norm_name = name.lower()
         best = 0.0
         for text in normalized_item_texts:
-            best = max(best, _normalized_token_similarity(norm_name, text))
+            best = max(best, token_similarity(norm_name, text))
             if best >= 1.0:
                 break
         if best > 0.0:
