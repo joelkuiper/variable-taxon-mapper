@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import sys
@@ -56,6 +57,11 @@ def _canonicalize_label_text(
         return None, None
 
     allowed_lookup = {label.lower(): label for label in allowed_labels}
+    alias_lookup = {}
+    for label in allowed_labels:
+        alias = re.sub(r"\W+", " ", label).lower().strip()
+        if alias and alias not in alias_lookup:
+            alias_lookup[alias] = label
 
     normalized = pred_text.strip()
     if not normalized:
@@ -84,6 +90,18 @@ def _canonicalize_label_text(
             return None, None
 
     resolved = allowed_lookup.get(normalized.lower()) if normalized else None
+
+    if not resolved and normalized:
+        normalized_alias = re.sub(r"\W+", " ", normalized).lower().strip()
+        if normalized_alias:
+            resolved = alias_lookup.get(normalized_alias)
+            if not resolved:
+                alias_keys = list(alias_lookup.keys())
+                close_matches = difflib.get_close_matches(
+                    normalized_alias, alias_keys, n=1, cutoff=0.9
+                )
+                if close_matches:
+                    resolved = alias_lookup.get(close_matches[0])
 
     return normalized if normalized else None, resolved
 
