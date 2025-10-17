@@ -58,14 +58,19 @@ temperature = 0.0
 top_k = 20
 top_p = 0.8
 min_p = 0.0
-cache_prompt = true
-n_keep = -1
+cache_prompt = false
+n_keep = 0
 embedding_remap_threshold = 0.45
 
 [parallelism]
 num_slots = 4
-pool_maxsize = 4
-max_workers = 4
+pool_maxsize = 8
+pruning_workers = 2
+pruning_batch_size = 4
+pruning_queue_size = 16
+prompt_workers = 2
+prompt_batch_size = 4
+prompt_queue_size = 16
 
 [http]
 sock_connect = 10.0

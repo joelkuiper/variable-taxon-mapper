@@ -17,9 +17,12 @@ from typing import (
 import networkx as nx
 import numpy as np
 import pandas as pd
-import textdistance
+try:  # pragma: no cover - optional dependency in prod
+    import textdistance
+except ImportError:  # pragma: no cover - fallback when not installed
+    textdistance = None
 
-from .taxonomy import (
+from ..taxonomy import (
     ancestors_to_root,
     collect_descendants,
     make_label_display,

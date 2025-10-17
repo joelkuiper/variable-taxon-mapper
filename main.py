@@ -43,6 +43,15 @@ def run_pipeline(
     variables_default, keywords_path = config.data.to_paths(base_path)
     variables_path = variables_csv or variables_default
 
+    parallel_cfg = config.parallelism
+    print(
+        "[pipeline] concurrency settings: "
+        f"pruning_workers={parallel_cfg.pruning_workers}, "
+        f"prompt_workers={parallel_cfg.prompt_workers}, "
+        f"pruning_batch={parallel_cfg.pruning_batch_size}, "
+        f"prompt_batch={parallel_cfg.prompt_batch_size}"
+    )
+
     variables = pd.read_csv(variables_path, low_memory=False)
     keywords_raw = pd.read_csv(keywords_path)
 

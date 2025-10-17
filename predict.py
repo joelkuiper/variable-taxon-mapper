@@ -104,6 +104,15 @@ def main(argv: list[str] | None = None) -> None:
         args.variables.resolve() if args.variables is not None else variables_default
     )
 
+    parallel_cfg = config.parallelism
+    print(
+        "[predict] concurrency settings: "
+        f"pruning_workers={parallel_cfg.pruning_workers}, "
+        f"prompt_workers={parallel_cfg.prompt_workers}, "
+        f"pruning_batch={parallel_cfg.pruning_batch_size}, "
+        f"prompt_batch={parallel_cfg.prompt_batch_size}"
+    )
+
     progress_hook = _make_tqdm_progress()
     df, _ = run_pipeline(
         config,

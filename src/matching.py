@@ -1,10 +1,14 @@
+"""Helpers for matching items to taxonomy nodes via the LLM."""
+
 from __future__ import annotations
 
 import difflib
 import json
 import re
 import sys
-from typing import Any, Dict, Optional, Sequence, Tuple
+import threading
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import aiohttp
 import numpy as np
@@ -13,11 +17,12 @@ from config import LLMConfig
 from .embedding import Embedder
 from .llm_chat import (
     GRAMMAR_RESPONSE,
-    llama_completion_async,
+    llama_completion_many,
     make_tree_match_prompt,
 )
 
 _PROMPT_DEBUG_SHOWN = False
+
 
 def _print_prompt_once(prompt: str) -> None:
     """Print the first LLM prompt for debugging."""
@@ -106,6 +111,141 @@ def _canonicalize_label_text(
     return normalized if normalized else None, resolved
 
 
+@dataclass(frozen=True)
+class MatchRequest:
+    item: Dict[str, Optional[str]]
+    tree_markdown: str
+    allowed_labels: Sequence[str]
+    slot_id: int = 0
+
+
+def _llm_kwargs_for_config(cfg: LLMConfig, *, slot_id: int) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "temperature": cfg.temperature,
+        "top_k": cfg.top_k,
+        "top_p": cfg.top_p,
+        "min_p": cfg.min_p,
+        "grammar": cfg.grammar if cfg.grammar is not None else GRAMMAR_RESPONSE,
+        "cache_prompt": cfg.cache_prompt,
+        "n_keep": cfg.n_keep,
+        "slot_id": slot_id,
+    }
+    kwargs["n_predict"] = max(int(cfg.n_predict), 64)
+    return kwargs
+
+
+async def match_items_to_tree(
+    requests: Sequence[MatchRequest],
+    *,
+    name_to_id: Dict[str, str],
+    name_to_path: Dict[str, str],
+    tax_names: Sequence[str],
+    tax_embs: np.ndarray,
+    embedder: Embedder,
+    hnsw_index,
+    llm_config: LLMConfig,
+    session: Optional[aiohttp.ClientSession] = None,
+    encode_lock: Optional[threading.Lock] = None,
+) -> List[Dict[str, Any]]:
+    """Resolve ``requests`` to taxonomy nodes via the LLM and embedding remap."""
+
+    if not requests:
+        return []
+
+    prompt_payloads: List[Tuple[str, Dict[str, Any]]] = []
+    for req in requests:
+        prompt = make_tree_match_prompt(req.tree_markdown, req.item)
+        _print_prompt_once(prompt)
+        prompt_payloads.append((prompt, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id)))
+
+    raw_responses = await llama_completion_many(
+        prompt_payloads,
+        llm_config.endpoint,
+        timeout=max(float(llm_config.n_predict), 64.0),
+        session=session,
+    )
+
+    encode_guard = encode_lock or threading.Lock()
+    embedding_remap_threshold = getattr(llm_config, "embedding_remap_threshold", 0.45)
+
+    results: List[Dict[str, Any]] = []
+    for req, raw in zip(requests, raw_responses):
+        node_label_raw: Optional[str] = None
+        try:
+            payload = json.loads(raw)
+            node_label_raw = payload.get("concept_label")
+        except Exception:
+            node_label_raw = None
+
+        normalized_text, canonical_label = _canonicalize_label_text(
+            node_label_raw, allowed_labels=req.allowed_labels
+        )
+
+        if canonical_label:
+            results.append(
+                {
+                    "input_item": req.item,
+                    "pred_label_raw": node_label_raw,
+                    "resolved_label": canonical_label,
+                    "resolved_id": name_to_id.get(canonical_label),
+                    "resolved_path": name_to_path.get(canonical_label),
+                    "matched": True,
+                    "no_match": False,
+                    "match_strategy": "llm_direct",
+                    "raw": raw,
+                }
+            )
+            continue
+
+        if normalized_text:
+            allowed_idx_map = _build_allowed_index_map(req.allowed_labels, tax_names)
+            if allowed_idx_map:
+                allowed_items = list(allowed_idx_map.items())
+                allowed_indices = [idx for idx, _ in allowed_items]
+                allowed_embs = tax_embs[allowed_indices]
+
+                with encode_guard:
+                    query_vecs = embedder.encode([normalized_text])
+                if query_vecs.size:
+                    query_vec = query_vecs[0]
+                    sims = allowed_embs @ query_vec
+                    best_local_idx = int(np.argmax(sims))
+                    best_similarity = float(sims[best_local_idx])
+
+                    if best_similarity >= embedding_remap_threshold:
+                        _, resolved_label = allowed_items[best_local_idx]
+                        results.append(
+                            {
+                                "input_item": req.item,
+                                "pred_label_raw": node_label_raw,
+                                "resolved_label": resolved_label,
+                                "resolved_id": name_to_id.get(resolved_label),
+                                "resolved_path": name_to_path.get(resolved_label),
+                                "matched": True,
+                                "no_match": False,
+                                "match_strategy": "embedding_remap",
+                                "raw": raw,
+                            }
+                        )
+                        continue
+
+        results.append(
+            {
+                "input_item": req.item,
+                "pred_label_raw": node_label_raw,
+                "resolved_label": None,
+                "resolved_id": None,
+                "resolved_path": None,
+                "matched": False,
+                "no_match": True,
+                "match_strategy": "no_match",
+                "raw": raw,
+            }
+        )
+
+    return results
+
+
 async def match_item_to_tree(
     item: Dict[str, Optional[str]],
     *,
@@ -120,93 +260,27 @@ async def match_item_to_tree(
     llm_config: LLMConfig,
     slot_id: int = 0,
     session: Optional[aiohttp.ClientSession] = None,
+    encode_lock: Optional[threading.Lock] = None,
 ) -> Dict[str, Any]:
-    """Resolve ``item`` to the best taxonomy node via the LLM with embedding remap."""
+    """Compatibility wrapper for single-item matching."""
 
-    prompt = make_tree_match_prompt(tree_markdown, item)
-    _print_prompt_once(prompt)
-
-    llama_kwargs: Dict[str, Any] = {
-        "temperature": llm_config.temperature,
-        "top_k": llm_config.top_k,
-        "top_p": llm_config.top_p,
-        "min_p": llm_config.min_p,
-        "grammar": (
-            llm_config.grammar if llm_config.grammar is not None else GRAMMAR_RESPONSE
-        ),
-        "cache_prompt": llm_config.cache_prompt,
-        "n_keep": llm_config.n_keep,
-        "slot_id": slot_id,
-        "session": session,
-    }
-    llama_kwargs["n_predict"] = max(int(llm_config.n_predict), 64)
-
-    raw = await llama_completion_async(
-        prompt,
-        llm_config.endpoint,
-        **llama_kwargs,
+    result = await match_items_to_tree(
+        [
+            MatchRequest(
+                item=item,
+                tree_markdown=tree_markdown,
+                allowed_labels=tuple(allowed_labels),
+                slot_id=slot_id,
+            )
+        ],
+        name_to_id=name_to_id,
+        name_to_path=name_to_path,
+        tax_names=tax_names,
+        tax_embs=tax_embs,
+        embedder=embedder,
+        hnsw_index=hnsw_index,
+        llm_config=llm_config,
+        session=session,
+        encode_lock=encode_lock,
     )
-
-    node_label_raw: Optional[str] = None
-    try:
-        payload = json.loads(raw)
-        node_label_raw = payload.get("concept_label")
-    except Exception:
-        node_label_raw = None
-
-    normalized_text, canonical_label = _canonicalize_label_text(
-        node_label_raw, allowed_labels=allowed_labels
-    )
-
-    if canonical_label:
-        return {
-            "input_item": item,
-            "pred_label_raw": node_label_raw,
-            "resolved_label": canonical_label,
-            "resolved_id": name_to_id.get(canonical_label),
-            "resolved_path": name_to_path.get(canonical_label),
-            "matched": True,
-            "no_match": False,
-            "match_strategy": "llm_direct",
-        }
-
-    embedding_remap_threshold = getattr(llm_config, "embedding_remap_threshold", 0.45)
-
-    if normalized_text:
-        allowed_idx_map = _build_allowed_index_map(allowed_labels, tax_names)
-        if allowed_idx_map:
-            allowed_items = list(allowed_idx_map.items())
-            allowed_indices = [idx for idx, _ in allowed_items]
-            allowed_embs = tax_embs[allowed_indices]
-
-            query_vecs = embedder.encode([normalized_text])
-            if query_vecs.size:
-                query_vec = query_vecs[0]
-                sims = allowed_embs @ query_vec
-                best_local_idx = int(np.argmax(sims))
-                best_similarity = float(sims[best_local_idx])
-
-                if best_similarity >= embedding_remap_threshold:
-                    _, resolved_label = allowed_items[best_local_idx]
-                    return {
-                        "input_item": item,
-                        "pred_label_raw": node_label_raw,
-                        "resolved_label": resolved_label,
-                        "resolved_id": name_to_id.get(resolved_label),
-                        "resolved_path": name_to_path.get(resolved_label),
-                        "matched": True,
-                        "no_match": False,
-                        "match_strategy": "embedding_remap",
-                    }
-
-    return {
-        "input_item": item,
-        "pred_label_raw": node_label_raw,
-        "resolved_label": None,
-        "resolved_id": None,
-        "resolved_path": None,
-        "matched": False,
-        "no_match": True,
-        "raw": raw,
-        "match_strategy": "no_match",
-    }
+    return result[0]

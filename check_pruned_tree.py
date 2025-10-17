@@ -17,7 +17,7 @@ from src.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from src.taxonomy_pruning import pruned_tree_markdown_for_item
+from src.pruning import pruned_tree_markdown_for_item
 from src.utils import clean_str_or_none, split_keywords_comma
 
 

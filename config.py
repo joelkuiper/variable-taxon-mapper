@@ -140,11 +140,16 @@ class LLMConfig:
 
 @dataclass
 class ParallelismConfig:
-    """Client-side concurrency controls for llama.cpp requests."""
+    """Client-side concurrency controls for pruning and prompting."""
 
     num_slots: int = 4
     pool_maxsize: int = 64
-    max_workers: int = 4
+    pruning_workers: int = 2
+    pruning_batch_size: int = 4
+    pruning_queue_size: int = 16
+    prompt_workers: int = 4
+    prompt_batch_size: int = 2
+    prompt_queue_size: int = 16
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)

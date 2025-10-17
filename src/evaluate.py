@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set
@@ -24,8 +25,8 @@ from config import (
 )
 
 from .embedding import Embedder
-from .matching import match_item_to_tree
-from .taxonomy_pruning import pruned_tree_markdown_for_item
+from .matching import MatchRequest, match_items_to_tree
+from .pruning import AsyncTreePruner, PrunedTreeResult
 from .taxonomy import is_ancestor_of
 from .utils import clean_str_or_none, split_keywords_comma
 
@@ -91,49 +92,74 @@ def _collect_predictions(
     gloss_map: Dict[str, str],
     progress_hook: ProgressHook | None,
 ) -> List[Dict[str, Any]]:
-    undirected_G = nx.Graph(G) if G is not None else None
-    depth_map = _compute_node_depths(G) if G is not None else {}
+        undirected_G = nx.Graph(G) if G is not None else None
+        depth_map = _compute_node_depths(G) if G is not None else {}
 
-    async def _predict_all() -> List[Dict[str, Any]]:
-        timeout_cfg = aiohttp.ClientTimeout(
-            total=None,
-            sock_connect=float(http_cfg.sock_connect),
-            sock_read=_sock_read_timeout(http_cfg, llm_cfg),
-        )
-        pool_limit = max(1, parallel_cfg.pool_maxsize)
-        connector = aiohttp.TCPConnector(limit=pool_limit, limit_per_host=pool_limit)
+        async def _predict_all() -> List[Dict[str, Any]]:
+            timeout_cfg = aiohttp.ClientTimeout(
+                total=None,
+                sock_connect=float(http_cfg.sock_connect),
+                sock_read=_sock_read_timeout(http_cfg, llm_cfg),
+            )
+            pool_limit = max(1, parallel_cfg.pool_maxsize)
+            connector = aiohttp.TCPConnector(limit=pool_limit, limit_per_host=pool_limit)
 
-        total = len(jobs)
-        rows: List[Optional[Dict[str, Any]]] = [None] * total
-        start = time.time()
-        correct_sum = 0
-        gold_progress_seen = False
+            total = len(jobs)
+            rows: List[Optional[Dict[str, Any]]] = [None] * total
+            start = time.time()
+            correct_sum = 0
+            completed = 0
+            gold_progress_seen = False
 
-        slot_limit = max(1, getattr(parallel_cfg, "num_slots", 1) or 1)
-        concurrency_limit = max(1, min(slot_limit, pool_limit))
-        semaphore = asyncio.Semaphore(concurrency_limit)
+            slot_limit = max(1, getattr(parallel_cfg, "num_slots", 1) or 1)
+            concurrency_limit = max(1, min(slot_limit, pool_limit))
 
-        async with aiohttp.ClientSession(
-            timeout=timeout_cfg, connector=connector
-        ) as session:
-            async def _predict_job(
-                idx: int, job: PredictionJob
-            ) -> tuple[int, Dict[str, Any], int, bool]:
-                async with semaphore:
-                    tree_markdown, allowed_labels = pruned_tree_markdown_for_item(
-                        job.item,
-                        G=G,
-                        df=keywords,
-                        embedder=embedder,
-                        tax_names=tax_names,
-                        tax_embs_unit=tax_embs_unit,
-                        hnsw_index=hnsw_index,
-                        pruning_cfg=pruning_cfg,
-                        name_col="name",
-                        order_col="order",
-                        gloss_map=gloss_map,
-                    )
+            prune_workers = max(1, int(getattr(parallel_cfg, "pruning_workers", 1)))
+            prompt_workers = int(getattr(parallel_cfg, "prompt_workers", concurrency_limit))
+            prompt_workers = max(1, min(prompt_workers, concurrency_limit))
+            prune_batch_size = max(1, int(getattr(parallel_cfg, "pruning_batch_size", 1)))
+            prompt_batch_size = max(1, int(getattr(parallel_cfg, "prompt_batch_size", 1)))
+            prompt_batch_size = max(1, min(prompt_batch_size, concurrency_limit))
+            prune_queue_size = max(
+                1, int(getattr(parallel_cfg, "pruning_queue_size", prune_batch_size))
+            )
+            prompt_queue_size = max(
+                1, int(getattr(parallel_cfg, "prompt_queue_size", prompt_batch_size))
+            )
 
+            SENTINEL = object()
+
+            async with aiohttp.ClientSession(
+                timeout=timeout_cfg, connector=connector
+            ) as session:
+                encode_lock = threading.Lock()
+                index_lock = threading.Lock()
+                pruner = AsyncTreePruner(
+                    graph=G,
+                    frame=keywords,
+                    embedder=embedder,
+                    tax_names=tax_names,
+                    tax_embs_unit=tax_embs_unit,
+                    hnsw_index=hnsw_index,
+                    pruning_cfg=pruning_cfg,
+                    name_col="name",
+                    order_col="order",
+                    gloss_map=gloss_map,
+                    max_workers=prune_workers,
+                    encode_lock=encode_lock,
+                    index_lock=index_lock,
+                )
+
+                prune_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=prune_queue_size)
+                prompt_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=prompt_queue_size)
+
+                def _evaluate_prediction(
+                    idx: int,
+                    job: PredictionJob,
+                    pruned: PrunedTreeResult,
+                    pred: Dict[str, Any],
+                ) -> tuple[Dict[str, Any], int, bool]:
+                    allowed_labels = pruned.allowed_labels
                     allowed_has_gold: Optional[bool] = None
                     if job.gold_labels is not None:
                         if allowed_labels:
@@ -143,21 +169,6 @@ def _collect_predictions(
                             )
                         else:
                             allowed_has_gold = False
-
-                    pred = await match_item_to_tree(
-                        job.item,
-                        tree_markdown=tree_markdown,
-                        allowed_labels=allowed_labels,
-                        name_to_id=name_to_id,
-                        name_to_path=name_to_path,
-                        tax_names=tax_names,
-                        tax_embs=tax_embs_unit,
-                        embedder=embedder,
-                        hnsw_index=hnsw_index,
-                        llm_config=llm_cfg,
-                        slot_id=job.slot_id,
-                        session=session,
-                    )
 
                     resolved_label = pred.get("resolved_label")
                     result: Dict[str, Any] = dict(job.metadata)
@@ -185,9 +196,9 @@ def _collect_predictions(
                         result["gold_labels"] = job.gold_labels
                         result["match_type"] = match_type
                         result["correct"] = bool(correct)
-                        allowed_has_gold_flag = bool(allowed_has_gold)
-                        result["possible_correct_under_allowed"] = allowed_has_gold_flag
-                        result["allowed_subtree_contains_gold"] = allowed_has_gold_flag
+                        allowed_flag = bool(allowed_has_gold)
+                        result["possible_correct_under_allowed"] = allowed_flag
+                        result["allowed_subtree_contains_gold"] = allowed_flag
                         correct_increment = 1 if correct else 0
 
                         min_distance: Optional[int] = None
@@ -218,25 +229,22 @@ def _collect_predictions(
 
                                 gold_depth = depth_map.get(gold_label)
                                 new_depth_delta: Optional[int] = None
-                                if (
-                                    pred_depth is not None
-                                    and gold_depth is not None
-                                ):
+                                if pred_depth is not None and gold_depth is not None:
                                     new_depth_delta = pred_depth - gold_depth
 
                                 prefer = False
                                 if min_distance is None or distance < min_distance:
                                     prefer = True
-                                elif min_distance is not None and distance == min_distance:
-                                    if (
-                                        new_depth_delta is not None
-                                        and (
-                                            min_depth_delta is None
-                                            or abs(new_depth_delta)
-                                            < abs(min_depth_delta)
-                                        )
-                                    ):
-                                        prefer = True
+                                elif (
+                                    min_distance is not None
+                                    and distance == min_distance
+                                    and new_depth_delta is not None
+                                    and (
+                                        min_depth_delta is None
+                                        or abs(new_depth_delta) < abs(min_depth_delta)
+                                    )
+                                ):
+                                    prefer = True
 
                                 if prefer:
                                     min_distance = int(distance)
@@ -246,9 +254,7 @@ def _collect_predictions(
                                         else None
                                     )
                                     min_gold_depth = (
-                                        int(gold_depth)
-                                        if gold_depth is not None
-                                        else None
+                                        int(gold_depth) if gold_depth is not None else None
                                     )
                                     min_gold_label = gold_label
 
@@ -262,55 +268,165 @@ def _collect_predictions(
                             int(min_gold_depth) if min_gold_depth is not None else None
                         )
                         result["hierarchical_distance_depth_delta"] = (
-                            int(min_depth_delta)
-                            if min_depth_delta is not None
-                            else None
+                            int(min_depth_delta) if min_depth_delta is not None else None
                         )
                         result["hierarchical_distance_gold_label_at_min"] = (
                             str(min_gold_label) if min_gold_label is not None else None
                         )
 
-                    return idx, result, correct_increment, has_gold_labels
+                    return result, correct_increment, has_gold_labels
 
-            tasks = [
-                asyncio.create_task(_predict_job(idx, job)) for idx, job in enumerate(jobs)
-            ]
+                async def _flush_prune(
+                    pending: List[tuple[int, PredictionJob]]
+                ) -> None:
+                    if not pending:
+                        return
+                    batch = list(pending)
+                    pending.clear()
+                    try:
+                        results = await pruner.prune_many(
+                            [(idx, job.item) for idx, job in batch]
+                        )
+                    except Exception:
+                        for _ in batch:
+                            prune_queue.task_done()
+                        raise
 
-            completed = 0
+                    for (idx, job), (result_idx, pruned) in zip(batch, results):
+                        assert idx == result_idx
+                        await prompt_queue.put((idx, job, pruned))
+                        prune_queue.task_done()
 
-            for task in asyncio.as_completed(tasks):
-                idx, result, correct_increment, has_gold_labels = await task
-                rows[idx] = result
-                completed += 1
-                if has_gold_labels:
-                    gold_progress_seen = True
-                    correct_sum += correct_increment
+                async def _prune_worker() -> None:
+                    pending: List[tuple[int, PredictionJob]] = []
+                    while True:
+                        item = await prune_queue.get()
+                        if item is SENTINEL:
+                            await _flush_prune(pending)
+                            prune_queue.task_done()
+                            break
+                        pending.append(item)
+                        if len(pending) >= prune_batch_size:
+                            await _flush_prune(pending)
+                    if pending:
+                        await _flush_prune(pending)
 
-                if progress_hook is not None:
-                    elapsed = max(time.time() - start, 0.0)
-                    hook_correct = correct_sum if gold_progress_seen else None
-                    progress_hook(completed, total, hook_correct, elapsed)
+                async def _process_prompt_batch(
+                    pending_batch: List[tuple[int, PredictionJob, PrunedTreeResult]]
+                ) -> None:
+                    nonlocal completed, correct_sum, gold_progress_seen
+                    if not pending_batch:
+                        return
 
-            for task in tasks:
-                task.result()
+                    batch = list(pending_batch)
+                    requests = [
+                        MatchRequest(
+                            item=job.item,
+                            tree_markdown=pruned.markdown,
+                            allowed_labels=tuple(pruned.allowed_labels),
+                            slot_id=job.slot_id,
+                        )
+                        for _, job, pruned in batch
+                    ]
 
-        return [r for r in rows if r is not None]
+                    try:
+                        predictions = await match_items_to_tree(
+                            requests,
+                            name_to_id=name_to_id,
+                            name_to_path=name_to_path,
+                            tax_names=tax_names,
+                            tax_embs=tax_embs_unit,
+                            embedder=embedder,
+                            hnsw_index=hnsw_index,
+                            llm_config=llm_cfg,
+                            session=session,
+                            encode_lock=encode_lock,
+                        )
+                    except Exception:
+                        for _ in batch:
+                            prompt_queue.task_done()
+                        raise
 
-    try:
-        rows = asyncio.run(_predict_all())
-    except KeyboardInterrupt:
-        sys.stderr.write("\nEvaluation cancelled.\n")
-        raise
-    except RuntimeError as exc:
-        if "asyncio.run()" in str(exc) and "running event loop" in str(exc):
-            raise RuntimeError(
-                "run_label_benchmark must be called from a synchronous context "
-                "without an active event loop."
-            ) from exc
-        raise
+                    for (idx, job, pruned), pred in zip(batch, predictions):
+                        result, correct_increment, has_gold = _evaluate_prediction(
+                            idx, job, pruned, pred
+                        )
+                        rows[idx] = result
+                        completed += 1
+                        if has_gold:
+                            gold_progress_seen = True
+                            correct_sum += correct_increment
 
-    return list(rows)
+                        if progress_hook is not None:
+                            elapsed = max(time.time() - start, 0.0)
+                            hook_correct = correct_sum if gold_progress_seen else None
+                            progress_hook(completed, total, hook_correct, elapsed)
 
+                        prompt_queue.task_done()
+
+                async def _prompt_worker() -> None:
+                    pending: List[tuple[int, PredictionJob, PrunedTreeResult]] = []
+                    while True:
+                        item = await prompt_queue.get()
+                        if item is SENTINEL:
+                            await _process_prompt_batch(pending)
+                            pending.clear()
+                            prompt_queue.task_done()
+                            break
+                        pending.append(item)
+                        if len(pending) >= prompt_batch_size:
+                            await _process_prompt_batch(pending)
+                            pending.clear()
+                    if pending:
+                        await _process_prompt_batch(pending)
+
+                async def _producer() -> None:
+                    for idx, job in enumerate(jobs):
+                        await prune_queue.put((idx, job))
+                    for _ in range(prune_workers):
+                        await prune_queue.put(SENTINEL)
+
+                producer_task = asyncio.create_task(_producer())
+                prune_tasks = [
+                    asyncio.create_task(_prune_worker()) for _ in range(prune_workers)
+                ]
+                prompt_tasks = [
+                    asyncio.create_task(_prompt_worker()) for _ in range(prompt_workers)
+                ]
+
+                try:
+                    await producer_task
+                    await prune_queue.join()
+                    await asyncio.gather(*prune_tasks)
+                    for _ in range(prompt_workers):
+                        await prompt_queue.put(SENTINEL)
+                    await prompt_queue.join()
+                    await asyncio.gather(*prompt_tasks)
+                except Exception:
+                    for task in prune_tasks + prompt_tasks:
+                        task.cancel()
+                    await asyncio.gather(*prune_tasks, return_exceptions=True)
+                    await asyncio.gather(*prompt_tasks, return_exceptions=True)
+                    raise
+                finally:
+                    pruner.close()
+
+            return [row for row in rows if row is not None]
+
+        try:
+            rows = asyncio.run(_predict_all())
+        except KeyboardInterrupt:
+            sys.stderr.write("\nEvaluation cancelled.\n")
+            raise
+        except RuntimeError as exc:
+            if "asyncio.run()" in str(exc) and "running event loop" in str(exc):
+                raise RuntimeError(
+                    "run_label_benchmark must be called from a synchronous context "
+                    "without an active event loop."
+                ) from exc
+            raise
+
+        return list(rows)
 
 def determine_match_type(
     pred_label: Optional[str], gold_labels: List[str], *, G

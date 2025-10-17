@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from textwrap import dedent
-from typing import Any, Dict, Iterable, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import aiohttp
 
@@ -67,6 +67,42 @@ async def llama_completion_async(
     finally:
         if close_session and session is not None:
             await session.close()
+
+
+async def llama_completion_many(
+    requests: Sequence[Tuple[Union[str, Iterable[Union[str, int]]], Dict[str, Any]]],
+    endpoint: str,
+    *,
+    timeout: float = 120.0,
+    session: Optional[aiohttp.ClientSession] = None,
+) -> List[str]:
+    """Resolve multiple prompts concurrently while sharing an HTTP session."""
+
+    if not requests:
+        return []
+
+    close_session = False
+    if session is None:
+        timeout_cfg = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=timeout)
+        session = aiohttp.ClientSession(timeout=timeout_cfg)
+        close_session = True
+
+    async def _run_single(
+        prompt: Union[str, Iterable[Union[str, int]]], kwargs: Dict[str, Any]
+    ) -> str:
+        payload = dict(kwargs)
+        payload.setdefault("session", session)
+        payload.setdefault("timeout", timeout)
+        return await llama_completion_async(prompt, endpoint, **payload)
+
+    try:
+        tasks = [asyncio.create_task(_run_single(prompt, kwargs)) for prompt, kwargs in requests]
+        results = await asyncio.gather(*tasks)
+    finally:
+        if close_session and session is not None:
+            await session.close()
+
+    return list(results)
 
 
 def llama_completion(
