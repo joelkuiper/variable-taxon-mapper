@@ -39,6 +39,34 @@ class PrunedTreeResult:
     allowed_children: Dict[str, List[str]]
 
 
+@dataclass(frozen=True)
+class PruningContext:
+    """Normalized configuration values used during pruning."""
+
+    config: PruningConfig
+    enable_taxonomy_pruning: bool
+    tree_sort_mode: str
+    suggestion_sort_mode: str
+    pruning_mode: str
+    requires_proximity: bool
+    needs_pagerank: bool
+    anchor_top_k: int
+    anchor_overfetch_multiplier: int
+    anchor_min_overfetch: int
+    lexical_anchor_limit: int
+    community_clique_size: int
+    max_community_size: Optional[int]
+    pagerank_candidate_limit: int
+    suggestion_limit: int
+    max_descendant_depth: int
+    node_budget: int
+    pruning_radius: int
+    similarity_threshold: float
+    pagerank_damping: float
+    pagerank_score_floor: float
+    surrogate_root_label: Optional[str]
+
+
 class TreePruner:
     """Synchronous taxonomy pruning helper."""
 
@@ -103,9 +131,88 @@ class TreePruner:
 
     # ------------------------------------------------------------------
     # internal helpers
-    def _prune_internal(self, item: Dict[str, Optional[str]]) -> PrunedTreeResult:
+    def _build_pruning_context(self) -> PruningContext:
         cfg = self._config
 
+        tree_sort_mode = normalize_tree_sort_mode(cfg.tree_sort_mode)
+        suggestion_sort_mode = normalize_tree_sort_mode(cfg.suggestion_sort_mode)
+        requires_proximity = "proximity" in {tree_sort_mode, suggestion_sort_mode}
+        needs_pagerank = "pagerank" in {tree_sort_mode, suggestion_sort_mode}
+
+        community_clique_size = (
+            0
+            if not cfg.community_clique_size
+            else max(2, int(cfg.community_clique_size))
+        )
+        max_community_size = (
+            None
+            if cfg.max_community_size in (None, 0)
+            else max(1, int(cfg.max_community_size))
+        )
+        pagerank_candidate_limit = (
+            0
+            if cfg.pagerank_candidate_limit is None
+            else max(0, int(cfg.pagerank_candidate_limit))
+        )
+
+        return PruningContext(
+            config=cfg,
+            enable_taxonomy_pruning=bool(cfg.enable_taxonomy_pruning),
+            tree_sort_mode=tree_sort_mode,
+            suggestion_sort_mode=suggestion_sort_mode,
+            pruning_mode=normalize_pruning_mode(cfg.pruning_mode),
+            requires_proximity=requires_proximity,
+            needs_pagerank=needs_pagerank,
+            anchor_top_k=max(0, int(cfg.anchor_top_k)),
+            anchor_overfetch_multiplier=max(1, int(cfg.anchor_overfetch_multiplier)),
+            anchor_min_overfetch=max(1, int(cfg.anchor_min_overfetch)),
+            lexical_anchor_limit=max(0, int(cfg.lexical_anchor_limit)),
+            community_clique_size=community_clique_size,
+            max_community_size=max_community_size,
+            pagerank_candidate_limit=pagerank_candidate_limit,
+            suggestion_limit=max(0, int(cfg.suggestion_list_limit)),
+            max_descendant_depth=max(0, int(cfg.max_descendant_depth)),
+            node_budget=max(0, int(cfg.node_budget)),
+            pruning_radius=max(0, int(cfg.pruning_radius)),
+            similarity_threshold=float(cfg.similarity_threshold),
+            pagerank_damping=float(cfg.pagerank_damping),
+            pagerank_score_floor=float(cfg.pagerank_score_floor),
+            surrogate_root_label=cfg.surrogate_root_label,
+        )
+
+    def _prune_internal(self, item: Dict[str, Optional[str]]) -> PrunedTreeResult:
+        context = self._build_pruning_context()
+        item_texts, item_embs, similarity_map = self._compute_similarity_maps(
+            context, item
+        )
+        anchors, distance_map, pagerank_map, pagerank_data = self._prepare_anchors(
+            context,
+            item_embs=item_embs,
+            item_texts=item_texts,
+        )
+        allowed, allowed_ranked = self._compute_ranking_inputs(
+            context,
+            anchors=anchors,
+            similarity_map=similarity_map,
+            distance_map=distance_map,
+            pagerank_map=pagerank_map,
+            pagerank_data=pagerank_data,
+        )
+        return self._render_output(
+            context,
+            allowed=allowed,
+            allowed_ranked=allowed_ranked,
+            similarity_map=similarity_map,
+            distance_map=distance_map,
+            pagerank_map=pagerank_map,
+        )
+
+    def _compute_similarity_maps(
+        self,
+        context: PruningContext,
+        item: Dict[str, Optional[str]],
+    ) -> Tuple[Sequence[str], np.ndarray, Dict[str, float]]:
+        _ = context  # context currently unused but kept for interface parity
         item_texts = collect_item_texts(item)
 
         with self._encode_lock:
@@ -125,69 +232,70 @@ class TreePruner:
             for name in self._tax_names[len(similarity_map) :]:
                 similarity_map.setdefault(name, float("-inf"))
 
-        normalized_tree_sort_mode = normalize_tree_sort_mode(cfg.tree_sort_mode)
-        normalized_suggestion_sort_mode = normalize_tree_sort_mode(
-            cfg.suggestion_sort_mode
-        )
-        requires_proximity = (
-            normalized_tree_sort_mode == "proximity"
-            or normalized_suggestion_sort_mode == "proximity"
-        )
-        needs_pagerank = (
-            normalized_tree_sort_mode == "pagerank"
-            or normalized_suggestion_sort_mode == "pagerank"
-        )
+        return item_texts, item_embs, similarity_map
 
+    def _prepare_anchors(
+        self,
+        context: PruningContext,
+        *,
+        item_embs: np.ndarray,
+        item_texts: Sequence[str],
+    ) -> Tuple[
+        List[str],
+        Dict[str, float],
+        Dict[str, float],
+        Optional[Tuple[set[str], Dict[str, float], Dict[str, float]]],
+    ]:
         distance_map: Dict[str, float] = {}
         pagerank_map: Dict[str, float] = {}
         pagerank_data: Optional[Tuple[set[str], Dict[str, float], Dict[str, float]]] = (
             None
         )
-        anchors: List[str] = []
 
-        if cfg.enable_taxonomy_pruning:
-            anchors = self._select_anchors(item_embs, item_texts)
+        if not context.enable_taxonomy_pruning:
+            return [], distance_map, pagerank_map, pagerank_data
 
-            if requires_proximity and anchors:
-                undirected = get_undirected_taxonomy(self._graph)
-                anchor_nodes = [a for a in anchors if undirected.has_node(a)]
-                if anchor_nodes:
-                    distances = nx.multi_source_dijkstra_path_length(
-                        undirected, sources=anchor_nodes
-                    )
-                    distance_map = {
-                        node: float(dist) for node, dist in distances.items()
-                    }
-                    for anchor in anchor_nodes:
-                        distance_map.setdefault(anchor, 0.0)
+        anchors = self._select_anchors(context, item_embs, item_texts)
 
-            if needs_pagerank and anchors:
-                pagerank_candidate_limit = (
-                    0
-                    if cfg.pagerank_candidate_limit is None
-                    else max(0, int(cfg.pagerank_candidate_limit))
+        if context.requires_proximity and anchors:
+            undirected = get_undirected_taxonomy(self._graph)
+            anchor_nodes = [a for a in anchors if undirected.has_node(a)]
+            if anchor_nodes:
+                distances = nx.multi_source_dijkstra_path_length(
+                    undirected, sources=anchor_nodes
                 )
-                pagerank_data = prepare_pagerank_scores(
-                    self._graph,
-                    anchors,
-                    max_descendant_depth=cfg.max_descendant_depth,
-                    community_clique_size=(
-                        0
-                        if not cfg.community_clique_size
-                        else max(2, int(cfg.community_clique_size))
-                    ),
-                    max_community_size=(
-                        None
-                        if cfg.max_community_size in (None, 0)
-                        else max(1, int(cfg.max_community_size))
-                    ),
-                    pagerank_damping=float(cfg.pagerank_damping),
-                    pagerank_score_floor=float(cfg.pagerank_score_floor),
-                    pagerank_candidate_limit=pagerank_candidate_limit,
-                )
-                pagerank_map = pagerank_data[1]
+                distance_map = {node: float(dist) for node, dist in distances.items()}
+                for anchor in anchor_nodes:
+                    distance_map.setdefault(anchor, 0.0)
 
+        if context.needs_pagerank and anchors:
+            pagerank_data = prepare_pagerank_scores(
+                self._graph,
+                anchors,
+                max_descendant_depth=context.max_descendant_depth,
+                community_clique_size=context.community_clique_size,
+                max_community_size=context.max_community_size,
+                pagerank_damping=context.pagerank_damping,
+                pagerank_score_floor=context.pagerank_score_floor,
+                pagerank_candidate_limit=context.pagerank_candidate_limit,
+            )
+            pagerank_map = pagerank_data[1]
+
+        return anchors, distance_map, pagerank_map, pagerank_data
+
+    def _compute_ranking_inputs(
+        self,
+        context: PruningContext,
+        *,
+        anchors: Sequence[str],
+        similarity_map: Dict[str, float],
+        distance_map: Dict[str, float],
+        pagerank_map: Dict[str, float],
+        pagerank_data: Optional[Tuple[set[str], Dict[str, float], Dict[str, float]]],
+    ) -> Tuple[set[str], List[str]]:
+        if context.enable_taxonomy_pruning:
             allowed = self._select_allowed_nodes(
+                context,
                 anchors=anchors,
                 similarity_map=similarity_map,
                 distance_map=distance_map,
@@ -201,11 +309,23 @@ class TreePruner:
             allowed,
             similarity_map=similarity_map,
             order_map=self._order_map,
-            sort_mode=cfg.suggestion_sort_mode,
+            sort_mode=context.suggestion_sort_mode,
             distance_map=distance_map,
             pagerank_map=pagerank_map,
         )
 
+        return allowed, allowed_ranked
+
+    def _render_output(
+        self,
+        context: PruningContext,
+        *,
+        allowed: set[str],
+        allowed_ranked: Sequence[str],
+        similarity_map: Dict[str, float],
+        distance_map: Dict[str, float],
+        pagerank_map: Dict[str, float],
+    ) -> PrunedTreeResult:
         tree_markdown = render_tree_markdown(
             self._graph,
             allowed,
@@ -215,13 +335,13 @@ class TreePruner:
             gloss_map=self._gloss_map,
             similarity_map=similarity_map,
             order_map=self._order_map,
-            tree_sort_mode=cfg.tree_sort_mode,
+            tree_sort_mode=context.tree_sort_mode,
             distance_map=distance_map,
             pagerank_map=pagerank_map,
-            surrogate_root_label=cfg.surrogate_root_label,
+            surrogate_root_label=context.surrogate_root_label,
         )
 
-        suggestion_limit = int(cfg.suggestion_list_limit)
+        suggestion_limit = context.suggestion_limit
         top_k = len(allowed_ranked)
         if suggestion_limit > 0:
             top_k = min(top_k, suggestion_limit)
@@ -260,20 +380,23 @@ class TreePruner:
         )
 
     def _select_anchors(
-        self, item_embs: np.ndarray, item_texts: Sequence[str]
+        self,
+        context: PruningContext,
+        item_embs: np.ndarray,
+        item_texts: Sequence[str],
     ) -> List[str]:
-        cfg = self._config
+        cfg = context.config
         if item_embs.size == 0:
-            anchor_idxs = list(range(min(cfg.anchor_top_k, len(self._tax_names))))
+            anchor_idxs = list(range(min(context.anchor_top_k, len(self._tax_names))))
         else:
             with self._index_lock:
                 anchor_idxs = hnsw_anchor_indices(
                     item_embs,
                     self._hnsw_index,
                     N=len(self._tax_names),
-                    anchor_top_k=cfg.anchor_top_k,
-                    overfetch_mult=max(1, int(cfg.anchor_overfetch_multiplier)),
-                    min_overfetch=max(1, int(cfg.anchor_min_overfetch)),
+                    anchor_top_k=context.anchor_top_k,
+                    overfetch_mult=context.anchor_overfetch_multiplier,
+                    min_overfetch=context.anchor_min_overfetch,
                 )
 
         lexical_idxs = lexical_anchor_indices(
@@ -281,7 +404,7 @@ class TreePruner:
             self._tax_names,
             tax_names_normalized=self._tax_names_normalized,
             existing=anchor_idxs,
-            max_anchors=max(0, int(cfg.lexical_anchor_limit)),
+            max_anchors=context.lexical_anchor_limit,
         )
 
         combined: List[int] = []
@@ -294,6 +417,7 @@ class TreePruner:
 
     def _select_allowed_nodes(
         self,
+        context: PruningContext,
         *,
         anchors: Sequence[str],
         similarity_map: Dict[str, float],
@@ -301,77 +425,54 @@ class TreePruner:
         pagerank_map: Dict[str, float],
         pagerank_data: Optional[Tuple[set[str], Dict[str, float], Dict[str, float]]],
     ) -> set[str]:
-        cfg = self._config
-        pruning_mode = normalize_pruning_mode(cfg.pruning_mode)
-
         sort_key = tree_sort_key_factory(
-            cfg.tree_sort_mode,
+            context.tree_sort_mode,
             similarity_map=similarity_map,
             order_map=self._order_map,
             distance_map=distance_map,
             pagerank_map=pagerank_map,
         )
 
-        if pruning_mode == "anchor_hull":
+        if context.pruning_mode == "anchor_hull":
             return anchor_hull_subtree(
                 self._graph,
                 anchors,
-                max_descendant_depth=cfg.max_descendant_depth,
-                community_clique_size=(
-                    0
-                    if not cfg.community_clique_size
-                    else max(2, int(cfg.community_clique_size))
-                ),
-                max_community_size=(
-                    None
-                    if cfg.max_community_size in (None, 0)
-                    else max(1, int(cfg.max_community_size))
-                ),
-                node_budget=cfg.node_budget,
+                max_descendant_depth=context.max_descendant_depth,
+                community_clique_size=context.community_clique_size,
+                max_community_size=context.max_community_size,
+                node_budget=context.node_budget,
                 sort_key=sort_key,
             )
 
-        if pruning_mode == "similarity_threshold":
+        if context.pruning_mode == "similarity_threshold":
             return similarity_threshold_subtree(
                 self._graph,
                 anchors=anchors,
                 similarity_map=similarity_map,
-                threshold=float(cfg.similarity_threshold),
-                node_budget=cfg.node_budget,
+                threshold=context.similarity_threshold,
+                node_budget=context.node_budget,
                 sort_key=sort_key,
             )
 
-        if pruning_mode == "radius":
+        if context.pruning_mode == "radius":
             return radius_limited_subtree(
                 self._graph,
                 anchors,
-                radius=int(cfg.pruning_radius),
-                node_budget=cfg.node_budget,
+                radius=context.pruning_radius,
+                node_budget=context.node_budget,
                 sort_key=sort_key,
             )
 
         allowed, pagerank_map = dominant_anchor_forest(
             self._graph,
             anchors,
-            max_descendant_depth=cfg.max_descendant_depth,
-            node_budget=cfg.node_budget,
-            community_clique_size=(
-                0
-                if not cfg.community_clique_size
-                else max(2, int(cfg.community_clique_size))
-            ),
-            max_community_size=(
-                None
-                if cfg.max_community_size in (None, 0)
-                else max(1, int(cfg.max_community_size))
-            ),
-            pagerank_damping=float(cfg.pagerank_damping),
-            pagerank_score_floor=float(cfg.pagerank_score_floor),
-            pagerank_candidate_limit=(
-                0
-                if cfg.pagerank_candidate_limit is None
-                else max(0, int(cfg.pagerank_candidate_limit))
-            ),
+            max_descendant_depth=context.max_descendant_depth,
+            node_budget=context.node_budget,
+            community_clique_size=context.community_clique_size,
+            max_community_size=context.max_community_size,
+            pagerank_damping=context.pagerank_damping,
+            pagerank_score_floor=context.pagerank_score_floor,
+            pagerank_candidate_limit=context.pagerank_candidate_limit,
             precomputed=pagerank_data,
         )
         return allowed
