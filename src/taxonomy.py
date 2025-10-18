@@ -5,9 +5,29 @@ from __future__ import annotations
 import hashlib
 import math
 from typing import Dict, List, Optional, Set, Tuple
-
 import networkx as nx
 import pandas as pd
+
+
+def normalize_taxonomy_label(
+    name: str,
+    *,
+    lowercase: bool = True,
+    snake_to_title: bool = True,
+) -> str:
+    """Return a normalized taxonomy label for lexical or embedding use."""
+
+    text = str(name).strip()
+    if snake_to_title:
+        replaced = text.replace("_", " ")
+        words = [w for w in replaced.split() if w]
+        if words:
+            text = " ".join(word.capitalize() for word in words)
+        else:
+            text = replaced
+    if lowercase:
+        return text.lower()
+    return text
 
 
 def _path_id_hex8(path_parts: List[str]) -> str:

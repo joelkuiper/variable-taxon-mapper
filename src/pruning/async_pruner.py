@@ -32,6 +32,7 @@ class AsyncTreePruner:
         max_workers: int = 1,
         encode_lock=None,
         index_lock=None,
+        snake_case_to_title: bool = True,
     ) -> None:
         self._pruner = TreePruner(
             graph=graph,
@@ -46,6 +47,7 @@ class AsyncTreePruner:
             gloss_map=gloss_map,
             encode_lock=encode_lock,
             index_lock=index_lock,
+            snake_case_to_title=snake_case_to_title,
         )
         workers = max(1, int(max_workers))
         self._executor = ThreadPoolExecutor(max_workers=workers)

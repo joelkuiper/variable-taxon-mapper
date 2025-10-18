@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 import numpy as np
@@ -205,6 +205,7 @@ def build_taxonomy_embeddings_composed(
     *,
     summaries: Optional[object] = None,
     summary_weight: float = 1.0,
+    taxonomy_text_transform: Optional[Callable[[str], str]] = None,
 ) -> Tuple[List[str], np.ndarray]:
     names = taxonomy_node_texts(G)
     label2idx = {n: i for i, n in enumerate(names)}
@@ -216,7 +217,12 @@ def build_taxonomy_embeddings_composed(
         if preds:
             parent_idx[label2idx[node]] = label2idx[preds[0]]
 
-    name_vecs = embedder.encode(names)
+    if taxonomy_text_transform is not None:
+        texts = [taxonomy_text_transform(n) for n in names]
+    else:
+        texts = names
+
+    name_vecs = embedder.encode(texts)
 
     summary_map = _extract_summary_map(summaries)
     summary_vecs = np.zeros_like(name_vecs)

@@ -66,6 +66,7 @@ def lexical_anchor_indices(
     item_texts: Iterable[str],
     tax_names: Sequence[str],
     *,
+    tax_names_normalized: Optional[Sequence[str]] = None,
     existing: Sequence[int],
     max_anchors: int = 3,
 ) -> List[int]:
@@ -79,11 +80,20 @@ def lexical_anchor_indices(
         return []
 
     existing_set = set(existing)
+    if tax_names_normalized is not None and len(tax_names_normalized) != len(tax_names):
+        raise ValueError("tax_names_normalized must align with tax_names")
+
+    normalized_tax_names = (
+        list(tax_names_normalized)
+        if tax_names_normalized is not None
+        else [name.lower() for name in tax_names]
+    )
+
     scored: List[Tuple[float, int]] = []
     for idx, name in enumerate(tax_names):
         if idx in existing_set:
             continue
-        norm_name = name.lower()
+        norm_name = normalized_tax_names[idx]
         best = 0.0
         for text in normalized_item_texts:
             best = max(best, token_similarity(norm_name, text))

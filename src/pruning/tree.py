@@ -10,7 +10,7 @@ import pandas as pd
 
 from config import PruningConfig
 from ..embedding import Embedder, collect_item_texts, encode_item_texts
-from ..taxonomy import make_label_display
+from ..taxonomy import make_label_display, normalize_taxonomy_label
 from .errors import PrunedTreeComputationError
 from .utils import (
     anchor_hull_subtree,
@@ -57,11 +57,23 @@ class TreePruner:
         gloss_map: Optional[Dict[str, str]] = None,
         encode_lock: Optional[threading.Lock] = None,
         index_lock: Optional[threading.Lock] = None,
+        snake_case_to_title: bool = True,
     ) -> None:
         self._graph = graph
         self._frame = frame
         self._embedder = embedder
-        self._tax_names = list(tax_names)
+        self._tax_names = [str(name) for name in tax_names]
+        self._snake_case_to_title = bool(snake_case_to_title)
+        embedding_texts = [
+            normalize_taxonomy_label(
+                name,
+                lowercase=False,
+                snake_to_title=self._snake_case_to_title,
+            )
+            for name in self._tax_names
+        ]
+        self._tax_names_embedding_texts = embedding_texts
+        self._tax_names_normalized = [text.lower() for text in embedding_texts]
         self._tax_embs_unit = tax_embs_unit
         self._hnsw_index = hnsw_index
         self._config = pruning_cfg or PruningConfig()
@@ -267,6 +279,7 @@ class TreePruner:
         lexical_idxs = lexical_anchor_indices(
             item_texts,
             self._tax_names,
+            tax_names_normalized=self._tax_names_normalized,
             existing=anchor_idxs,
             max_anchors=max(0, int(cfg.lexical_anchor_limit)),
         )
@@ -379,6 +392,7 @@ def pruned_tree_markdown_for_item(
     gloss_map: Optional[Dict[str, str]] = None,
     encode_lock: Optional[threading.Lock] = None,
     index_lock: Optional[threading.Lock] = None,
+    snake_case_to_title: bool = False,
 ) -> Tuple[str, List[str]]:
     """Prune ``item`` and return the rendered markdown and allowed labels."""
 
@@ -395,6 +409,7 @@ def pruned_tree_markdown_for_item(
         gloss_map=gloss_map,
         encode_lock=encode_lock,
         index_lock=index_lock,
+        snake_case_to_title=snake_case_to_title,
     )
     result = pruner.prune(item)
     return result.markdown, result.allowed_labels

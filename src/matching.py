@@ -115,6 +115,33 @@ def _compose_item_text(item: Mapping[str, Optional[str]]) -> str:
     return " ".join(part for part in parts if part)
 
 
+def _build_match_result(
+    req: MatchRequest,
+    *,
+    node_label_raw: Optional[str],
+    raw: str,
+    resolved_label: Optional[str],
+    name_to_id: Mapping[str, str],
+    name_to_path: Mapping[str, str],
+    match_strategy: str,
+    matched: bool,
+    no_match: bool,
+) -> Dict[str, Any]:
+    """Construct a standard match result payload."""
+
+    return {
+        "input_item": req.item,
+        "pred_label_raw": node_label_raw,
+        "resolved_label": resolved_label,
+        "resolved_id": name_to_id.get(resolved_label) if resolved_label else None,
+        "resolved_path": name_to_path.get(resolved_label) if resolved_label else None,
+        "matched": matched,
+        "no_match": no_match,
+        "match_strategy": match_strategy,
+        "raw": raw,
+    }
+
+
 @dataclass(frozen=True)
 class MatchRequest:
     item: Dict[str, Optional[str]]
@@ -202,20 +229,19 @@ async def match_items_to_tree(
                 encode_lock=encode_guard,
             )
             snapped = bool(snapped_label and snapped_label != canonical_label)
+            match_strategy = "llm_direct_and_snapped" if snapped else "llm_direct"
             results.append(
-                {
-                    "input_item": req.item,
-                    "pred_label_raw": node_label_raw,
-                    "resolved_label": snapped_label,
-                    "resolved_id": name_to_id.get(snapped_label),
-                    "resolved_path": name_to_path.get(snapped_label),
-                    "matched": True,
-                    "no_match": False,
-                    "match_strategy": (
-                        "llm_direct_and_snapped" if snapped else "llm_direct"
-                    ),
-                    "raw": raw,
-                }
+                _build_match_result(
+                    req,
+                    node_label_raw=node_label_raw,
+                    raw=raw,
+                    resolved_label=snapped_label,
+                    name_to_id=name_to_id,
+                    name_to_path=name_to_path,
+                    match_strategy=match_strategy,
+                    matched=True,
+                    no_match=False,
+                )
             )
             continue
 
@@ -249,37 +275,38 @@ async def match_items_to_tree(
                             and resolved_label
                             and snapped_label != resolved_label
                         )
+                        match_strategy = (
+                            "embedding_remap_and_snapped"
+                            if snapped
+                            else "embedding_remap"
+                        )
                         results.append(
-                            {
-                                "input_item": req.item,
-                                "pred_label_raw": node_label_raw,
-                                "resolved_label": snapped_label,
-                                "resolved_id": name_to_id.get(snapped_label),
-                                "resolved_path": name_to_path.get(snapped_label),
-                                "matched": True,
-                                "no_match": False,
-                                "match_strategy": (
-                                    "embedding_remap_and_snapped"
-                                    if snapped
-                                    else "embedding_remap"
-                                ),
-                                "raw": raw,
-                            }
+                            _build_match_result(
+                                req,
+                                node_label_raw=node_label_raw,
+                                raw=raw,
+                                resolved_label=snapped_label,
+                                name_to_id=name_to_id,
+                                name_to_path=name_to_path,
+                                match_strategy=match_strategy,
+                                matched=True,
+                                no_match=False,
+                            )
                         )
                         continue
 
         results.append(
-            {
-                "input_item": req.item,
-                "pred_label_raw": node_label_raw,
-                "resolved_label": None,
-                "resolved_id": None,
-                "resolved_path": None,
-                "matched": False,
-                "no_match": True,
-                "match_strategy": "no_match",
-                "raw": raw,
-            }
+            _build_match_result(
+                req,
+                node_label_raw=node_label_raw,
+                raw=raw,
+                resolved_label=None,
+                name_to_id=name_to_id,
+                name_to_path=name_to_path,
+                match_strategy="no_match",
+                matched=False,
+                no_match=True,
+            )
         )
 
     return results
