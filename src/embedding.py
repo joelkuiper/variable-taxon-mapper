@@ -124,10 +124,15 @@ def encode_item_texts(
     fields: Sequence[str] = ("label", "name", "description"),
     clean: bool = True,
     max_length: int = 256,
+    texts: Optional[Sequence[str]] = None,
 ) -> np.ndarray:
     """Encode selected text fields from ``item`` using ``embedder``."""
 
-    texts = collect_item_texts(item, fields=fields, clean=clean, max_length=max_length)
+    if texts is None:
+        texts = collect_item_texts(item, fields=fields, clean=clean, max_length=max_length)
+    else:
+        texts = list(texts)
+
     if not texts:
         return np.zeros((0, 768), dtype=np.float32)
     return embedder.encode(texts)

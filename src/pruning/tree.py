@@ -94,8 +94,14 @@ class TreePruner:
     def _prune_internal(self, item: Dict[str, Optional[str]]) -> PrunedTreeResult:
         cfg = self._config
 
+        item_texts = collect_item_texts(item)
+
         with self._encode_lock:
-            item_embs = encode_item_texts(item, self._embedder)
+            item_embs = encode_item_texts(
+                item,
+                self._embedder,
+                texts=item_texts,
+            )
 
         similarity_scores = taxonomy_similarity_scores(item_embs, self._tax_embs_unit)
         similarity_map: Dict[str, float] = {
@@ -128,7 +134,7 @@ class TreePruner:
         anchors: List[str] = []
 
         if cfg.enable_taxonomy_pruning:
-            anchors = self._select_anchors(item_embs, item)
+            anchors = self._select_anchors(item_embs, item_texts)
 
             if requires_proximity and anchors:
                 undirected = get_undirected_taxonomy(self._graph)
@@ -242,7 +248,7 @@ class TreePruner:
         )
 
     def _select_anchors(
-        self, item_embs: np.ndarray, item: Dict[str, Optional[str]]
+        self, item_embs: np.ndarray, item_texts: Sequence[str]
     ) -> List[str]:
         cfg = self._config
         if item_embs.size == 0:
@@ -259,7 +265,7 @@ class TreePruner:
                 )
 
         lexical_idxs = lexical_anchor_indices(
-            collect_item_texts(item),
+            item_texts,
             self._tax_names,
             existing=anchor_idxs,
             max_anchors=max(0, int(cfg.lexical_anchor_limit)),
