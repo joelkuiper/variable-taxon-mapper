@@ -77,8 +77,8 @@ snap_similarity = "entropy_ncd"
 [parallelism]
 num_slots = 4
 pool_maxsize = 8
-pruning_workers = 2
-pruning_batch_size = 4
+pruning_workers = 8
+pruning_batch_size = 8
 pruning_queue_size = 16
 prompt_workers = 2
 prompt_batch_size = 4
