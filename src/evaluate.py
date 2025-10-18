@@ -68,9 +68,429 @@ class PredictionJob:
     gold_labels: Optional[List[str]] = None
 
 
+@dataclass(frozen=True)
+class NormalizedParallelism:
+    pool_limit: int
+    slot_limit: int
+    concurrency_limit: int
+    prune_workers: int
+    prompt_workers: int
+    prune_batch_size: int
+    prompt_batch_size: int
+    prune_queue_size: int
+    prompt_queue_size: int
+
+
 def _sock_read_timeout(http_cfg: HttpConfig, llm_cfg: LLMConfig) -> float:
     base = float(http_cfg.sock_read_floor)
     return max(base, float(llm_cfg.n_predict))
+
+
+def _normalise_parallelism(parallel_cfg: ParallelismConfig) -> NormalizedParallelism:
+    defaults = ParallelismConfig()
+
+    def _value(name: str, fallback: int, *, minimum: int = 1) -> int:
+        raw = getattr(parallel_cfg, name, None)
+        if raw is None:
+            raw = fallback
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = fallback
+        if value < minimum:
+            value = minimum
+        return value
+
+    pool_limit = _value("pool_maxsize", defaults.pool_maxsize)
+    slot_limit = _value("num_slots", defaults.num_slots)
+    concurrency_limit = max(1, min(slot_limit, pool_limit))
+
+    prune_workers = _value("pruning_workers", defaults.pruning_workers)
+
+    prompt_workers_raw = _value(
+        "prompt_workers", concurrency_limit
+    )
+    prompt_workers = max(1, min(prompt_workers_raw, concurrency_limit))
+
+    prune_batch_size = _value("pruning_batch_size", defaults.pruning_batch_size)
+
+    prompt_batch_size_raw = _value(
+        "prompt_batch_size", 1
+    )
+    prompt_batch_size = max(1, min(prompt_batch_size_raw, concurrency_limit))
+
+    prune_queue_size = _value(
+        "pruning_queue_size", prune_batch_size
+    )
+    prompt_queue_size = _value(
+        "prompt_queue_size", prompt_batch_size
+    )
+
+    return NormalizedParallelism(
+        pool_limit=pool_limit,
+        slot_limit=slot_limit,
+        concurrency_limit=concurrency_limit,
+        prune_workers=prune_workers,
+        prompt_workers=prompt_workers,
+        prune_batch_size=prune_batch_size,
+        prompt_batch_size=prompt_batch_size,
+        prune_queue_size=prune_queue_size,
+        prompt_queue_size=prompt_queue_size,
+    )
+
+
+class PredictionPipeline:
+    SENTINEL = object()
+
+    def __init__(
+        self,
+        *,
+        jobs: Sequence[PredictionJob],
+        pruning_cfg: PruningConfig,
+        llm_cfg: LLMConfig,
+        normalized_parallelism: NormalizedParallelism,
+        keywords: pd.DataFrame,
+        G,
+        undirected_G,
+        depth_map: Dict[str, Optional[int]],
+        embedder: Embedder,
+        tax_names: List[str],
+        tax_embs_unit: np.ndarray,
+        hnsw_index,
+        name_to_id: Dict[str, str],
+        name_to_path: Dict[str, str],
+        gloss_map: Dict[str, str],
+        session: aiohttp.ClientSession,
+        progress_hook: ProgressHook | None,
+    ) -> None:
+        self.jobs = list(jobs)
+        self.pruning_cfg = pruning_cfg
+        self.llm_cfg = llm_cfg
+        self.config = normalized_parallelism
+        self.keywords = keywords
+        self.G = G
+        self.undirected_G = undirected_G
+        self.depth_map = depth_map
+        self.embedder = embedder
+        self.tax_names = tax_names
+        self.tax_embs_unit = tax_embs_unit
+        self.hnsw_index = hnsw_index
+        self.name_to_id = name_to_id
+        self.name_to_path = name_to_path
+        self.gloss_map = gloss_map
+        self.session = session
+        self.progress_hook = progress_hook
+
+        self.total = len(self.jobs)
+        self.rows: List[Optional[Dict[str, Any]]] = [None] * self.total
+        self.start = time.time()
+        self.correct_sum = 0
+        self.completed = 0
+        self.gold_progress_seen = False
+
+        self.encode_lock = threading.Lock()
+        self.index_lock = threading.Lock()
+
+        self.pruner = AsyncTreePruner(
+            graph=self.G,
+            frame=self.keywords,
+            embedder=self.embedder,
+            tax_names=self.tax_names,
+            tax_embs_unit=self.tax_embs_unit,
+            hnsw_index=self.hnsw_index,
+            pruning_cfg=self.pruning_cfg,
+            name_col="name",
+            order_col="order",
+            gloss_map=self.gloss_map,
+            max_workers=self.config.prune_workers,
+            encode_lock=self.encode_lock,
+            index_lock=self.index_lock,
+        )
+
+        self.prune_queue: asyncio.Queue[Any] = asyncio.Queue(
+            maxsize=self.config.prune_queue_size
+        )
+        self.prompt_queue: asyncio.Queue[Any] = asyncio.Queue(
+            maxsize=self.config.prompt_queue_size
+        )
+
+        self.prune_tasks: List[asyncio.Task[None]] = []
+        self.prompt_tasks: List[asyncio.Task[None]] = []
+        self._closed = False
+
+    def close(self) -> None:
+        if not self._closed:
+            self.pruner.close()
+            self._closed = True
+
+    async def cancel_workers(self) -> None:
+        for task in self.prune_tasks + self.prompt_tasks:
+            task.cancel()
+        if self.prune_tasks:
+            await asyncio.gather(*self.prune_tasks, return_exceptions=True)
+        if self.prompt_tasks:
+            await asyncio.gather(*self.prompt_tasks, return_exceptions=True)
+        self.close()
+
+    def run_prune_workers(self) -> List[asyncio.Task[None]]:
+        if not self.prune_tasks:
+            self.prune_tasks = [
+                asyncio.create_task(self._prune_worker())
+                for _ in range(self.config.prune_workers)
+            ]
+        return self.prune_tasks
+
+    def run_prompt_workers(self) -> List[asyncio.Task[None]]:
+        if not self.prompt_tasks:
+            self.prompt_tasks = [
+                asyncio.create_task(self._prompt_worker())
+                for _ in range(self.config.prompt_workers)
+            ]
+        return self.prompt_tasks
+
+    async def queue_prune_jobs(self) -> None:
+        for idx, job in enumerate(self.jobs):
+            await self.prune_queue.put((idx, job))
+        for _ in range(self.config.prune_workers):
+            await self.prune_queue.put(self.SENTINEL)
+
+    async def finalise_results(self) -> List[Dict[str, Any]]:
+        try:
+            await self.prune_queue.join()
+            if self.prune_tasks:
+                await asyncio.gather(*self.prune_tasks)
+            for _ in range(self.config.prompt_workers):
+                await self.prompt_queue.put(self.SENTINEL)
+            await self.prompt_queue.join()
+            if self.prompt_tasks:
+                await asyncio.gather(*self.prompt_tasks)
+        finally:
+            self.close()
+        return [row for row in self.rows if row is not None]
+
+    def _evaluate_prediction(
+        self,
+        idx: int,
+        job: PredictionJob,
+        pruned: PrunedTreeResult,
+        pred: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], int, bool]:
+        allowed_labels = pruned.allowed_labels
+        allowed_has_gold: Optional[bool] = None
+        if job.gold_labels is not None:
+            if allowed_labels:
+                allowed_lookup = set(allowed_labels)
+                allowed_has_gold = any(
+                    g in allowed_lookup for g in job.gold_labels if g
+                )
+            else:
+                allowed_has_gold = False
+
+        resolved_label = pred.get("resolved_label")
+        result: Dict[str, Any] = dict(job.metadata)
+        result.update(
+            {
+                "pred_label_raw": pred.get("pred_label_raw"),
+                "resolved_label": resolved_label,
+                "resolved_id": pred.get("resolved_id"),
+                "resolved_path": pred.get("resolved_path"),
+                "_error": job.metadata.get("_error"),
+                "match_strategy": pred.get("match_strategy"),
+            }
+        )
+
+        if "raw" in pred:
+            result["raw"] = pred["raw"]
+
+        correct_increment = 0
+        has_gold_labels = job.gold_labels is not None
+        if has_gold_labels:
+            match_type = determine_match_type(
+                resolved_label, job.gold_labels, G=self.G
+            )
+            correct = match_type != "none"
+            result["gold_labels"] = job.gold_labels
+            result["match_type"] = match_type
+            result["correct"] = bool(correct)
+            allowed_flag = bool(allowed_has_gold)
+            result["possible_correct_under_allowed"] = allowed_flag
+            result["allowed_subtree_contains_gold"] = allowed_flag
+            correct_increment = 1 if correct else 0
+
+            min_distance: Optional[int] = None
+            min_depth_delta: Optional[int] = None
+            min_gold_depth: Optional[int] = None
+            min_gold_label: Optional[str] = None
+            pred_depth: Optional[int] = None
+
+            if (
+                self.undirected_G is not None
+                and isinstance(resolved_label, str)
+                and self.undirected_G.has_node(resolved_label)
+            ):
+                pred_depth = self.depth_map.get(resolved_label)
+                gold_candidates = [
+                    g
+                    for g in (job.gold_labels or [])
+                    if isinstance(g, str) and self.undirected_G.has_node(g)
+                ]
+
+                for gold_label in gold_candidates:
+                    try:
+                        distance = nx.shortest_path_length(
+                            self.undirected_G, resolved_label, gold_label
+                        )
+                    except (nx.NetworkXNoPath, nx.NodeNotFound):
+                        continue
+
+                    gold_depth = self.depth_map.get(gold_label)
+                    new_depth_delta: Optional[int] = None
+                    if pred_depth is not None and gold_depth is not None:
+                        new_depth_delta = pred_depth - gold_depth
+
+                    prefer = False
+                    if min_distance is None or distance < min_distance:
+                        prefer = True
+                    elif (
+                        min_distance is not None
+                        and distance == min_distance
+                        and new_depth_delta is not None
+                        and (
+                            min_depth_delta is None
+                            or abs(new_depth_delta) < abs(min_depth_delta)
+                        )
+                    ):
+                        prefer = True
+
+                    if prefer:
+                        min_distance = int(distance)
+                        min_depth_delta = (
+                            int(new_depth_delta) if new_depth_delta is not None else None
+                        )
+                        min_gold_depth = int(gold_depth) if gold_depth is not None else None
+                        min_gold_label = gold_label
+
+            result["hierarchical_distance_min"] = (
+                int(min_distance) if min_distance is not None else None
+            )
+            result["hierarchical_distance_pred_depth"] = (
+                int(pred_depth) if pred_depth is not None else None
+            )
+            result["hierarchical_distance_gold_depth_at_min"] = (
+                int(min_gold_depth) if min_gold_depth is not None else None
+            )
+            result["hierarchical_distance_depth_delta"] = (
+                int(min_depth_delta) if min_depth_delta is not None else None
+            )
+            result["hierarchical_distance_gold_label_at_min"] = (
+                str(min_gold_label) if min_gold_label is not None else None
+            )
+
+        return result, correct_increment, has_gold_labels
+
+    async def _flush_prune(
+        self, pending: List[tuple[int, PredictionJob]]
+    ) -> None:
+        if not pending:
+            return
+        batch = list(pending)
+        pending.clear()
+        try:
+            results = await self.pruner.prune_many(
+                [(idx, job.item) for idx, job in batch]
+            )
+        except Exception:
+            for _ in batch:
+                self.prune_queue.task_done()
+            raise
+
+        for (idx, job), (result_idx, pruned) in zip(batch, results):
+            assert idx == result_idx
+            await self.prompt_queue.put((idx, job, pruned))
+            self.prune_queue.task_done()
+
+    async def _prune_worker(self) -> None:
+        pending: List[tuple[int, PredictionJob]] = []
+        while True:
+            item = await self.prune_queue.get()
+            if item is self.SENTINEL:
+                await self._flush_prune(pending)
+                self.prune_queue.task_done()
+                break
+            pending.append(item)
+            if len(pending) >= self.config.prune_batch_size:
+                await self._flush_prune(pending)
+        if pending:
+            await self._flush_prune(pending)
+
+    async def _process_prompt_batch(
+        self, pending_batch: List[tuple[int, PredictionJob, PrunedTreeResult]]
+    ) -> None:
+        if not pending_batch:
+            return
+
+        batch = list(pending_batch)
+        requests = [
+            MatchRequest(
+                item=job.item,
+                tree_markdown=pruned.markdown,
+                allowed_labels=tuple(pruned.allowed_labels),
+                allowed_children=pruned.allowed_children,
+                slot_id=job.slot_id,
+            )
+            for _, job, pruned in batch
+        ]
+
+        try:
+            predictions = await match_items_to_tree(
+                requests,
+                name_to_id=self.name_to_id,
+                name_to_path=self.name_to_path,
+                tax_names=self.tax_names,
+                tax_embs=self.tax_embs_unit,
+                embedder=self.embedder,
+                hnsw_index=self.hnsw_index,
+                llm_config=self.llm_cfg,
+                session=self.session,
+                encode_lock=self.encode_lock,
+            )
+        except Exception:
+            for _ in batch:
+                self.prompt_queue.task_done()
+            raise
+
+        for (idx, job, pruned), pred in zip(batch, predictions):
+            result, correct_increment, has_gold = self._evaluate_prediction(
+                idx, job, pruned, pred
+            )
+            self.rows[idx] = result
+            self.completed += 1
+            if has_gold:
+                self.gold_progress_seen = True
+                self.correct_sum += correct_increment
+
+            if self.progress_hook is not None:
+                elapsed = max(time.time() - self.start, 0.0)
+                hook_correct = self.correct_sum if self.gold_progress_seen else None
+                self.progress_hook(self.completed, self.total, hook_correct, elapsed)
+
+            self.prompt_queue.task_done()
+
+    async def _prompt_worker(self) -> None:
+        pending: List[tuple[int, PredictionJob, PrunedTreeResult]] = []
+        while True:
+            item = await self.prompt_queue.get()
+            if item is self.SENTINEL:
+                await self._process_prompt_batch(pending)
+                pending.clear()
+                self.prompt_queue.task_done()
+                break
+            pending.append(item)
+            if len(pending) >= self.config.prompt_batch_size:
+                await self._process_prompt_batch(pending)
+                pending.clear()
+        if pending:
+            await self._process_prompt_batch(pending)
 
 
 def _collect_predictions(
@@ -101,316 +521,45 @@ def _collect_predictions(
             sock_connect=float(http_cfg.sock_connect),
             sock_read=_sock_read_timeout(http_cfg, llm_cfg),
         )
-        pool_limit = max(1, parallel_cfg.pool_maxsize)
-        connector = aiohttp.TCPConnector(limit=pool_limit, limit_per_host=pool_limit)
-
-        total = len(jobs)
-        rows: List[Optional[Dict[str, Any]]] = [None] * total
-        start = time.time()
-        correct_sum = 0
-        completed = 0
-        gold_progress_seen = False
-
-        slot_limit = max(1, getattr(parallel_cfg, "num_slots", 1) or 1)
-        concurrency_limit = max(1, min(slot_limit, pool_limit))
-
-        prune_workers = max(1, int(getattr(parallel_cfg, "pruning_workers", 1)))
-        prompt_workers = int(getattr(parallel_cfg, "prompt_workers", concurrency_limit))
-        prompt_workers = max(1, min(prompt_workers, concurrency_limit))
-        prune_batch_size = max(1, int(getattr(parallel_cfg, "pruning_batch_size", 1)))
-        prompt_batch_size = max(1, int(getattr(parallel_cfg, "prompt_batch_size", 1)))
-        prompt_batch_size = max(1, min(prompt_batch_size, concurrency_limit))
-        prune_queue_size = max(
-            1, int(getattr(parallel_cfg, "pruning_queue_size", prune_batch_size))
+        normalized_parallel = _normalise_parallelism(parallel_cfg)
+        connector = aiohttp.TCPConnector(
+            limit=normalized_parallel.pool_limit,
+            limit_per_host=normalized_parallel.pool_limit,
         )
-        prompt_queue_size = max(
-            1, int(getattr(parallel_cfg, "prompt_queue_size", prompt_batch_size))
-        )
-
-        SENTINEL = object()
 
         async with aiohttp.ClientSession(
             timeout=timeout_cfg, connector=connector
         ) as session:
-            encode_lock = threading.Lock()
-            index_lock = threading.Lock()
-            pruner = AsyncTreePruner(
-                graph=G,
-                frame=keywords,
+            pipeline = PredictionPipeline(
+                jobs=jobs,
+                pruning_cfg=pruning_cfg,
+                llm_cfg=llm_cfg,
+                normalized_parallelism=normalized_parallel,
+                keywords=keywords,
+                G=G,
+                undirected_G=undirected_G,
+                depth_map=depth_map,
                 embedder=embedder,
                 tax_names=tax_names,
                 tax_embs_unit=tax_embs_unit,
                 hnsw_index=hnsw_index,
-                pruning_cfg=pruning_cfg,
-                name_col="name",
-                order_col="order",
+                name_to_id=name_to_id,
+                name_to_path=name_to_path,
                 gloss_map=gloss_map,
-                max_workers=prune_workers,
-                encode_lock=encode_lock,
-                index_lock=index_lock,
+                session=session,
+                progress_hook=progress_hook,
             )
 
-            prune_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=prune_queue_size)
-            prompt_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=prompt_queue_size)
-
-            def _evaluate_prediction(
-                idx: int,
-                job: PredictionJob,
-                pruned: PrunedTreeResult,
-                pred: Dict[str, Any],
-            ) -> tuple[Dict[str, Any], int, bool]:
-                allowed_labels = pruned.allowed_labels
-                allowed_has_gold: Optional[bool] = None
-                if job.gold_labels is not None:
-                    if allowed_labels:
-                        allowed_lookup = set(allowed_labels)
-                        allowed_has_gold = any(
-                            g in allowed_lookup for g in job.gold_labels if g
-                        )
-                    else:
-                        allowed_has_gold = False
-
-                resolved_label = pred.get("resolved_label")
-                result: Dict[str, Any] = dict(job.metadata)
-                result.update(
-                    {
-                        "pred_label_raw": pred.get("pred_label_raw"),
-                        "resolved_label": resolved_label,
-                        "resolved_id": pred.get("resolved_id"),
-                        "resolved_path": pred.get("resolved_path"),
-                        "_error": job.metadata.get("_error"),
-                        "match_strategy": pred.get("match_strategy"),
-                    }
-                )
-
-                if "raw" in pred:
-                    result["raw"] = pred["raw"]
-
-                correct_increment = 0
-                has_gold_labels = job.gold_labels is not None
-                if has_gold_labels:
-                    match_type = determine_match_type(
-                        resolved_label, job.gold_labels, G=G
-                    )
-                    correct = match_type != "none"
-                    result["gold_labels"] = job.gold_labels
-                    result["match_type"] = match_type
-                    result["correct"] = bool(correct)
-                    allowed_flag = bool(allowed_has_gold)
-                    result["possible_correct_under_allowed"] = allowed_flag
-                    result["allowed_subtree_contains_gold"] = allowed_flag
-                    correct_increment = 1 if correct else 0
-
-                    min_distance: Optional[int] = None
-                    min_depth_delta: Optional[int] = None
-                    min_gold_depth: Optional[int] = None
-                    min_gold_label: Optional[str] = None
-                    pred_depth: Optional[int] = None
-
-                    if (
-                        undirected_G is not None
-                        and isinstance(resolved_label, str)
-                        and undirected_G.has_node(resolved_label)
-                    ):
-                        pred_depth = depth_map.get(resolved_label)
-                        gold_candidates = [
-                            g
-                            for g in (job.gold_labels or [])
-                            if isinstance(g, str) and undirected_G.has_node(g)
-                        ]
-
-                        for gold_label in gold_candidates:
-                            try:
-                                distance = nx.shortest_path_length(
-                                    undirected_G, resolved_label, gold_label
-                                )
-                            except (nx.NetworkXNoPath, nx.NodeNotFound):
-                                continue
-
-                            gold_depth = depth_map.get(gold_label)
-                            new_depth_delta: Optional[int] = None
-                            if pred_depth is not None and gold_depth is not None:
-                                new_depth_delta = pred_depth - gold_depth
-
-                            prefer = False
-                            if min_distance is None or distance < min_distance:
-                                prefer = True
-                            elif (
-                                min_distance is not None
-                                and distance == min_distance
-                                and new_depth_delta is not None
-                                and (
-                                    min_depth_delta is None
-                                    or abs(new_depth_delta) < abs(min_depth_delta)
-                                )
-                            ):
-                                prefer = True
-
-                            if prefer:
-                                min_distance = int(distance)
-                                min_depth_delta = (
-                                    int(new_depth_delta)
-                                    if new_depth_delta is not None
-                                    else None
-                                )
-                                min_gold_depth = (
-                                    int(gold_depth) if gold_depth is not None else None
-                                )
-                                min_gold_label = gold_label
-
-                    result["hierarchical_distance_min"] = (
-                        int(min_distance) if min_distance is not None else None
-                    )
-                    result["hierarchical_distance_pred_depth"] = (
-                        int(pred_depth) if pred_depth is not None else None
-                    )
-                    result["hierarchical_distance_gold_depth_at_min"] = (
-                        int(min_gold_depth) if min_gold_depth is not None else None
-                    )
-                    result["hierarchical_distance_depth_delta"] = (
-                        int(min_depth_delta) if min_depth_delta is not None else None
-                    )
-                    result["hierarchical_distance_gold_label_at_min"] = (
-                        str(min_gold_label) if min_gold_label is not None else None
-                    )
-
-                return result, correct_increment, has_gold_labels
-
-            async def _flush_prune(pending: List[tuple[int, PredictionJob]]) -> None:
-                if not pending:
-                    return
-                batch = list(pending)
-                pending.clear()
-                try:
-                    results = await pruner.prune_many(
-                        [(idx, job.item) for idx, job in batch]
-                    )
-                except Exception:
-                    for _ in batch:
-                        prune_queue.task_done()
-                    raise
-
-                for (idx, job), (result_idx, pruned) in zip(batch, results):
-                    assert idx == result_idx
-                    await prompt_queue.put((idx, job, pruned))
-                    prune_queue.task_done()
-
-            async def _prune_worker() -> None:
-                pending: List[tuple[int, PredictionJob]] = []
-                while True:
-                    item = await prune_queue.get()
-                    if item is SENTINEL:
-                        await _flush_prune(pending)
-                        prune_queue.task_done()
-                        break
-                    pending.append(item)
-                    if len(pending) >= prune_batch_size:
-                        await _flush_prune(pending)
-                if pending:
-                    await _flush_prune(pending)
-
-            async def _process_prompt_batch(
-                pending_batch: List[tuple[int, PredictionJob, PrunedTreeResult]],
-            ) -> None:
-                nonlocal completed, correct_sum, gold_progress_seen
-                if not pending_batch:
-                    return
-
-                batch = list(pending_batch)
-                requests = [
-                    MatchRequest(
-                        item=job.item,
-                        tree_markdown=pruned.markdown,
-                        allowed_labels=tuple(pruned.allowed_labels),
-                        allowed_children=pruned.allowed_children,
-                        slot_id=job.slot_id,
-                    )
-                    for _, job, pruned in batch
-                ]
-
-                try:
-                    predictions = await match_items_to_tree(
-                        requests,
-                        name_to_id=name_to_id,
-                        name_to_path=name_to_path,
-                        tax_names=tax_names,
-                        tax_embs=tax_embs_unit,
-                        embedder=embedder,
-                        hnsw_index=hnsw_index,
-                        llm_config=llm_cfg,
-                        session=session,
-                        encode_lock=encode_lock,
-                    )
-                except Exception:
-                    for _ in batch:
-                        prompt_queue.task_done()
-                    raise
-
-                for (idx, job, pruned), pred in zip(batch, predictions):
-                    result, correct_increment, has_gold = _evaluate_prediction(
-                        idx, job, pruned, pred
-                    )
-                    rows[idx] = result
-                    completed += 1
-                    if has_gold:
-                        gold_progress_seen = True
-                        correct_sum += correct_increment
-
-                    if progress_hook is not None:
-                        elapsed = max(time.time() - start, 0.0)
-                        hook_correct = correct_sum if gold_progress_seen else None
-                        progress_hook(completed, total, hook_correct, elapsed)
-
-                    prompt_queue.task_done()
-
-            async def _prompt_worker() -> None:
-                pending: List[tuple[int, PredictionJob, PrunedTreeResult]] = []
-                while True:
-                    item = await prompt_queue.get()
-                    if item is SENTINEL:
-                        await _process_prompt_batch(pending)
-                        pending.clear()
-                        prompt_queue.task_done()
-                        break
-                    pending.append(item)
-                    if len(pending) >= prompt_batch_size:
-                        await _process_prompt_batch(pending)
-                        pending.clear()
-                if pending:
-                    await _process_prompt_batch(pending)
-
-            async def _producer() -> None:
-                for idx, job in enumerate(jobs):
-                    await prune_queue.put((idx, job))
-                for _ in range(prune_workers):
-                    await prune_queue.put(SENTINEL)
-
-            producer_task = asyncio.create_task(_producer())
-            prune_tasks = [
-                asyncio.create_task(_prune_worker()) for _ in range(prune_workers)
-            ]
-            prompt_tasks = [
-                asyncio.create_task(_prompt_worker()) for _ in range(prompt_workers)
-            ]
+            pipeline.run_prune_workers()
+            pipeline.run_prompt_workers()
+            producer_task = asyncio.create_task(pipeline.queue_prune_jobs())
 
             try:
                 await producer_task
-                await prune_queue.join()
-                await asyncio.gather(*prune_tasks)
-                for _ in range(prompt_workers):
-                    await prompt_queue.put(SENTINEL)
-                await prompt_queue.join()
-                await asyncio.gather(*prompt_tasks)
+                return await pipeline.finalise_results()
             except Exception:
-                for task in prune_tasks + prompt_tasks:
-                    task.cancel()
-                await asyncio.gather(*prune_tasks, return_exceptions=True)
-                await asyncio.gather(*prompt_tasks, return_exceptions=True)
+                await pipeline.cancel_workers()
                 raise
-            finally:
-                pruner.close()
-
-        return [row for row in rows if row is not None]
 
     try:
         rows = asyncio.run(_predict_all())
