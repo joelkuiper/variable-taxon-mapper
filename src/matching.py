@@ -38,12 +38,11 @@ def _print_prompt_once(prompt: str) -> None:
 
 def _build_allowed_index_map(
     allowed_labels: Sequence[str],
-    tax_names: Sequence[str],
+    name_to_idx: Mapping[str, int],
 ) -> Dict[int, str]:
     """Map taxonomy indices to their label for the allowed subset."""
 
     idx_map: Dict[int, str] = {}
-    name_to_idx = {name: i for i, name in enumerate(tax_names)}
     for label in allowed_labels:
         idx = name_to_idx.get(label)
         if idx is not None:
@@ -178,6 +177,8 @@ async def match_items_to_tree(
 
     item_texts = [_compose_item_text(req.item) for req in requests]
 
+    name_to_idx = {name: i for i, name in enumerate(tax_names)}
+
     results: List[Dict[str, Any]] = []
     for req, raw, item_text in zip(requests, raw_responses, item_texts):
         node_label_raw: Optional[str] = None
@@ -219,7 +220,7 @@ async def match_items_to_tree(
             continue
 
         if normalized_text:
-            allowed_idx_map = _build_allowed_index_map(req.allowed_labels, tax_names)
+            allowed_idx_map = _build_allowed_index_map(req.allowed_labels, name_to_idx)
             if allowed_idx_map:
                 allowed_items = list(allowed_idx_map.items())
                 allowed_indices = [idx for idx, _ in allowed_items]
