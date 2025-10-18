@@ -13,8 +13,8 @@ fp16 = true
 mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
-gamma = 0.125
-summary_weight = 0.557
+gamma = 0.295
+summary_weight = 0.817
 
 [hnsw]
 space = "cosine"
@@ -30,26 +30,33 @@ dedupe_on = ["name"]
 progress_log_interval = 10
 
 [pruning]
-enable_taxonomy_pruning = true # disable to send the full taxonomy without pruning
+enable_taxonomy_pruning = true
+
 tree_sort_mode = "relevance" # options: relevance, topological, alphabetical, proximity, pagerank
 suggestion_sort_mode = "relevance" # independent ranking for the suggestion list; options mirror tree_sort_mode
-suggestion_list_limit = 5 # number of candidates surfaced alongside the tree
+suggestion_list_limit = 6 # number of candidates surfaced alongside the tree
+
 pruning_mode = "anchor_hull" # options: dominant_forest, anchor_hull, similarity_threshold, radius
-# surrogate_root_label = "Study variables" # optional: introduce a surrogate root label for the taxonomy tree
-similarity_threshold = 0.0 # cosine threshold used when pruning_mode="similarity_threshold"
-pruning_radius = 2 # undirected hop limit when pruning_mode="radius"
-anchor_top_k = 14 # ANN anchors to fetch per item before pruning
-max_descendant_depth = 2 # limit descendants pulled under each anchor
-lexical_anchor_limit = 2 # additional anchors sourced from lexical overlap
+
+# similarity_threshold = 0.0 # cosine threshold used when pruning_mode="similarity_threshold"
+# pruning_radius = 2 # undirected hop limit when pruning_mode="radius"
+
+anchor_top_k = 8 # ANN anchors to fetch per item before pruning
+max_descendant_depth = 4 # limit descendants pulled under each anchor
+lexical_anchor_limit = 3 # additional anchors sourced from lexical overlap
 community_clique_size = 2 # k for k-clique community expansion
-max_community_size = 128 # max nodes pulled from any single community, if set
+max_community_size = 160 # max nodes pulled from any single community, if set
+
 anchor_overfetch_multiplier = 3 # ANN search overfetch multiplier (before pruning)
-anchor_min_overfetch = 128
+anchor_min_overfetch = 160
+
 pagerank_damping = 0.8
 pagerank_score_floor = 0.0
+
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
-# pagerank_candidate_limit = 512
-node_budget = 256 # hard cap on nodes retained in the final allowed set
+# pagerank_candidate_limit = 384
+node_budget = 200 # hard cap on nodes retained in the final allowed set
+surrogate_root_label = "Study catalogue variables" # optional: introduce a surrogate root label for the taxonomy tree
 
 [llm]
 endpoint = "http://127.0.0.1:8080/completions"
@@ -59,8 +66,8 @@ top_k = 20
 top_p = 0.8
 min_p = 0.0
 cache_prompt = true
-n_keep = 196 # FIXME: Wild guess at prompt length
-embedding_remap_threshold = 0.45
+n_keep = -1
+embedding_remap_threshold = 0.25
 # Enable snapping ancestor predictions down to a better-matching child label.
 snap_to_child = false
 snap_margin = 0.25

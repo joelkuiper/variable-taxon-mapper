@@ -157,8 +157,8 @@ def make_tree_match_prompt(
     template = """\
         {role_prefix}system{role_suffix}
         # TASK
-        • From the TAXONOMY (or SUGGESTIONS), choose **exactly one** concept that best matches the ITEM.
-        • The TAXONOMY is a nested (indented) Markdown list where each bullet is: `- <concept label> [<optional short description>]`.
+        • From the TREE (or SUGGESTIONS), choose **exactly one** concept that best matches the ITEM.
+        • The TREE is a nested (indented) Markdown list where each bullet is: `- <concept label> [<optional short description>]`.
         • Concepts may include a short description in square brackets.
           Those descriptions are guidance only; **output must be the exact concept label (no description)**.
         • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive.
