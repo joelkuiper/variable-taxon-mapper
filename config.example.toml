@@ -13,8 +13,8 @@ fp16 = true
 mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
-gamma = 0.295
-summary_weight = 0.817
+gamma = 0.3
+summary_weight = 0.82
 
 [hnsw]
 space = "cosine"
@@ -56,7 +56,7 @@ pagerank_score_floor = 0.0
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
 # pagerank_candidate_limit = 384
 node_budget = 200 # hard cap on nodes retained in the final allowed set
-surrogate_root_label = "Study catalogue variables" # optional: introduce a surrogate root label for the taxonomy tree
+# surrogate_root_label = "Study catalogue variables" # optional: introduce a surrogate root label for the taxonomy tree
 
 [llm]
 endpoint = "http://127.0.0.1:8080/completions"
