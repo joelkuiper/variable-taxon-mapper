@@ -98,7 +98,8 @@ class PruningConfig:
     enable_taxonomy_pruning: bool = True
     tree_sort_mode: str = "relevance"
     suggestion_sort_mode: str = "relevance"
-    pruning_mode: str = "dominant_forest"
+    pruning_mode: str = "dominant_forest"  # options: dominant_forest, anchor_hull,
+    # similarity_threshold, radius, community_pagerank, steiner_similarity
     surrogate_root_label: Optional[str] = None
     similarity_threshold: float = 0.0
     pruning_radius: int = 2

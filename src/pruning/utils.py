@@ -15,6 +15,8 @@ from typing import (
 )
 
 import networkx as nx
+from networkx.algorithms.approximation import steiner_tree
+
 import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz, process
@@ -473,6 +475,109 @@ def dominant_anchor_forest(
     return allowed, pagerank_scores
 
 
+def community_pagerank_subtree(
+    G: nx.DiGraph,
+    anchors: Sequence[str],
+    *,
+    max_descendant_depth: int,
+    node_budget: int,
+    community_clique_size: int,
+    max_community_size: Optional[int],
+    pagerank_damping: float,
+    pagerank_score_floor: float,
+    pagerank_candidate_limit: int,
+    sort_key: Callable[[str], Tuple],
+    precomputed: Optional[Tuple[Set[str], Dict[str, float], Dict[str, float]]] = None,
+) -> Set[str]:
+    """Select high-PageRank representatives per community anchored at ``anchors``."""
+
+    if node_budget == 0:
+        return set()
+
+    if precomputed is not None:
+        candidate_nodes, pagerank_scores, distances_full = precomputed
+    else:
+        (
+            candidate_nodes,
+            pagerank_scores,
+            distances_full,
+        ) = prepare_pagerank_scores(
+            G,
+            anchors,
+            max_descendant_depth=max_descendant_depth,
+            community_clique_size=community_clique_size,
+            max_community_size=max_community_size,
+            pagerank_damping=pagerank_damping,
+            pagerank_score_floor=pagerank_score_floor,
+            pagerank_candidate_limit=pagerank_candidate_limit,
+        )
+
+    anchor_set: Set[str] = {a for a in anchors if G.has_node(a)}
+
+    if not candidate_nodes:
+        fallback: Set[str] = set()
+        for anchor in anchor_set:
+            fallback.update(ancestors_to_root(G, anchor))
+        if node_budget > 0 and fallback:
+            return enforce_node_budget_with_ancestors(
+                G, fallback, node_budget=node_budget, sort_key=sort_key
+            )
+        return {n for n in fallback if G.has_node(n)}
+
+    distances = {n: distances_full.get(n, float("inf")) for n in candidate_nodes}
+
+    community_memberships: Dict[str, List[int]]
+    communities: List[Set[str]]
+    if community_clique_size >= 2:
+        community_memberships, communities = _node_community_memberships(
+            G, k=community_clique_size
+        )
+    else:
+        community_memberships, communities = {}, []
+
+    def _pagerank_order(node: str) -> Tuple[float, float, str]:
+        return (
+            -pagerank_scores.get(node, 0.0),
+            distances.get(node, float("inf")),
+            node.lower(),
+        )
+
+    selected: Set[str] = set(anchor_set)
+
+    if communities:
+        seen_communities: Set[int] = set()
+        for anchor in anchors:
+            for comm_idx in community_memberships.get(anchor, []):
+                if comm_idx in seen_communities:
+                    continue
+                seen_communities.add(comm_idx)
+                members = communities[comm_idx] & candidate_nodes
+                if not members:
+                    continue
+                best = min(members, key=_pagerank_order)
+                selected.add(best)
+
+    ordered_candidates = sorted(candidate_nodes, key=_pagerank_order)
+    for node in ordered_candidates:
+        if node_budget > 0 and len(selected) >= node_budget:
+            break
+        if node in selected:
+            continue
+        selected.add(node)
+
+    expanded: Set[str] = set()
+    for node in selected:
+        if G.has_node(node):
+            expanded.update(ancestors_to_root(G, node))
+
+    if node_budget > 0 and expanded:
+        return enforce_node_budget_with_ancestors(
+            G, expanded, node_budget=node_budget, sort_key=sort_key
+        )
+
+    return {n for n in expanded if G.has_node(n)}
+
+
 def anchor_hull_subtree(
     G: nx.DiGraph,
     anchors: Sequence[str],
@@ -577,6 +682,91 @@ def radius_limited_subtree(
         )
 
     return {n for n in expanded if G.has_node(n)}
+
+
+def steiner_similarity_subtree(
+    G: nx.DiGraph,
+    *,
+    anchors: Sequence[str],
+    similarity_map: Mapping[str, float],
+    node_budget: int,
+    sort_key: Callable[[str], Tuple],
+) -> Set[str]:
+    """Connect anchors to top-similarity nodes using a Steiner approximation."""
+
+    if node_budget == 0 or not anchors:
+        return set()
+
+    anchor_nodes = [anchor for anchor in anchors if G.has_node(anchor)]
+    if not anchor_nodes:
+        return set()
+
+    undirected = get_undirected_taxonomy(G)
+
+    terminals: Set[str] = set(anchor_nodes)
+    candidate_names: List[str] = []
+    for name, score in similarity_map.items():
+        if name in terminals or not G.has_node(name):
+            continue
+        if not np.isfinite(score):
+            continue
+        candidate_names.append(name)
+
+    candidate_names.sort(
+        key=lambda n: (-similarity_map.get(n, float("-inf")), n.lower())
+    )
+
+    if node_budget > 0:
+        extra_limit = max(0, node_budget - len(terminals))
+    else:
+        extra_limit = len(candidate_names)
+    terminals.update(candidate_names[:extra_limit])
+
+    terminals_in_graph = [n for n in terminals if undirected.has_node(n)]
+    if not terminals_in_graph:
+        return _anchor_ancestor_closure(G, anchor_nodes, node_budget, sort_key)
+
+    try:
+        steiner_subgraph = steiner_tree(undirected, terminals_in_graph)
+    except Exception:  # pragma: no cover - defensive
+        return _anchor_ancestor_closure(G, anchor_nodes, node_budget, sort_key)
+
+    steiner_nodes = set(steiner_subgraph.nodes)
+    if not steiner_nodes:
+        return _anchor_ancestor_closure(G, anchor_nodes, node_budget, sort_key)
+
+    expanded: Set[str] = set()
+    for node in steiner_nodes.union(terminals_in_graph):
+        if G.has_node(node):
+            expanded.update(ancestors_to_root(G, node))
+
+    if node_budget > 0 and expanded:
+        return enforce_node_budget_with_ancestors(
+            G, expanded, node_budget=node_budget, sort_key=sort_key
+        )
+
+    return {n for n in expanded if G.has_node(n)}
+
+
+def _anchor_ancestor_closure(
+    G: nx.DiGraph,
+    anchors: Sequence[str],
+    node_budget: int,
+    sort_key: Callable[[str], Tuple],
+) -> Set[str]:
+    """Return ancestor closure for ``anchors`` honoring ``node_budget``."""
+
+    closure: Set[str] = set()
+    for anchor in anchors:
+        if G.has_node(anchor):
+            closure.update(ancestors_to_root(G, anchor))
+
+    if node_budget > 0 and closure:
+        return enforce_node_budget_with_ancestors(
+            G, closure, node_budget=node_budget, sort_key=sort_key
+        )
+
+    return {n for n in closure if G.has_node(n)}
 
 
 def normalize_tree_sort_mode(mode: Optional[str]) -> str:
@@ -688,6 +878,18 @@ def normalize_pruning_mode(mode: Optional[str]) -> str:
         "anchor_hull": {"anchor_hull", "hull", "anchor"},
         "similarity_threshold": {"similarity", "similarity_threshold", "threshold"},
         "radius": {"radius", "radius_limited", "radius_based"},
+        "community_pagerank": {
+            "community_pagerank",
+            "community",
+            "community_rank",
+            "community_pr",
+        },
+        "steiner_similarity": {
+            "steiner_similarity",
+            "steiner",
+            "steiner_tree",
+            "steiner_pruning",
+        },
     }
     for target, aliases in mapping.items():
         if normalized in aliases:

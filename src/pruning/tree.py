@@ -14,6 +14,7 @@ from ..taxonomy import make_label_display, normalize_taxonomy_label
 from .errors import PrunedTreeComputationError
 from .utils import (
     anchor_hull_subtree,
+    community_pagerank_subtree,
     dominant_anchor_forest,
     get_undirected_taxonomy,
     hnsw_anchor_indices,
@@ -24,6 +25,7 @@ from .utils import (
     radius_limited_subtree,
     rank_allowed_nodes,
     render_tree_markdown,
+    steiner_similarity_subtree,
     similarity_threshold_subtree,
     taxonomy_similarity_scores,
     tree_sort_key_factory,
@@ -137,7 +139,10 @@ class TreePruner:
         tree_sort_mode = normalize_tree_sort_mode(cfg.tree_sort_mode)
         suggestion_sort_mode = normalize_tree_sort_mode(cfg.suggestion_sort_mode)
         requires_proximity = "proximity" in {tree_sort_mode, suggestion_sort_mode}
+        pruning_mode = normalize_pruning_mode(cfg.pruning_mode)
         needs_pagerank = "pagerank" in {tree_sort_mode, suggestion_sort_mode}
+        if pruning_mode in {"dominant_forest", "community_pagerank"}:
+            needs_pagerank = True
 
         community_clique_size = (
             0
@@ -160,7 +165,7 @@ class TreePruner:
             enable_taxonomy_pruning=bool(cfg.enable_taxonomy_pruning),
             tree_sort_mode=tree_sort_mode,
             suggestion_sort_mode=suggestion_sort_mode,
-            pruning_mode=normalize_pruning_mode(cfg.pruning_mode),
+            pruning_mode=pruning_mode,
             requires_proximity=requires_proximity,
             needs_pagerank=needs_pagerank,
             anchor_top_k=max(0, int(cfg.anchor_top_k)),
@@ -459,6 +464,30 @@ class TreePruner:
                 self._graph,
                 anchors,
                 radius=context.pruning_radius,
+                node_budget=context.node_budget,
+                sort_key=sort_key,
+            )
+
+        if context.pruning_mode == "community_pagerank":
+            return community_pagerank_subtree(
+                self._graph,
+                anchors,
+                max_descendant_depth=context.max_descendant_depth,
+                node_budget=context.node_budget,
+                community_clique_size=context.community_clique_size,
+                max_community_size=context.max_community_size,
+                pagerank_damping=context.pagerank_damping,
+                pagerank_score_floor=context.pagerank_score_floor,
+                pagerank_candidate_limit=context.pagerank_candidate_limit,
+                sort_key=sort_key,
+                precomputed=pagerank_data,
+            )
+
+        if context.pruning_mode == "steiner_similarity":
+            return steiner_similarity_subtree(
+                self._graph,
+                anchors=anchors,
+                similarity_map=similarity_map,
                 node_budget=context.node_budget,
                 sort_key=sort_key,
             )
