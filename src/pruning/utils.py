@@ -28,7 +28,7 @@ from ..taxonomy import (
 from ..string_similarity import (
     normalize_similarity_text,
     normalized_score,
-    normalized_token_sort_ratio,
+    normalized_token_set_ratio,
 )
 
 
@@ -64,7 +64,8 @@ def taxonomy_similarity_scores(
 
 
 def token_similarity(a: str, b: str) -> float:
-    return normalized_token_sort_ratio(a, b)
+    # return normalized_token_sort_ratio(a, b)
+    return normalized_token_set_ratio(a, b)
 
 
 def lexical_anchor_indices(

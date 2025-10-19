@@ -69,10 +69,10 @@ cache_prompt = true
 n_keep = -1
 embedding_remap_threshold = 0.25
 # Enable snapping ancestor predictions down to a better-matching child label.
-snap_to_child = false
+snap_to_child = true
 snap_margin = 0.25
 # Options: "token_sort", "token_set", "embedding"
-snap_similarity = "token_sort"
+snap_similarity = "token_set"
 
 [parallelism]
 num_slots = 4
