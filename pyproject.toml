@@ -16,6 +16,6 @@ dependencies = [
   "torch>=2.8.0",
   "tqdm>=4.67.1",
   "transformers>=4.57.0",
-  "textdistance>=4.6.3",
   "scipy>=1.16.2",
+  "rapidfuzz>=3.10.0",
 ]

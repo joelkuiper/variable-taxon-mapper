@@ -5,38 +5,32 @@ from __future__ import annotations
 import threading
 from typing import Mapping, Optional, Sequence
 
-import textdistance
-
 from config import LLMConfig
 from .embedding import Embedder
+from .string_similarity import (
+    normalized_token_set_ratio,
+    normalized_token_sort_ratio,
+)
 
 
-def _textdistance_cosine(a: str, b: str) -> float:
-    return float(textdistance.cosine.normalized_similarity(a or "", b or ""))
+def _token_set_similarity(a: str, b: str) -> float:
+    return normalized_token_set_ratio(a or "", b or "")
 
 
-def _entropy_ncd(a: str, b: str) -> float:
-    return float(textdistance.entropy_ncd.normalized_similarity(a or "", b or ""))
+def _token_sort_similarity(a: str, b: str) -> float:
+    return normalized_token_sort_ratio(a or "", b or "")
 
 
 def _normalize_snap_similarity(name: Optional[str]) -> str:
     if not name:
-        return "entropy_ncd"
+        return "token_sort"
 
     normalized = name.strip().lower().replace("-", "_")
-    if normalized in {"textdistance", "textdistance_cosine", "cosine"}:
-        return "textdistance_cosine"
-    if normalized in {
-        "entropy",
-        "entropy_ncd",
-        "ncd",
-        "token_overlap",
-        "token_overlap_cosine",
-    }:
-        return "entropy_ncd"
+    if normalized in {"token_set", "set"}:
+        return "token_set"
     if normalized in {"sapbert", "sapbert_cosine", "embedding", "embedding_cosine"}:
         return "embedding"
-    return "entropy_ncd"
+    return "token_sort"
 
 
 def _snap_with_string_similarity(
@@ -48,9 +42,9 @@ def _snap_with_string_similarity(
     margin: float,
 ) -> str:
     sim_fn = {
-        "textdistance_cosine": _textdistance_cosine,
-        "entropy_ncd": _entropy_ncd,
-    }.get(similarity, _entropy_ncd)
+        "token_set": _token_set_similarity,
+        "token_sort": _token_sort_similarity,
+    }.get(similarity, _token_sort_similarity)
 
     parent_score = sim_fn(parent, item_text)
     best_child = None

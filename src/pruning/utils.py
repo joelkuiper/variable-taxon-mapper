@@ -17,13 +17,18 @@ from typing import (
 import networkx as nx
 import numpy as np
 import pandas as pd
-import textdistance
+from rapidfuzz import fuzz, process
 
 from ..taxonomy import (
     ancestors_to_root,
     collect_descendants,
     make_label_display,
     roots_in_order,
+)
+from ..string_similarity import (
+    normalize_similarity_text,
+    normalized_score,
+    normalized_token_sort_ratio,
 )
 
 
@@ -59,7 +64,7 @@ def taxonomy_similarity_scores(
 
 
 def token_similarity(a: str, b: str) -> float:
-    return textdistance.entropy_ncd.normalized_similarity(a, b)
+    return normalized_token_sort_ratio(a, b)
 
 
 def lexical_anchor_indices(
@@ -72,10 +77,10 @@ def lexical_anchor_indices(
 ) -> List[int]:
     """Return indices of lexically similar taxonomy names using token sorting."""
 
-    if textdistance is None or max_anchors <= 0:
+    if max_anchors <= 0:
         return []
 
-    normalized_item_texts = [t.lower() for t in item_texts if t]
+    normalized_item_texts = [normalize_similarity_text(t) for t in item_texts if t]
     if not normalized_item_texts:
         return []
 
@@ -86,24 +91,37 @@ def lexical_anchor_indices(
     normalized_tax_names = (
         list(tax_names_normalized)
         if tax_names_normalized is not None
-        else [name.lower() for name in tax_names]
+        else [normalize_similarity_text(name) for name in tax_names]
     )
 
-    scored: List[Tuple[float, int]] = []
-    for idx, name in enumerate(tax_names):
-        if idx in existing_set:
-            continue
-        norm_name = normalized_tax_names[idx]
-        best = 0.0
-        for text in normalized_item_texts:
-            best = max(best, token_similarity(norm_name, text))
-            if best >= 1.0:
-                break
-        if best > 0.0:
-            scored.append((best, idx))
+    scored: Dict[int, float] = {}
+    if not normalized_tax_names:
+        return []
 
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    return [idx for _, idx in scored[:max_anchors]]
+    limit = min(len(normalized_tax_names), max(max_anchors * 5, max_anchors))
+    for text in normalized_item_texts:
+        if not text:
+            continue
+        matches = process.extract(
+            text,
+            normalized_tax_names,
+            processor=None,
+            scorer=fuzz.token_sort_ratio,
+            limit=limit,
+            score_cutoff=0.0,
+        )
+        for _, score, idx in matches:
+            if idx in existing_set:
+                continue
+            score_norm = normalized_score(score)
+            if score_norm <= 0.0:
+                continue
+            current = scored.get(idx, 0.0)
+            if score_norm > current:
+                scored[idx] = score_norm
+
+    ranked = sorted(scored.items(), key=lambda x: (-x[1], x[0]))
+    return [idx for idx, _ in ranked[:max_anchors]]
 
 
 def hnsw_anchor_indices(
