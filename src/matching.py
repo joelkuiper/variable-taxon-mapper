@@ -208,12 +208,27 @@ async def match_items_to_tree(
 
     results: List[Dict[str, Any]] = []
     for req, raw, item_text in zip(requests, raw_responses, item_texts):
-        node_label_raw: Optional[str] = None
+        if raw is None:
+            raise RuntimeError(
+                "LLM returned no response for slot "
+                f"{req.slot_id}; expected JSON payload."
+            )
+
         try:
             payload = json.loads(raw)
-            node_label_raw = payload.get("concept_label")
-        except Exception:
-            node_label_raw = None
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "Failed to parse JSON from LLM response for "
+                f"slot {req.slot_id}: {raw!r}"
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                "LLM response for slot "
+                f"{req.slot_id} is not a JSON object: {payload!r}"
+            )
+
+        node_label_raw: Optional[str] = payload.get("concept_label")
 
         normalized_text, canonical_label = _canonicalize_label_text(
             node_label_raw, allowed_labels=req.allowed_labels
