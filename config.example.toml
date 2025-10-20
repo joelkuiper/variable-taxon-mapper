@@ -13,8 +13,8 @@ fp16 = true
 mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
-gamma = 0.3
-summary_weight = 0.82
+gamma = 0.125
+summary_weight = 0.85
 
 [hnsw]
 space = "cosine"
@@ -47,10 +47,10 @@ lexical_anchor_limit = 3 # additional anchors sourced from lexical overlap
 community_clique_size = 2 # k for k-clique community expansion
 max_community_size = 160 # max nodes pulled from any single community, if set
 
-anchor_overfetch_multiplier = 3 # ANN search overfetch multiplier (before pruning)
-anchor_min_overfetch = 160
+anchor_overfetch_multiplier = 6 # ANN search overfetch multiplier (before pruning)
+anchor_min_overfetch = 96
 
-pagerank_damping = 0.8
+pagerank_damping = 0.85
 pagerank_score_floor = 0.0
 
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
@@ -70,7 +70,7 @@ n_keep = -1
 embedding_remap_threshold = 0.25
 # Enable snapping ancestor predictions down to a better-matching child label.
 snap_to_child = true
-snap_margin = 0.25
+snap_margin = 0.20
 # Options: "token_sort", "token_set", "embedding"
 snap_similarity = "token_set"
 
