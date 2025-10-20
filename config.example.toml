@@ -13,7 +13,7 @@ fp16 = true
 mean_pool = false # false = CLS token
 
 [taxonomy_embeddings]
-gamma = 0.125
+gamma = 0.1
 summary_weight = 0.85
 
 [hnsw]
@@ -51,7 +51,7 @@ max_community_size = 160 # max nodes pulled from any single community, if set
 anchor_overfetch_multiplier = 6 # ANN search overfetch multiplier (before pruning)
 anchor_min_overfetch = 96
 
-pagerank_damping = 0.85
+pagerank_damping = 0.875
 pagerank_score_floor = 0.0
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
 # pagerank_candidate_limit = 384
