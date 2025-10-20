@@ -36,7 +36,8 @@ tree_sort_mode = "relevance" # options: relevance, topological, alphabetical, pr
 suggestion_sort_mode = "relevance" # independent ranking for the suggestion list; options mirror tree_sort_mode
 suggestion_list_limit = 6 # number of candidates surfaced alongside the tree
 
-pruning_mode = "anchor_hull" # options: dominant_forest, anchor_hull, similarity_threshold, radius
+ # options: dominant_forest, anchor_hull, similarity_threshold, radius, steiner_similarity, community_pagerank
+pruning_mode = "anchor_hull"
 
 # similarity_threshold = 0.0 # cosine threshold used when pruning_mode="similarity_threshold"
 # pruning_radius = 2 # undirected hop limit when pruning_mode="radius"
@@ -52,9 +53,9 @@ anchor_min_overfetch = 96
 
 pagerank_damping = 0.85
 pagerank_score_floor = 0.0
-
 # Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
 # pagerank_candidate_limit = 384
+
 node_budget = 200 # hard cap on nodes retained in the final allowed set
 # surrogate_root_label = "Study catalogue variables" # optional: introduce a surrogate root label for the taxonomy tree
 
