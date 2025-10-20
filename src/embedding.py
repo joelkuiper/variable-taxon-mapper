@@ -129,7 +129,9 @@ def encode_item_texts(
     """Encode selected text fields from ``item`` using ``embedder``."""
 
     if texts is None:
-        texts = collect_item_texts(item, fields=fields, clean=clean, max_length=max_length)
+        texts = collect_item_texts(
+            item, fields=fields, clean=clean, max_length=max_length
+        )
     else:
         texts = list(texts)
 

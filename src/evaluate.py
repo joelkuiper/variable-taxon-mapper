@@ -106,9 +106,7 @@ def _normalise_parallelism(parallel_cfg: ParallelismConfig) -> NormalizedParalle
 
     prune_batch_size = _value("pruning_batch_size", defaults.pruning_batch_size)
 
-    prune_queue_size = _value(
-        "pruning_queue_size", prune_batch_size
-    )
+    prune_queue_size = _value("pruning_queue_size", prune_batch_size)
 
     return NormalizedParallelism(
         pool_limit=pool_limit,
@@ -267,9 +265,7 @@ class PredictionPipeline:
         correct_increment = 0
         has_gold_labels = job.gold_labels is not None
         if has_gold_labels:
-            match_type = determine_match_type(
-                resolved_label, job.gold_labels, G=self.G
-            )
+            match_type = determine_match_type(resolved_label, job.gold_labels, G=self.G)
             correct = match_type != "none"
             result["gold_labels"] = job.gold_labels
             result["match_type"] = match_type
@@ -327,9 +323,13 @@ class PredictionPipeline:
                     if prefer:
                         min_distance = int(distance)
                         min_depth_delta = (
-                            int(new_depth_delta) if new_depth_delta is not None else None
+                            int(new_depth_delta)
+                            if new_depth_delta is not None
+                            else None
                         )
-                        min_gold_depth = int(gold_depth) if gold_depth is not None else None
+                        min_gold_depth = (
+                            int(gold_depth) if gold_depth is not None else None
+                        )
                         min_gold_label = gold_label
 
             result["hierarchical_distance_min"] = (
@@ -350,9 +350,7 @@ class PredictionPipeline:
 
         return result, correct_increment, has_gold_labels
 
-    async def _flush_prune(
-        self, pending: List[tuple[int, PredictionJob]]
-    ) -> None:
+    async def _flush_prune(self, pending: List[tuple[int, PredictionJob]]) -> None:
         if not pending:
             return
         batch = list(pending)

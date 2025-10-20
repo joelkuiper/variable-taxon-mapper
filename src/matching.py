@@ -224,8 +224,7 @@ async def match_items_to_tree(
 
         if not isinstance(payload, dict):
             raise RuntimeError(
-                "LLM response for slot "
-                f"{req.slot_id} is not a JSON object: {payload!r}"
+                f"LLM response for slot {req.slot_id} is not a JSON object: {payload!r}"
             )
 
         node_label_raw: Optional[str] = payload.get("concept_label")
