@@ -81,9 +81,6 @@ pool_maxsize = 8
 pruning_workers = 8
 pruning_batch_size = 8
 pruning_queue_size = 16
-prompt_workers = 2
-prompt_batch_size = 4
-prompt_queue_size = 16
 
 [http]
 sock_connect = 10.0

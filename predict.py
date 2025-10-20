@@ -108,9 +108,7 @@ def main(argv: list[str] | None = None) -> None:
     print(
         "[predict] concurrency settings: "
         f"pruning_workers={parallel_cfg.pruning_workers}, "
-        f"prompt_workers={parallel_cfg.prompt_workers}, "
-        f"pruning_batch={parallel_cfg.pruning_batch_size}, "
-        f"prompt_batch={parallel_cfg.prompt_batch_size}"
+        f"pruning_batch={parallel_cfg.pruning_batch_size}"
     )
 
     progress_hook = _make_tqdm_progress()

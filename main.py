@@ -49,9 +49,7 @@ def run_pipeline(
     print(
         "[pipeline] concurrency settings: "
         f"pruning_workers={parallel_cfg.pruning_workers}, "
-        f"prompt_workers={parallel_cfg.prompt_workers}, "
-        f"pruning_batch={parallel_cfg.pruning_batch_size}, "
-        f"prompt_batch={parallel_cfg.prompt_batch_size}"
+        f"pruning_batch={parallel_cfg.pruning_batch_size}"
     )
 
     variables = pd.read_csv(variables_path, low_memory=False)

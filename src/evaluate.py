@@ -74,11 +74,8 @@ class NormalizedParallelism:
     slot_limit: int
     concurrency_limit: int
     prune_workers: int
-    prompt_workers: int
     prune_batch_size: int
-    prompt_batch_size: int
     prune_queue_size: int
-    prompt_queue_size: int
 
 
 def _sock_read_timeout(http_cfg: HttpConfig, llm_cfg: LLMConfig) -> float:
@@ -107,23 +104,10 @@ def _normalise_parallelism(parallel_cfg: ParallelismConfig) -> NormalizedParalle
 
     prune_workers = _value("pruning_workers", defaults.pruning_workers)
 
-    prompt_workers_raw = _value(
-        "prompt_workers", concurrency_limit
-    )
-    prompt_workers = max(1, min(prompt_workers_raw, concurrency_limit))
-
     prune_batch_size = _value("pruning_batch_size", defaults.pruning_batch_size)
-
-    prompt_batch_size_raw = _value(
-        "prompt_batch_size", 1
-    )
-    prompt_batch_size = max(1, min(prompt_batch_size_raw, concurrency_limit))
 
     prune_queue_size = _value(
         "pruning_queue_size", prune_batch_size
-    )
-    prompt_queue_size = _value(
-        "prompt_queue_size", prompt_batch_size
     )
 
     return NormalizedParallelism(
@@ -131,11 +115,8 @@ def _normalise_parallelism(parallel_cfg: ParallelismConfig) -> NormalizedParalle
         slot_limit=slot_limit,
         concurrency_limit=concurrency_limit,
         prune_workers=prune_workers,
-        prompt_workers=prompt_workers,
         prune_batch_size=prune_batch_size,
-        prompt_batch_size=prompt_batch_size,
         prune_queue_size=prune_queue_size,
-        prompt_queue_size=prompt_queue_size,
     )
 
 
@@ -210,12 +191,8 @@ class PredictionPipeline:
         self.prune_queue: asyncio.Queue[Any] = asyncio.Queue(
             maxsize=self.config.prune_queue_size
         )
-        self.prompt_queue: asyncio.Queue[Any] = asyncio.Queue(
-            maxsize=self.config.prompt_queue_size
-        )
 
         self.prune_tasks: List[asyncio.Task[None]] = []
-        self.prompt_tasks: List[asyncio.Task[None]] = []
         self._closed = False
 
     def close(self) -> None:
@@ -224,12 +201,10 @@ class PredictionPipeline:
             self._closed = True
 
     async def cancel_workers(self) -> None:
-        for task in self.prune_tasks + self.prompt_tasks:
+        for task in self.prune_tasks:
             task.cancel()
         if self.prune_tasks:
             await asyncio.gather(*self.prune_tasks, return_exceptions=True)
-        if self.prompt_tasks:
-            await asyncio.gather(*self.prompt_tasks, return_exceptions=True)
         self.close()
 
     def run_prune_workers(self) -> List[asyncio.Task[None]]:
@@ -239,14 +214,6 @@ class PredictionPipeline:
                 for _ in range(self.config.prune_workers)
             ]
         return self.prune_tasks
-
-    def run_prompt_workers(self) -> List[asyncio.Task[None]]:
-        if not self.prompt_tasks:
-            self.prompt_tasks = [
-                asyncio.create_task(self._prompt_worker())
-                for _ in range(self.config.prompt_workers)
-            ]
-        return self.prompt_tasks
 
     async def queue_prune_jobs(self) -> None:
         for idx, job in enumerate(self.jobs):
@@ -259,11 +226,6 @@ class PredictionPipeline:
             await self.prune_queue.join()
             if self.prune_tasks:
                 await asyncio.gather(*self.prune_tasks)
-            for _ in range(self.config.prompt_workers):
-                await self.prompt_queue.put(self.SENTINEL)
-            await self.prompt_queue.join()
-            if self.prompt_tasks:
-                await asyncio.gather(*self.prompt_tasks)
         finally:
             self.close()
         return [row for row in self.rows if row is not None]
@@ -404,10 +366,14 @@ class PredictionPipeline:
                 self.prune_queue.task_done()
             raise
 
+        prompt_batch: List[tuple[int, PredictionJob, PrunedTreeResult]] = []
         for (idx, job), (result_idx, pruned) in zip(batch, results):
             assert idx == result_idx
-            await self.prompt_queue.put((idx, job, pruned))
+            prompt_batch.append((idx, job, pruned))
             self.prune_queue.task_done()
+
+        if prompt_batch:
+            await self._process_prompt_batch(prompt_batch)
 
     async def _prune_worker(self) -> None:
         pending: List[tuple[int, PredictionJob]] = []
@@ -429,37 +395,41 @@ class PredictionPipeline:
         if not pending_batch:
             return
 
-        batch = list(pending_batch)
-        requests = [
-            MatchRequest(
+        for idx, job, pruned in pending_batch:
+            request = MatchRequest(
                 item=job.item,
                 tree_markdown=pruned.markdown,
                 allowed_labels=tuple(pruned.allowed_labels),
                 allowed_children=pruned.allowed_children,
                 slot_id=job.slot_id,
             )
-            for _, job, pruned in batch
-        ]
 
-        try:
-            predictions = await match_items_to_tree(
-                requests,
-                name_to_id=self.name_to_id,
-                name_to_path=self.name_to_path,
-                tax_names=self.tax_names,
-                tax_embs=self.tax_embs_unit,
-                embedder=self.embedder,
-                hnsw_index=self.hnsw_index,
-                llm_config=self.llm_cfg,
-                session=self.session,
-                encode_lock=self.encode_lock,
-            )
-        except Exception:
-            for _ in batch:
-                self.prompt_queue.task_done()
-            raise
+            try:
+                predictions = await match_items_to_tree(
+                    [request],
+                    name_to_id=self.name_to_id,
+                    name_to_path=self.name_to_path,
+                    tax_names=self.tax_names,
+                    tax_embs=self.tax_embs_unit,
+                    embedder=self.embedder,
+                    hnsw_index=self.hnsw_index,
+                    llm_config=self.llm_cfg,
+                    session=self.session,
+                    encode_lock=self.encode_lock,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "LLM matching failed for prompt request at "
+                    f"index {idx} (slot_id={job.slot_id})."
+                ) from exc
 
-        for (idx, job, pruned), pred in zip(batch, predictions):
+            if not predictions:
+                raise RuntimeError(
+                    "LLM matching returned no predictions for request at "
+                    f"index {idx} (slot_id={job.slot_id})."
+                )
+
+            pred = predictions[0]
             result, correct_increment, has_gold = self._evaluate_prediction(
                 idx, job, pruned, pred
             )
@@ -473,24 +443,6 @@ class PredictionPipeline:
                 elapsed = max(time.time() - self.start, 0.0)
                 hook_correct = self.correct_sum if self.gold_progress_seen else None
                 self.progress_hook(self.completed, self.total, hook_correct, elapsed)
-
-            self.prompt_queue.task_done()
-
-    async def _prompt_worker(self) -> None:
-        pending: List[tuple[int, PredictionJob, PrunedTreeResult]] = []
-        while True:
-            item = await self.prompt_queue.get()
-            if item is self.SENTINEL:
-                await self._process_prompt_batch(pending)
-                pending.clear()
-                self.prompt_queue.task_done()
-                break
-            pending.append(item)
-            if len(pending) >= self.config.prompt_batch_size:
-                await self._process_prompt_batch(pending)
-                pending.clear()
-        if pending:
-            await self._process_prompt_batch(pending)
 
 
 def _collect_predictions(
@@ -551,7 +503,6 @@ def _collect_predictions(
             )
 
             pipeline.run_prune_workers()
-            pipeline.run_prompt_workers()
             producer_task = asyncio.create_task(pipeline.queue_prune_jobs())
 
             try:
