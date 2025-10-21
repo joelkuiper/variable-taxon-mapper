@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any, Mapping, MutableMapping, Optional, Type, TypeVar
 
 import tomllib
 
@@ -249,6 +249,39 @@ def load_config(path: str | Path) -> AppConfig:
     return app_config
 
 
+T = TypeVar("T")
+
+
+def coerce_eval_config(
+    config: EvaluationConfig | Mapping[str, Any] | None,
+) -> EvaluationConfig:
+    """Normalize evaluation configuration inputs."""
+
+    if config is None:
+        return EvaluationConfig()
+    if isinstance(config, EvaluationConfig):
+        return config
+    if isinstance(config, Mapping):
+        return EvaluationConfig(**config)
+    raise TypeError(
+        "eval_config must be an EvaluationConfig or a mapping of keyword arguments"
+    )
+
+
+def coerce_config(config: Any, cls: Type[T], label: str) -> T:
+    """Normalise arbitrary configuration inputs into dataclass instances."""
+
+    if config is None:
+        return cls()
+    if isinstance(config, cls):
+        return config
+    if isinstance(config, Mapping):
+        return cls(**config)
+    raise TypeError(
+        f"{label} must be a {cls.__name__} or a mapping of keyword arguments"
+    )
+
+
 __all__ = [
     "AppConfig",
     "DataConfig",
@@ -260,5 +293,7 @@ __all__ = [
     "ParallelismConfig",
     "PruningConfig",
     "TaxonomyEmbeddingConfig",
+    "coerce_config",
+    "coerce_eval_config",
     "load_config",
 ]

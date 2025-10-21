@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz, process
 
+from ..graph_utils import get_undirected_taxonomy
 from ..taxonomy import (
     ancestors_to_root,
     collect_descendants,
@@ -167,28 +168,6 @@ def hnsw_anchor_indices(
     if filtered:
         return filtered
     return [int(i) for i in idxs]
-
-
-def _undirected_taxonomy(G: nx.DiGraph) -> nx.Graph:
-    """Return a cached undirected view of ``G`` for reuse in community detection."""
-
-    signature = (G.number_of_nodes(), G.number_of_edges())
-    cached = G.graph.get("_undirected_taxonomy_cache")
-    if not cached or cached.get("signature") != signature:
-        undirected = nx.Graph()
-        undirected.add_nodes_from(G.nodes)
-        undirected.add_edges_from(G.edges())
-        cached = {"signature": signature, "graph": undirected}
-        G.graph["_undirected_taxonomy_cache"] = cached
-    return cached["graph"]
-
-
-def get_undirected_taxonomy(G: nx.DiGraph) -> nx.Graph:
-    """Expose the cached undirected taxonomy graph."""
-
-    return _undirected_taxonomy(G)
-
-
 def _node_community_memberships(
     G: nx.DiGraph, *, k: int
 ) -> Tuple[Dict[str, List[int]], List[Set[str]]]:
@@ -205,7 +184,7 @@ def _node_community_memberships(
     entry = cache.get(key)
 
     if not entry or entry.get("signature") != signature:
-        undirected = _undirected_taxonomy(G)
+        undirected = get_undirected_taxonomy(G)
         communities_iter = nx.algorithms.community.k_clique_communities(
             undirected, int(max(2, k))
         )
@@ -328,7 +307,7 @@ def prepare_pagerank_scores(
     if not candidate_nodes:
         return set(), {}, {}
 
-    undirected = _undirected_taxonomy(G)
+    undirected = get_undirected_taxonomy(G)
     anchor_sources = [a for a in anchors if a in undirected]
     if anchor_sources:
         distances_full = nx.multi_source_dijkstra_path_length(
@@ -660,7 +639,7 @@ def radius_limited_subtree(
     if not anchors or radius < 0 or node_budget == 0:
         return set()
 
-    undirected = _undirected_taxonomy(G)
+    undirected = get_undirected_taxonomy(G)
     anchor_nodes = [a for a in anchors if a in undirected]
     if not anchor_nodes:
         return set()
