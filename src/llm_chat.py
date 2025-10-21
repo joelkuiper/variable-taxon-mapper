@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from textwrap import dedent
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import aiohttp
 
@@ -62,8 +63,59 @@ async def llama_completion_async(
         ) as resp:
             if resp.status >= 400:
                 raise LlamaHTTPError(resp.status, await resp.text())
-            data = await resp.json(content_type=None)
-            return data.get("content", "")
+
+            try:
+                raw_body = await resp.text()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                raise RuntimeError(
+                    "Failed to read response from LLM endpoint "
+                    f"{endpoint!r}: {exc}"
+                ) from exc
+
+            if not raw_body.strip():
+                raise RuntimeError(
+                    "LLM endpoint returned an empty response body; "
+                    "cannot extract completion."
+                )
+
+            try:
+                data = json.loads(raw_body)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "LLM endpoint returned invalid JSON; "
+                    "cannot extract completion."
+                ) from exc
+
+            if "error" in data and data.get("error"):
+                raise RuntimeError(
+                    "LLM endpoint reported an error: "
+                    f"{data.get('error')}"
+                )
+
+            content = data.get("content")
+            if isinstance(content, list):
+                parts: List[str] = []
+                for chunk in content:
+                    if isinstance(chunk, dict):
+                        text = chunk.get("text")
+                        if isinstance(text, str):
+                            parts.append(text)
+                    elif isinstance(chunk, str):
+                        parts.append(chunk)
+                content = "".join(parts)
+
+            if not isinstance(content, str) or not content.strip():
+                raise RuntimeError(
+                    "LLM endpoint response is missing completion text."
+                )
+
+            return content
+    except asyncio.CancelledError:
+        raise
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        raise RuntimeError(
+            f"Error while contacting LLM endpoint {endpoint!r}: {exc}"
+        ) from exc
     finally:
         if close_session and session is not None:
             await session.close()
@@ -102,7 +154,31 @@ async def llama_completion_many(
             asyncio.create_task(_run_single(prompt, kwargs))
             for prompt, kwargs in requests
         ]
-        results = await asyncio.gather(*tasks)
+
+        pending_tasks: Set[asyncio.Task[str]] = set(tasks)
+
+        while pending_tasks:
+            done, pending_tasks = await asyncio.wait(
+                pending_tasks, return_when=asyncio.FIRST_EXCEPTION
+            )
+
+            first_exc: Optional[BaseException] = None
+            for task in done:
+                exc = task.exception()
+                if exc is not None:
+                    first_exc = exc
+                    break
+
+            if first_exc is not None:
+                for task in pending_tasks:
+                    task.cancel()
+                if pending_tasks:
+                    await asyncio.gather(
+                        *pending_tasks, return_exceptions=True
+                    )
+                raise first_exc
+
+        results = [task.result() for task in tasks]
     finally:
         if close_session and session is not None:
             await session.close()
