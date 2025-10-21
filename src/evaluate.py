@@ -60,6 +60,18 @@ def _compute_node_depths(G) -> Dict[str, Optional[int]]:
     return depth_map
 
 
+def _lookup_direct_parent(G, label: Optional[str]) -> Optional[str]:
+    """Return the immediate parent of *label* in *G*, if available."""
+
+    if G is None or not isinstance(label, str):
+        return None
+    if not G.has_node(label):
+        return None
+
+    parents = G.predecessors(label)
+    return next(parents, None)
+
+
 @dataclass
 class PredictionJob:
     item: Dict[str, Optional[str]]
@@ -248,12 +260,16 @@ class PredictionPipeline:
 
         resolved_label = pred.get("resolved_label")
         result: Dict[str, Any] = dict(job.metadata)
+
+        direct_parent = _lookup_direct_parent(self.G, resolved_label)
+
         result.update(
             {
                 "pred_label_raw": pred.get("pred_label_raw"),
                 "resolved_label": resolved_label,
                 "resolved_id": pred.get("resolved_id"),
                 "resolved_path": pred.get("resolved_path"),
+                "direct_parent": direct_parent,
                 "_error": job.metadata.get("_error"),
                 "match_strategy": pred.get("match_strategy"),
             }
@@ -745,6 +761,11 @@ def run_label_benchmark(
         r.pop("_slot", None)
 
     df = pd.DataFrame(rows)
+
+    if "resolved_label" in df.columns:
+        df["direct_parent"] = df["resolved_label"].map(
+            lambda label: _lookup_direct_parent(G, label)
+        )
     total_processed = int(len(df))
 
     metrics: Dict[str, Any] = {

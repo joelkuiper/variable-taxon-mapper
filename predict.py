@@ -11,22 +11,6 @@ from src.evaluate import ProgressHook
 from src.utils import set_global_seed
 
 
-def _parse_limit(value: str) -> int:
-    text = value.strip()
-    if not text:
-        raise ValueError("Row limit override must be an integer or 'none'.")
-    lowered = text.lower()
-    if lowered in {"none", "null"}:
-        return 0
-    try:
-        parsed = int(text)
-    except ValueError as exc:  # pragma: no cover - defensive parsing
-        raise ValueError("Row limit override must be an integer or 'none'.") from exc
-    if parsed < 0:
-        raise ValueError("Row limit override must be non-negative or 'none'.")
-    return parsed
-
-
 def _make_tqdm_progress() -> ProgressHook:
     bar: Optional[Any] = None
     last_total = 0
@@ -83,7 +67,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if "row_limit_override" in vars(args):
         try:
-            args.row_limit_override = _parse_limit(args.row_limit_override)
+            args.row_limit_override = int(args.row_limit_override)
         except ValueError as exc:
             parser.error(str(exc))
 

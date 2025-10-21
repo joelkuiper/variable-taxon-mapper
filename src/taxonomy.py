@@ -31,8 +31,8 @@ def normalize_taxonomy_label(
 
 
 def _path_id_hex8(path_parts: List[str]) -> str:
-    """Deterministic 8-hex id from the full path (joined by ' / ')."""
-    s = " / ".join(path_parts)
+    """Deterministic 8-hex id from the full path (joined by ' | ')."""
+    s = " | ".join(path_parts)
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:8]
 
 
@@ -110,7 +110,7 @@ def build_name_maps_from_graph(G: nx.DiGraph) -> Tuple[Dict, Dict]:
         path = path_to_root(G, n)
         nid = _path_id_hex8(path)
         name_to_id[n] = nid
-        name_to_path[n] = " / ".join(path)
+        name_to_path[n] = " | ".join(path)
     return name_to_id, name_to_path
 
 
@@ -177,7 +177,7 @@ def collect_descendants(G: nx.DiGraph, node: str, max_depth: int) -> Set[str]:
 
 
 def build_gloss_map(keywords_df: Optional[pd.DataFrame]) -> Dict[str, str]:
-    """Build {name -> <=25 word summary} from Keywords_summarized."""
+    """Build gloss."""
     gloss: Dict[str, str] = {}
     if keywords_df is None or not {"name", "definition_summary"}.issubset(
         keywords_df.columns
