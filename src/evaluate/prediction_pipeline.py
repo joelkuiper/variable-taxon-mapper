@@ -1,4 +1,5 @@
 """Asynchronous pipeline responsible for pruning and LLM matching."""
+
 from __future__ import annotations
 
 import asyncio
@@ -95,7 +96,9 @@ class PredictionPipeline:
             index_lock=self.index_lock,
         )
 
-        self.prune_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=self._prune_queue_size)
+        self.prune_queue: asyncio.Queue[Any] = asyncio.Queue(
+            maxsize=self._prune_queue_size
+        )
         self.prune_tasks: List[asyncio.Task[None]] = []
         self._closed = False
 

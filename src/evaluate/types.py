@@ -1,4 +1,5 @@
 """Type helpers used across the evaluation pipeline."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,5 +17,3 @@ class PredictionJob:
     slot_id: int
     metadata: Dict[str, Any]
     gold_labels: Optional[Sequence[str]] = None
-
-

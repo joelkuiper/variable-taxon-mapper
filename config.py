@@ -137,6 +137,7 @@ class LLMConfig:
     snap_to_child: bool = False
     snap_margin: float = 0.1
     snap_similarity: str = "token_sort"
+    snap_descendant_depth: int = 1
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)
@@ -208,9 +209,7 @@ def load_config(path: str | Path) -> AppConfig:
     if global_section is None:
         global_section = {}
     elif not isinstance(global_section, Mapping):
-        raise TypeError(
-            "Config 'global' section must be a mapping if provided."
-        )
+        raise TypeError("Config 'global' section must be a mapping if provided.")
 
     seed_default = AppConfig.__dataclass_fields__["seed"].default
     seed_raw = global_section.get("seed", raw.get("seed", seed_default))

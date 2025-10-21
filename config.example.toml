@@ -77,6 +77,8 @@ snap_to_child = true
 snap_margin = 0.20
 # Options: "token_sort", "token_set", "embedding"
 snap_similarity = "token_set"
+# Maximum descendant depth to consider when snapping (1 = direct children only).
+snap_descendant_depth = 2
 
 [parallelism]
 num_slots = 4

@@ -38,7 +38,7 @@ class PrunedTreeResult:
 
     markdown: str
     allowed_labels: List[str]
-    allowed_children: Dict[str, List[str]]
+    allowed_children: Dict[str, List[List[str]]]
 
 
 @dataclass(frozen=True)
@@ -366,17 +366,42 @@ class TreePruner:
         )
 
         allowed_lookup = set(allowed_ranked)
-        allowed_children: Dict[str, List[str]] = {}
+        depth_limit = max(1, int(context.max_descendant_depth))
+        allowed_children: Dict[str, List[List[str]]] = {}
         for node in allowed_lookup:
             if not self._graph.has_node(node):
                 continue
-            children = [
+
+            visited = {node}
+            frontier = [
                 child
                 for child in self._graph.successors(node)
-                if child in allowed_lookup
+                if child in allowed_lookup and child not in visited
             ]
-            if children:
-                allowed_children[node] = list(children)
+            if not frontier:
+                continue
+
+            layers: List[List[str]] = []
+            depth = 1
+            while frontier and depth <= depth_limit:
+                layers.append(list(frontier))
+                visited.update(frontier)
+                if depth == depth_limit:
+                    break
+
+                next_frontier: List[str] = []
+                for parent in frontier:
+                    if not self._graph.has_node(parent):
+                        continue
+                    for child in self._graph.successors(parent):
+                        if child in allowed_lookup and child not in visited:
+                            next_frontier.append(child)
+
+                frontier = next_frontier
+                depth += 1
+
+            if layers:
+                allowed_children[node] = layers
 
         return PrunedTreeResult(
             markdown=markdown,

@@ -1,4 +1,5 @@
 """Metrics and scoring helpers for evaluation."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional, Sequence
@@ -84,9 +85,7 @@ def _compute_hierarchical_distance(
             min_distance is not None
             and distance == min_distance
             and depth_delta is not None
-            and (
-                min_depth_delta is None or abs(depth_delta) < abs(min_depth_delta)
-            )
+            and (min_depth_delta is None or abs(depth_delta) < abs(min_depth_delta))
         ):
             prefer = True
 
@@ -177,7 +176,9 @@ def build_result_row(
 def add_parent_column(df: pd.DataFrame, graph) -> None:
     if "resolved_label" not in df.columns:
         return
-    df["direct_parent"] = df["resolved_label"].map(lambda label: lookup_direct_parent(graph, label))
+    df["direct_parent"] = df["resolved_label"].map(
+        lambda label: lookup_direct_parent(graph, label)
+    )
 
 
 def summarise_dataframe(
@@ -213,16 +214,23 @@ def summarise_dataframe(
         metrics["label_accuracy_any_match"] = float(df["correct"].mean())
 
         if "possible_correct_under_allowed" in df.columns:
-            possible_series = df["possible_correct_under_allowed"].fillna(False).astype(bool)
+            possible_series = (
+                df["possible_correct_under_allowed"].fillna(False).astype(bool)
+            )
             metrics["n_possible_correct_under_allowed"] = int(possible_series.sum())
-            metrics["possible_correct_under_allowed_rate"] = float(possible_series.mean())
+            metrics["possible_correct_under_allowed_rate"] = float(
+                possible_series.mean()
+            )
 
         if "match_type" in df.columns:
             match_counts_series = df["match_type"].value_counts(sort=False)
-            match_counts = {str(key): int(value) for key, value in match_counts_series.items()}
+            match_counts = {
+                str(key): int(value) for key, value in match_counts_series.items()
+            }
             metrics["match_type_counts"] = match_counts
             metrics["match_type_rates"] = {
-                str(key): float(value / total_processed) for key, value in match_counts.items()
+                str(key): float(value / total_processed)
+                for key, value in match_counts.items()
             }
             metrics["label_accuracy_exact_only"] = float(
                 match_counts.get("exact", 0) / total_processed
@@ -259,19 +267,29 @@ def summarise_dataframe(
                 }
 
     if "hierarchical_distance_min" in df.columns:
-        distance_series = pd.to_numeric(df["hierarchical_distance_min"], errors="coerce")
+        distance_series = pd.to_numeric(
+            df["hierarchical_distance_min"], errors="coerce"
+        )
         distance_nonnull = distance_series.dropna()
         metrics["hierarchical_distance_count"] = int(distance_nonnull.shape[0])
         if not distance_nonnull.empty:
             metrics["hierarchical_distance_min_mean"] = float(distance_nonnull.mean())
-            metrics["hierarchical_distance_min_median"] = float(distance_nonnull.median())
-            metrics["hierarchical_distance_within_1_rate"] = float((distance_nonnull <= 1).mean())
-            metrics["hierarchical_distance_within_2_rate"] = float((distance_nonnull <= 2).mean())
+            metrics["hierarchical_distance_min_median"] = float(
+                distance_nonnull.median()
+            )
+            metrics["hierarchical_distance_within_1_rate"] = float(
+                (distance_nonnull <= 1).mean()
+            )
+            metrics["hierarchical_distance_within_2_rate"] = float(
+                (distance_nonnull <= 2).mean()
+            )
 
         if "correct" in df.columns:
             incorrect_mask = df["correct"] == False  # noqa: E712
             incorrect_distances = distance_series[incorrect_mask].dropna()
-            metrics["hierarchical_distance_error_count"] = int(incorrect_distances.shape[0])
+            metrics["hierarchical_distance_error_count"] = int(
+                incorrect_distances.shape[0]
+            )
             if not incorrect_distances.empty:
                 metrics["hierarchical_distance_error_mean"] = float(
                     incorrect_distances.mean()

@@ -1,4 +1,5 @@
 """Public entry points for running the evaluation benchmark."""
+
 from __future__ import annotations
 
 import random
@@ -106,7 +107,9 @@ def _create_progress_hook(total_jobs: int) -> tuple[ProgressHook, tqdm]:
     progress_bar = tqdm(total=total_jobs, desc="Evaluating", unit="rows")
     last_done = 0
 
-    def _hook(done: int, total: int, correct_sum: Optional[int], elapsed: float) -> None:
+    def _hook(
+        done: int, total: int, correct_sum: Optional[int], elapsed: float
+    ) -> None:
         nonlocal last_done
         if total == 0:
             return
@@ -117,7 +120,9 @@ def _create_progress_hook(total_jobs: int) -> tuple[ProgressHook, tqdm]:
         if done and correct_sum is not None:
             accuracy = (correct_sum or 0) / done
             rows_per_sec = done / elapsed if elapsed > 0 else 0.0
-            progress_bar.set_postfix({"acc≈": f"{accuracy:.3f}", "rows/s": f"{rows_per_sec:.1f}"})
+            progress_bar.set_postfix(
+                {"acc≈": f"{accuracy:.3f}", "rows/s": f"{rows_per_sec:.1f}"}
+            )
         if done >= total:
             progress_bar.close()
 

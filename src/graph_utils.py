@@ -1,4 +1,5 @@
 """Shared graph helper functions used across the project."""
+
 from __future__ import annotations
 
 from typing import Dict, Optional
@@ -33,7 +34,9 @@ def compute_node_depths(graph: nx.DiGraph | None) -> Dict[str, Optional[int]]:
     return depth_map
 
 
-def lookup_direct_parent(graph: nx.DiGraph | None, label: Optional[str]) -> Optional[str]:
+def lookup_direct_parent(
+    graph: nx.DiGraph | None, label: Optional[str]
+) -> Optional[str]:
     """Return the immediate parent of ``label`` in ``graph``, if available."""
 
     if graph is None or not isinstance(label, str):

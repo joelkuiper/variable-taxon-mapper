@@ -1,4 +1,5 @@
 """Helpers to orchestrate asynchronous prediction collection."""
+
 from __future__ import annotations
 
 import asyncio
@@ -51,7 +52,9 @@ def collect_predictions(
             limit_per_host=pool_limit,
         )
 
-        async with aiohttp.ClientSession(timeout=timeout_cfg, connector=connector) as session:
+        async with aiohttp.ClientSession(
+            timeout=timeout_cfg, connector=connector
+        ) as session:
             pipeline = PredictionPipeline(
                 jobs=jobs,
                 pruning_cfg=pruning_cfg,

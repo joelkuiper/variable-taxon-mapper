@@ -168,6 +168,8 @@ def hnsw_anchor_indices(
     if filtered:
         return filtered
     return [int(i) for i in idxs]
+
+
 def _node_community_memberships(
     G: nx.DiGraph, *, k: int
 ) -> Tuple[Dict[str, List[int]], List[Set[str]]]:

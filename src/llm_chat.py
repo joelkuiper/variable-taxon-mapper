@@ -68,8 +68,7 @@ async def llama_completion_async(
                 raw_body = await resp.text()
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 raise RuntimeError(
-                    "Failed to read response from LLM endpoint "
-                    f"{endpoint!r}: {exc}"
+                    f"Failed to read response from LLM endpoint {endpoint!r}: {exc}"
                 ) from exc
 
             if not raw_body.strip():
@@ -82,14 +81,12 @@ async def llama_completion_async(
                 data = json.loads(raw_body)
             except json.JSONDecodeError as exc:
                 raise RuntimeError(
-                    "LLM endpoint returned invalid JSON; "
-                    "cannot extract completion."
+                    "LLM endpoint returned invalid JSON; cannot extract completion."
                 ) from exc
 
             if "error" in data and data.get("error"):
                 raise RuntimeError(
-                    "LLM endpoint reported an error: "
-                    f"{data.get('error')}"
+                    f"LLM endpoint reported an error: {data.get('error')}"
                 )
 
             content = data.get("content")
@@ -105,9 +102,7 @@ async def llama_completion_async(
                 content = "".join(parts)
 
             if not isinstance(content, str) or not content.strip():
-                raise RuntimeError(
-                    "LLM endpoint response is missing completion text."
-                )
+                raise RuntimeError("LLM endpoint response is missing completion text.")
 
             return content
     except asyncio.CancelledError:
@@ -173,9 +168,7 @@ async def llama_completion_many(
                 for task in pending_tasks:
                     task.cancel()
                 if pending_tasks:
-                    await asyncio.gather(
-                        *pending_tasks, return_exceptions=True
-                    )
+                    await asyncio.gather(*pending_tasks, return_exceptions=True)
                 raise first_exc
 
         results = [task.result() for task in tasks]
@@ -234,6 +227,7 @@ def make_tree_match_prompt(
         {role_prefix}system{role_suffix}
         # TASK
         • From the TREE (or SUGGESTIONS), choose **exactly one** concept that best matches the ITEM.
+        • Prefer the most specific matching child, if present; only choose the parent if no child fits.
         • The TREE is a nested (indented) Markdown list where each bullet is: `- <concept label> [<optional short description>]`.
         • Concepts may include a short description in square brackets.
           Those descriptions are guidance only; **output must be the exact concept label (no description)**.

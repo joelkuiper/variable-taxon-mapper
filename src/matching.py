@@ -147,7 +147,9 @@ class MatchRequest:
     item: Dict[str, Optional[str]]
     tree_markdown: str
     allowed_labels: Sequence[str]
-    allowed_children: Mapping[str, Sequence[str]] | None = None
+    allowed_children: Mapping[str, Sequence[Sequence[str]] | Sequence[str]] | None = (
+        None
+    )
     slot_id: int = 0
 
 
@@ -331,7 +333,8 @@ async def match_item_to_tree(
     *,
     tree_markdown: str,
     allowed_labels: Sequence[str],
-    allowed_children: Mapping[str, Sequence[str]] | None = None,
+    allowed_children: Mapping[str, Sequence[Sequence[str]] | Sequence[str]]
+    | None = None,
     name_to_id: Dict[str, str],
     name_to_path: Dict[str, str],
     tax_names: Sequence[str],

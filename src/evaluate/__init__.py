@@ -1,4 +1,5 @@
 """Evaluation entry points and type aliases."""
+
 from __future__ import annotations
 
 from .benchmark import run_label_benchmark

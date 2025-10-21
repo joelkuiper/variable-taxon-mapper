@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Mapping, Optional, Sequence
+from typing import Iterable, Mapping, Optional, Sequence
 
 from config import LLMConfig
 from .embedding import Embedder
@@ -107,11 +107,23 @@ def _snap_with_embedding(
     return parent
 
 
+def _iter_descendant_layers(
+    layers: Sequence[Sequence[str]] | Sequence[str],
+) -> Iterable[Sequence[str]]:
+    layer_list = list(layers)
+    if not layer_list:
+        return []
+    first = layer_list[0]
+    if isinstance(first, str):
+        return [layer_list]
+    return [list(layer) for layer in layer_list]
+
+
 def maybe_snap_to_child(
     label: Optional[str],
     *,
     item_text: str,
-    allowed_children: Mapping[str, Sequence[str]] | None,
+    allowed_children: Mapping[str, Sequence[Sequence[str]] | Sequence[str]] | None,
     llm_config: LLMConfig,
     embedder: Embedder,
     encode_lock: threading.Lock | None,
@@ -122,8 +134,29 @@ def maybe_snap_to_child(
     if not allowed_children:
         return label
 
-    children = allowed_children.get(label)
-    if not children:
+    descendants = allowed_children.get(label)
+    if not descendants:
+        return label
+
+    depth_limit_raw = getattr(llm_config, "snap_descendant_depth", 1)
+    try:
+        depth_limit = int(depth_limit_raw)
+    except (TypeError, ValueError):
+        depth_limit = 1
+    if depth_limit <= 0:
+        return label
+
+    flattened: list[str] = []
+    seen: set[str] = set()
+    for depth, layer in enumerate(_iter_descendant_layers(descendants), start=1):
+        if depth > depth_limit:
+            break
+        for child in layer:
+            if child and child not in seen:
+                seen.add(child)
+                flattened.append(child)
+
+    if not flattened:
         return label
 
     margin = float(getattr(llm_config, "snap_margin", 0.0))
@@ -138,7 +171,7 @@ def maybe_snap_to_child(
         lock = encode_lock or threading.Lock()
         return _snap_with_embedding(
             label,
-            children,
+            flattened,
             item_text,
             embedder=embedder,
             encode_lock=lock,
@@ -147,7 +180,7 @@ def maybe_snap_to_child(
 
     return _snap_with_string_similarity(
         label,
-        children,
+        flattened,
         item_text,
         similarity=similarity_mode,
         margin=margin,
