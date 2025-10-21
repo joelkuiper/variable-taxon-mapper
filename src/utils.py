@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import math
-import numpy as np
+import os
+import random
 from typing import Any, List, Optional
+
+import numpy as np
+import torch
 
 
 def clean_text(value: Any, empty="(empty)") -> str:
@@ -40,3 +44,27 @@ def split_keywords_comma(s: Optional[str]) -> List[str]:
     if not isinstance(s, str):
         return []
     return [t.strip() for t in s.split(",") if t.strip()]
+
+
+def set_global_seed(seed: int) -> None:
+    """Set random seeds for Python, NumPy, and PyTorch."""
+
+    os.environ.setdefault("PYTHONHASHSEED", str(int(seed)))
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    if hasattr(torch, "use_deterministic_algorithms"):
+        try:
+            torch.use_deterministic_algorithms(True)
+        except (RuntimeError, ValueError):
+            # Fallback when deterministic algorithms are unsupported for the current
+            # device/kernel combination.
+            pass
+
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False

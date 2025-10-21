@@ -8,6 +8,7 @@ from tqdm.auto import tqdm
 from config import load_config
 from main import run_pipeline
 from src.evaluate import ProgressHook
+from src.utils import set_global_seed
 
 
 def _parse_limit(value: str) -> int:
@@ -95,6 +96,8 @@ def main(argv: list[str] | None = None) -> None:
     config_path = args.config.resolve()
     base_path = config_path.parent
     config = load_config(config_path)
+
+    set_global_seed(config.seed)
 
     if "row_limit_override" in vars(args):
         config.evaluation.n = args.row_limit_override

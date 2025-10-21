@@ -171,6 +171,7 @@ class HttpConfig:
 class AppConfig:
     """Full application configuration tree."""
 
+    seed: int = 37
     data: DataConfig = field(default_factory=DataConfig)
     embedder: EmbedderConfig = field(default_factory=EmbedderConfig)
     taxonomy_embeddings: TaxonomyEmbeddingConfig = field(
@@ -203,6 +204,21 @@ def load_config(path: str | Path) -> AppConfig:
     with config_path.open("rb") as fh:
         raw: Mapping[str, Any] = tomllib.load(fh)
 
+    global_section = raw.get("global")
+    if global_section is None:
+        global_section = {}
+    elif not isinstance(global_section, Mapping):
+        raise TypeError(
+            "Config 'global' section must be a mapping if provided."
+        )
+
+    seed_default = AppConfig.__dataclass_fields__["seed"].default
+    seed_raw = global_section.get("seed", raw.get("seed", seed_default))
+    try:
+        seed_value = int(seed_raw)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("Config 'seed' must be an integer.") from exc
+
     data_section = raw.get("data")
     embedder_section = raw.get("embedder")
     taxonomy_section = raw.get("taxonomy_embeddings")
@@ -213,12 +229,17 @@ def load_config(path: str | Path) -> AppConfig:
     parallel_section = raw.get("parallelism")
     http_section = raw.get("http")
 
+    evaluation_cfg = _coerce_section(evaluation_section, EvaluationConfig)
+    if not isinstance(evaluation_section, Mapping) or "seed" not in evaluation_section:
+        evaluation_cfg.seed = seed_value
+
     app_config = AppConfig(
+        seed=seed_value,
         data=_coerce_section(data_section, DataConfig),
         embedder=_coerce_section(embedder_section, EmbedderConfig),
         taxonomy_embeddings=_coerce_section(taxonomy_section, TaxonomyEmbeddingConfig),
         hnsw=_coerce_section(hnsw_section, HNSWConfig),
-        evaluation=_coerce_section(evaluation_section, EvaluationConfig),
+        evaluation=evaluation_cfg,
         pruning=_coerce_section(pruning_section, PruningConfig),
         llm=_coerce_section(llm_section, LLMConfig),
         parallelism=_coerce_section(parallel_section, ParallelismConfig),

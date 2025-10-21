@@ -19,6 +19,7 @@ from src.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
+from src.utils import set_global_seed
 
 
 def _prepare_keywords(
@@ -42,6 +43,8 @@ def run_pipeline(
     evaluate: bool = True,
     progress_hook: ProgressHook | None = None,
 ) -> Tuple[pd.DataFrame, dict[str, object]]:
+    set_global_seed(config.seed)
+
     variables_default, keywords_path = config.data.to_paths(base_path)
     variables_path = variables_csv or variables_default
 
@@ -167,6 +170,7 @@ def main(argv: list[str] | None = None) -> None:
     config_path = args.config.resolve()
     base_path = config_path.parent
     config = load_config(config_path)
+    set_global_seed(config.seed)
     variables_path, _ = config.data.to_paths(base_path)
     df, metrics = run_pipeline(
         config,

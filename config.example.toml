@@ -1,6 +1,9 @@
+[global]
+seed = 37
+
 [data]
-variables_csv = "data/Variables.csv"
-# variables_csv = "data/Variables_with_keywords_and_desc.csv"
+# variables_csv = "data/Variables.csv"
+variables_csv = "data/Variables_with_keywords_and_desc.csv"
 keywords_csv = "data/Keywords_summarized_new.csv"
 
 [embedder]
