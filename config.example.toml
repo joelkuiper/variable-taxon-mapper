@@ -74,11 +74,11 @@ n_keep = -1
 embedding_remap_threshold = 0.25
 # Enable snapping ancestor predictions down to a better-matching child label.
 snap_to_child = true
-snap_margin = 0.20
+snap_margin = 0.2
 # Options: "token_sort", "token_set", "embedding"
 snap_similarity = "token_set"
 # Maximum descendant depth to consider when snapping (1 = direct children only).
-snap_descendant_depth = 2
+snap_descendant_depth = 3
 
 [parallelism]
 num_slots = 4
