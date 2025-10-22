@@ -58,37 +58,36 @@ def format_metrics(
 ) -> str:
     sections: list[str] = []
 
-    if metrics:
-        sections.extend(["## Evaluation Metrics", ""])
-        consumed: set[str] = set()
+    sections.extend(["## Evaluation Metrics", ""])
+    consumed: set[str] = set()
 
-        summary_table = _build_summary_section(metrics, consumed)
-        if summary_table:
-            sections.extend(["### Summary", summary_table, ""])
+    summary_table = _build_summary_section(metrics, consumed)
+    if summary_table:
+        sections.extend(["### Summary", summary_table, ""])
 
-        accuracy_table = _build_accuracy_section(metrics, consumed)
-        if accuracy_table:
-            sections.extend(["### Accuracy", accuracy_table, ""])
+    accuracy_table = _build_accuracy_section(metrics, consumed)
+    if accuracy_table:
+        sections.extend(["### Accuracy", accuracy_table, ""])
 
-        match_table = _build_match_type_section(metrics, consumed)
-        if match_table:
-            sections.extend(["### Match types", match_table, ""])
+    match_table = _build_match_type_section(metrics, consumed)
+    if match_table:
+        sections.extend(["### Match types", match_table, ""])
 
-        hierarchy_table = _build_hierarchical_section(metrics, consumed)
-        if hierarchy_table:
-            sections.extend(["### Hierarchical distance metrics", hierarchy_table, ""])
+    strategy_table = _build_strategy_section(metrics, consumed)
+    if strategy_table:
+        sections.extend(["### Match strategy performance", strategy_table, ""])
 
-        strategy_table = _build_strategy_section(metrics, consumed)
-        if strategy_table:
-            sections.extend(["### Match strategy performance", strategy_table, ""])
-
-        additional_table = _build_additional_metrics_section(metrics, consumed)
-        if additional_table:
-            sections.extend(["### Additional metrics", additional_table, ""])
+    hierarchy_table = _build_hierarchical_section(metrics, consumed)
+    if hierarchy_table:
+        sections.extend(["### Hierarchical distance metrics", hierarchy_table, ""])
 
     dataset_table = _build_dataset_section(df)
     if dataset_table:
         sections.extend(["### Performance by dataset", dataset_table, ""])
+
+    # additional_table = _build_additional_metrics_section(metrics, consumed)
+    # if additional_table:
+    #     sections.extend(["### Additional metrics", additional_table, ""])
 
     top_sections = _build_top_error_sections(df)
     sections.extend(top_sections)
@@ -115,11 +114,14 @@ def _build_summary_section(metrics: dict[str, Any], consumed: set[str]) -> str:
     add("Eligible rows", "n_eligible", "int")
     add("Excluded (not in taxonomy)", "n_excluded_not_in_taxonomy", "int")
     add("Evaluated rows", "n_evaluated", "int")
-    add("Errors", "n_errors", "int")
-    add("Predictions correct", "n_correct", "int")
+    # add("Errors", "n_errors", "int")
     add("Possible correct under allowed", "n_possible_correct_under_allowed", "int")
-    add("Unmatched predictions", "n_unmatched", "int")
-
+    add(
+        "Possible correct under allowed rate",
+        "possible_correct_under_allowed_rate",
+        "pct",
+    )
+    add("Predictions correct", "n_correct", "int")
     n_evaluated = metrics.get("n_evaluated")
     n_correct = metrics.get("n_correct")
     if n_evaluated is not None and n_correct is not None:
@@ -151,7 +153,6 @@ def _build_accuracy_section(metrics: dict[str, Any], consumed: set[str]) -> str:
     add("Accuracy (exact only)", "label_accuracy_exact_only")
     add("Accuracy (ancestor only)", "label_accuracy_ancestor_only")
     add("Accuracy (descendant only)", "label_accuracy_descendant_only")
-    add("Possible correct under allowed rate", "possible_correct_under_allowed_rate")
 
     if not rows:
         return ""
@@ -186,62 +187,42 @@ def _build_match_type_section(metrics: dict[str, Any], consumed: set[str]) -> st
 
 
 def _build_hierarchical_section(metrics: dict[str, Any], consumed: set[str]) -> str:
-    fields: list[tuple[str, str, str]] = [
-        ("hierarchical_distance_count", "hierarchical_distance_count", "int"),
-        (
-            "hierarchical_distance_error_count",
-            "hierarchical_distance_error_count",
+    # Human-readable labels for hierarchical metrics
+    _HUMAN_LABELS: dict[str, tuple[str, str]] = {
+        "hierarchical_distance_count": ("Rows with computable distances", "int"),
+        "hierarchical_distance_error_count": (
+            "Errors with computable distances",
             "int",
         ),
-        (
-            "hierarchical_distance_error_mean",
-            "hierarchical_distance_error_mean",
+        "hierarchical_distance_error_mean": ("Mean error distance (edges)", "float"),
+        "hierarchical_distance_error_median": (
+            "Median error distance (edges)",
             "float",
         ),
-        (
-            "hierarchical_distance_error_median",
-            "hierarchical_distance_error_median",
+        "hierarchical_distance_error_within_1_rate": ("Error distance ≤ 1 step", "pct"),
+        "hierarchical_distance_error_within_2_rate": (
+            "Error distance ≤ 2 steps",
+            "pct",
+        ),
+        "hierarchical_distance_min_mean": (
+            "Mean minimal distance to any gold",
             "float",
         ),
-        (
-            "hierarchical_distance_error_within_1_rate",
-            "hierarchical_distance_error_within_1_rate",
-            "pct",
-        ),
-        (
-            "hierarchical_distance_error_within_2_rate",
-            "hierarchical_distance_error_within_2_rate",
-            "pct",
-        ),
-        (
-            "hierarchical_distance_min_mean",
-            "hierarchical_distance_min_mean",
+        "hierarchical_distance_min_median": (
+            "Median minimal distance to any gold",
             "float",
         ),
-        (
-            "hierarchical_distance_min_median",
-            "hierarchical_distance_min_median",
-            "float",
-        ),
-        (
-            "hierarchical_distance_within_1_rate",
-            "hierarchical_distance_within_1_rate",
-            "pct",
-        ),
-        (
-            "hierarchical_distance_within_2_rate",
-            "hierarchical_distance_within_2_rate",
-            "pct",
-        ),
-    ]
+        "hierarchical_distance_within_1_rate": ("Minimal distance ≤ 1 step", "pct"),
+        "hierarchical_distance_within_2_rate": ("Minimal distance ≤ 2 steps", "pct"),
+    }
 
     rows: list[dict[str, str]] = []
-    for label, key, kind in fields:
+    for key, (human_label, kind) in _HUMAN_LABELS.items():
         if key not in metrics:
             continue
         value = metrics[key]
         formatter = {"int": _as_int, "pct": _as_percent, "float": _as_float}[kind]
-        rows.append({"Metric": label, "Value": formatter(value)})
+        rows.append({"Metric": human_label, "Value": formatter(value)})
         consumed.add(key)
 
     if not rows:
@@ -298,7 +279,9 @@ def _build_strategy_section(metrics: dict[str, Any], consumed: set[str]) -> str:
     return _markdown(strategy_df)
 
 
-def _build_additional_metrics_section(metrics: dict[str, Any], consumed: set[str]) -> str:
+def _build_additional_metrics_section(
+    metrics: dict[str, Any], consumed: set[str]
+) -> str:
     remaining = {key: value for key, value in metrics.items() if key not in consumed}
     other_raw = remaining.pop("other_metrics", None)
     if isinstance(other_raw, dict):
@@ -374,9 +357,7 @@ def _build_dataset_section(df: pd.DataFrame | None) -> str:
             if not possible_series.empty:
                 possible_count = int(possible_series.astype(bool).sum())
                 row["Possible"] = possible_count
-                row["Possible rate"] = (
-                    possible_count / evaluated if evaluated else None
-                )
+                row["Possible rate"] = possible_count / evaluated if evaluated else None
 
         if has_match_type and match_type_values:
             type_counts = (
@@ -431,7 +412,10 @@ def _build_top_error_sections(df: pd.DataFrame | None) -> list[str]:
 
     if "resolved_label" in incorrect_df.columns:
         top_wrong = (
-            incorrect_df["resolved_label"].fillna("(missing)").astype(str).value_counts()
+            incorrect_df["resolved_label"]
+            .fillna("(missing)")
+            .astype(str)
+            .value_counts()
         )
         if not top_wrong.empty:
             top_wrong_df = (
@@ -439,7 +423,9 @@ def _build_top_error_sections(df: pd.DataFrame | None) -> list[str]:
             )
             top_wrong_table = _markdown(top_wrong_df)
             if top_wrong_table:
-                sections.extend(["### Top wrong predicted keywords", top_wrong_table, ""])
+                sections.extend(
+                    ["### Top wrong predicted keywords", top_wrong_table, ""]
+                )
 
     if "gold_labels" in incorrect_df.columns:
         gold_series = incorrect_df["gold_labels"].dropna()
