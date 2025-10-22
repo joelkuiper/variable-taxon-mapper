@@ -20,7 +20,7 @@ from src.taxonomy import (
     build_taxonomy_graph,
 )
 from src.utils import set_global_seed
-from reporting import report_results
+from src.reporting import report_results
 
 
 def _prepare_keywords(
