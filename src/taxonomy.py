@@ -114,36 +114,6 @@ def build_name_maps_from_graph(G: nx.DiGraph) -> Tuple[Dict, Dict]:
     return name_to_id, name_to_path
 
 
-def tree_to_markdown(
-    G: nx.DiGraph,
-    df: pd.DataFrame,
-    name_col: str = "name",
-    order_col: str = "order",
-    surrogate_root_label: Optional[str] = None,
-) -> str:
-    """Nested markdown list with labels only (no ids)."""
-    order_map = df.groupby(name_col)[order_col].min().to_dict()
-    sort_key = sort_key_factory(order_map)
-
-    lines: List[str] = []
-
-    def _walk(node: str, depth: int):
-        lines.append("  " * depth + f"- {node}")
-        for c in sorted(G.successors(node), key=sort_key):
-            _walk(c, depth + 1)
-
-    surrogate_label = (surrogate_root_label or "").strip()
-    depth_offset = 0
-    if surrogate_label:
-        lines.append(f"- {surrogate_label}")
-        depth_offset = 1
-
-    for r in roots_in_order(G, sort_key):
-        _walk(r, depth_offset)
-
-    return "\n".join(lines)
-
-
 def taxonomy_node_texts(G: nx.DiGraph) -> List[str]:
     nodes = list(G.nodes)
     return sorted(nodes, key=lambda s: s.lower())
