@@ -64,6 +64,13 @@ node_budget = 200 # hard cap on nodes retained in the final allowed set
 
 [llm]
 endpoint = "http://127.0.0.1:8080/completions"
+# provider = "openai"
+# model = "gpt-4o-mini"
+# api_base = "https://api.openai.com/v1"
+# api_key_env = "OPENAI_API_KEY"
+# response_format = "json_object"
+# organization = "my-org"
+# project = "taxonomy-mapper"
 n_predict = 32
 temperature = 0.0
 top_k = 20

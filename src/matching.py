@@ -19,19 +19,27 @@ from .llm_chat import (
     GRAMMAR_RESPONSE,
     llama_completion_many,
     make_tree_match_prompt,
+    openai_chat_completion_many,
 )
 
 _PROMPT_DEBUG_SHOWN = False
 
 
-def _print_prompt_once(prompt: str) -> None:
+def _print_prompt_once(prompt: Any) -> None:
     """Print the first LLM prompt for debugging."""
 
     global _PROMPT_DEBUG_SHOWN
     if not _PROMPT_DEBUG_SHOWN:
         _PROMPT_DEBUG_SHOWN = True
         print("\n====== LLM PROMPT (one-time) ======\n")
-        print(prompt)
+        if isinstance(prompt, str):
+            to_print = prompt
+        else:
+            try:
+                to_print = json.dumps(prompt, indent=2, ensure_ascii=False)
+            except (TypeError, ValueError):
+                to_print = str(prompt)
+        print(to_print)
         print("\n====== END PROMPT ======\n")
         sys.stdout.flush()
 
@@ -186,20 +194,66 @@ async def match_items_to_tree(
     if not requests:
         return []
 
-    prompt_payloads: List[Tuple[str, Dict[str, Any]]] = []
-    for req in requests:
-        prompt = make_tree_match_prompt(req.tree_markdown, req.item)
-        _print_prompt_once(prompt)
-        prompt_payloads.append(
-            (prompt, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id))
-        )
+    provider = getattr(llm_config, "provider", "llamacpp").lower()
 
-    raw_responses = await llama_completion_many(
-        prompt_payloads,
-        llm_config.endpoint,
-        timeout=max(float(llm_config.n_predict), 64.0),
-        session=session,
-    )
+    if provider == "openai":
+        prompt_payloads: List[Dict[str, Any]] = []
+        for req in requests:
+            prompt = make_tree_match_prompt(
+                req.tree_markdown,
+                req.item,
+                style="openai",
+            )
+            _print_prompt_once(prompt)
+            payload: Dict[str, Any] = {
+                "messages": prompt,
+                "temperature": llm_config.temperature,
+                "top_p": llm_config.top_p,
+                "max_tokens": max(int(llm_config.n_predict), 64),
+            }
+            response_format = getattr(llm_config, "response_format", None)
+            if response_format:
+                payload["response_format"] = {"type": response_format}
+            prompt_payloads.append(payload)
+
+        model_name = getattr(llm_config, "model", None)
+        if not model_name:
+            raise RuntimeError(
+                "llm.model must be set when using provider='openai'."
+            )
+
+        for payload in prompt_payloads:
+            payload["model"] = model_name
+
+        raw_responses = await openai_chat_completion_many(
+            prompt_payloads,
+            api_key=getattr(llm_config, "api_key", None),
+            api_key_env=getattr(llm_config, "api_key_env", None),
+            api_base=getattr(llm_config, "api_base", None),
+            organization=getattr(llm_config, "organization", None),
+            project=getattr(llm_config, "project", None),
+            timeout=max(float(llm_config.n_predict), 64.0),
+            session=session,
+        )
+    elif provider in {"llamacpp", "llama_cpp", "llama"}:
+        prompt_payloads: List[Tuple[str, Dict[str, Any]]] = []
+        for req in requests:
+            prompt = make_tree_match_prompt(req.tree_markdown, req.item)
+            _print_prompt_once(prompt)
+            prompt_payloads.append(
+                (prompt, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id))
+            )
+
+        raw_responses = await llama_completion_many(
+            prompt_payloads,
+            llm_config.endpoint,
+            timeout=max(float(llm_config.n_predict), 64.0),
+            session=session,
+        )
+    else:
+        raise RuntimeError(
+            f"Unsupported LLM provider {provider!r}; expected 'llamacpp' or 'openai'."
+        )
 
     encode_guard = encode_lock or threading.Lock()
     embedding_remap_threshold = getattr(llm_config, "embedding_remap_threshold", 0.45)

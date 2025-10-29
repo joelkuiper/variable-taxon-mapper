@@ -124,7 +124,15 @@ class PruningConfig:
 class LLMConfig:
     """Settings for LLM matching requests."""
 
+    provider: str = "llamacpp"
     endpoint: str = "http://127.0.0.1:8080/completions"
+    model: str = "gpt-4o-mini"
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
+    api_key_env: Optional[str] = "OPENAI_API_KEY"
+    organization: Optional[str] = None
+    project: Optional[str] = None
+    response_format: Optional[str] = "json_object"
     n_predict: int = 512
     temperature: float = 0.0
     top_k: int = 20

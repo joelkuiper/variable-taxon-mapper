@@ -41,6 +41,32 @@ llama-server -hf  unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
 # Optionally pass --ctx-size 50000 -ngl 999 --parallel 4 on CUDA devices, --flash-attn on might help
 ```
 
+### Using OpenAI's API instead of a local llama.cpp server
+
+The matcher can also send prompts to OpenAI's Chat Completions API. To enable this mode:
+
+1. Set the following fields under `[llm]` in your configuration TOML:
+
+    ```toml
+    provider = "openai"
+    model = "gpt-4o-mini"
+    # Optionally override the default API base URL or response format:
+    # api_base = "https://api.openai.com/v1"
+    # response_format = "json_object"
+    ```
+
+2. Supply API credentials either directly in the config (`llm.api_key = "..."`) or via an environment variable. By default the
+   code looks for `OPENAI_API_KEY`, but you can change this with `llm.api_key_env`.
+
+3. (Optional) Configure `llm.organization` or `llm.project` if your OpenAI account requires those headers.
+
+4. (Optional) If you plan to embed the matcher inside your own Python application, see the
+   [OpenAI integration walkthrough](./doc/openai_integration.md) for a minimal example covering configuration loading,
+   request construction, and response parsing.
+
+When `provider = "openai"`, the pipeline will automatically adjust the prompt format to use chat messages and will post requests to
+`{api_base}/chat/completions` instead of the local `/completions` endpoint. The OpenAI path uses a chat-specific system prompt tailored for GPT models, while the original llama.cpp prompt remains unchanged for local inference.
+
 ``` shell
 # Configuration and parameters are set via TOML
 
