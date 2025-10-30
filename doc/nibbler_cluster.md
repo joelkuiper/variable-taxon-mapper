@@ -20,7 +20,6 @@ Most steps are portable to other SLURM-based clusters with similar restrictions 
 * Copy your `Variables.csv` and `Keywords.csv` data into
   `~/tmp02/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
 
----
 
 ## Setting up `uv` and cache directories
 
@@ -95,7 +94,6 @@ This compilation can take several hours.
 Run it inside a `screen` or `tmux` session so it survives disconnections.
 Do not change the number of threads (e.g. `-j 8`)! It is detrimental to other users to pin the CPU on high load, and the process will be killed.
 
----
 
 ## Downloading a model
 
@@ -105,7 +103,6 @@ wget https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwe
      -O ~/tmp02/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf
 ```
 
----
 
 ## Running interactively
 
@@ -125,7 +122,6 @@ Once inside the node:
    ./run_multi_llama_with_lb.sh
    ```
 
----
 
 ## What the script does
 
