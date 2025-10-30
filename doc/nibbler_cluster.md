@@ -1,6 +1,6 @@
 # Running on the Nibbler HPC Cluster
 
-These notes describe how to run **`variable-taxon-mapper`** and its accompanying multi-GPU llama.cpp backend on the [Nibbler HPC cluster](https://docs.gcc.rug.nl/nibbler/cluster/) using the provided  [run_pipeline_lb.sh](../run_pipeline_lb.sh) script (lb for load balancer).
+These notes describe how to run **`variable-taxon-mapper`** and its accompanying multi-GPU `llama.cpp` backend on the [Nibbler HPC cluster](https://docs.gcc.rug.nl/nibbler/cluster/) using the provided [run_pipeline_lb.sh](../run_pipeline_lb.sh) script (lb for load balancer).
 Most steps are portable to other SLURM-based clusters with similar configuration and restrictions (no root access, shared home quotas, temporary storage under `/groups/.../tmp02`).
 
 ---
@@ -13,24 +13,53 @@ Most steps are portable to other SLURM-based clusters with similar configuration
 
   ```bash
   mkdir -p /groups/<your group>/tmp02/users/<your username>
-  ln -s /groups/<your group>/tmp02/users/<your username> ~/tmp02
-  mkdir -p ~/tmp02/Repositories
+````
+
+* Define an environment variable that points to your personal temporary workspace, add this to your `~/.bashrc`:
+
+  ```bash
+  export WORKDIR=/groups/<your group>/tmp02/users/<your username>
+  # or some other path where the code, llama.cpp, and the models will live
   ```
-* Clone this repository
 
-```bash
-git clone https://github.com/joelkuiper/variable-taxon-mapper.git ~/tmp02/Repositories/variable-taxon-mapper
-```
+  Then reload it:
 
-* Copy your `Variables.csv` and `Keywords.csv` data into `~/tmp02/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
-For example, if your data lives in `~/Repositories/variable-taxon-mapper/data/`:
+  ```bash
+  source ~/.bashrc
+  ```
 
-```bash
-rsync -avhP ~/Repositories/variable-taxon-mapper/data/ \
-    tunnel+nibbler:~/tmp02/Repositories/variable-taxon-mapper/data/
-```
+  You can verify it works with:
 
-> Note the trailing slash / after data/: it copies contents into the target folder, not the directory itself!
+  ```bash
+  echo "$WORKDIR"
+  ```
+
+All paths below use the `$WORKDIR`.
+
+* Create the Repositories directory:
+
+  ```bash
+  mkdir -p "$WORKDIR/Repositories"
+  ```
+
+* Clone this repository:
+
+  ```bash
+  git clone https://github.com/joelkuiper/variable-taxon-mapper.git \
+      "$WORKDIR/Repositories/variable-taxon-mapper"
+  ```
+
+* Copy your `Variables.csv` and `Keywords.csv` data into `$WORKDIR/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
+  For example, if your data lives locally in `~/Repositories/variable-taxon-mapper/data/`:
+
+  ```bash
+  rsync -avhP ~/Repositories/variable-taxon-mapper/data/ \
+      tunnel+nibbler:"$WORKDIR/Repositories/variable-taxon-mapper/data/"
+  ```
+
+  > Note the trailing slash `/` after `data/`: it copies contents into the target folder, not the directory itself!
+
+---
 
 ## Setting up `uv` and cache directories
 
@@ -40,12 +69,13 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) with:
 wget -qO- https://astral.sh/uv/install.sh | sh
 ```
 
-Since `$HOME` has limited quota, redirect heavy caches to your `tmp02` directory.
-Append the following to your `~/.bashrc`:
+Since `$HOME` has limited quota, redirect heavy caches to `$WORKDIR`:
+
+Append to your `~/.bashrc`:
 
 ```bash
-export UV_CACHE_DIR="$HOME/tmp02/.cache/uv"
-export HF_HOME="$HOME/tmp02/.cache/huggingface"
+export UV_CACHE_DIR="$WORKDIR/.cache/uv"
+export HF_HOME="$WORKDIR/.cache/huggingface"
 export HF_HUB_DISABLE_XET=True
 export TERM=xterm-256color
 ```
@@ -59,29 +89,31 @@ Notes:
 Then install the Python dependencies with:
 
 ```bash
-cd ~/tmp02/Repositories/variable-taxon-mapper
+cd "$WORKDIR/Repositories/variable-taxon-mapper"
 uv sync
 ```
 
 This will:
 
-* Create the virtual environment at `~/tmp02/Repositories/variable-taxon-mapper/.venv`
+* Create the virtual environment at `$WORKDIR/Repositories/variable-taxon-mapper/.venv`
 * Install all dependencies listed in `pyproject.toml`
 * Prepare the environment used by [run_pipeline_lb.sh](../run_pipeline_lb.sh)
 
-You can verify that the venv works with:
+Verify that the venv works:
 
 ```bash
 source .venv/bin/activate
-python --version
+python --version # should be Python ≥3.11
 ```
+
+---
 
 ## Compiling `llama.cpp` (with CUDA)
 
 Although pre-built binaries exist, the safest option on Nibbler is to **compile from source**.
 
 ```bash
-cd ~/tmp02/Repositories
+cd "$WORKDIR/Repositories"
 git clone --depth 1 https://github.com/ggml-org/llama.cpp
 cd llama.cpp
 
@@ -105,22 +137,33 @@ cmake --build build -j 2 --config Release
 
 This compilation can take several hours.
 Run it inside a `screen` or `tmux` session so it survives disconnections.
-Use `-j 2` to avoid hogging CPUs on the shared jumphost. Jobs with high parallelism may be killed by admins. Alternatively, and ideally, compile on a compute node and set a higher `-j <num cores>`; the commands are the same and will finish faster, and you don't need a GPU for this. So `srun --pty --time=00:30:00 --cpus-per-task=32 --mem=32G bash -l` and run these commands from there (with `-j 32`) is strongly advisable (but you may have to wait in the queue).
+Use `-j 2` to avoid hogging CPUs on the shared jumphost.
+Alternatively, compile on a compute node (faster, safer):
 
+```bash
+srun --pty --time=00:30:00 --cpus-per-task=32 --mem=32G bash -l
+# once inside the node:
+cmake --build build -j 32 --config Release
+```
+
+---
 
 ## Downloading a model
 
 ```bash
-mkdir -p ~/tmp02/Models/GGUF
+mkdir -p "$WORKDIR/Models/GGUF"
 wget https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q8_0.gguf \
-     -O ~/tmp02/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf
+     -O "$WORKDIR/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf"
 ```
+
 > **Note:** You can pass a custom model at runtime:
-> `MODEL=~/tmp02/Models/GGUF/SomeOtherModel.gguf ./run_pipeline_lb.sh`
+> `MODEL=$WORKDIR/Models/GGUF/SomeOtherModel.gguf ./run_pipeline_lb.sh`
+
+---
 
 ## Running interactively
 
-Reserve an interactive GPU node (example: 2×A40 GPUs, 16 CPUs, 32 GB RAM for 4 hours):
+Reserve an interactive GPU node (example: 2×A40 GPUs, 16 CPUs, 32 GB RAM for 4 h):
 
 ```bash
 srun --pty --gres=gpu:a40:2 --time=04:00:00 --cpus-per-task=16 --mem=32G bash -l
@@ -128,14 +171,15 @@ srun --pty --gres=gpu:a40:2 --time=04:00:00 --cpus-per-task=16 --mem=32G bash -l
 
 Once inside the node:
 
-1. Check that the `config.example.toml` points to your correct CSV files and adjust parallelism tunables as needed.
-2. Launch the pipeline with the bundled script:
+1. Check that `config.example.toml` points to your correct CSV files and adjust parallelism tunables as needed.
+2. Launch the pipeline:
 
    ```bash
-   cd ~/tmp02/Repositories/variable-taxon-mapper
+   cd "$WORKDIR/Repositories/variable-taxon-mapper"
    LB_PORT=8080 ./run_pipeline_lb.sh
    ```
 
+---
 
 ## What the script does
 
@@ -148,54 +192,56 @@ Once inside the node:
 
 ### 2. Launch one `llama-server` per GPU
 
-* Each GPU ID in `$GPU_IDS` spawns its own `llama.cpp` instance using
-  `CUDA_VISIBLE_DEVICES=<id>`.
+* Each GPU ID in `$GPU_IDS` spawns its own `llama.cpp` instance using `CUDA_VISIBLE_DEVICES=<id>`.
 * Default ports: starting at `$BASE_PORT` (e.g. 18080, 18081, …).
-* Logs are written to `~/tmp02/logs/llama-g<gpu>-p<port>.log
+* Logs written to `$WORKDIR/logs/llama-g<gpu>-p<port>.log`
 
 ### 3. Health checks
 
-* The script polls `/health`, `/healthz`, or `/v1/models` for up to 180 s.
-* If any backend exits prematurely, it prints the tail of the log and aborts.
+* Polls `/health`, `/healthz`, or `/v1/models` for up to 180 s.
+* If any backend exits prematurely, prints the tail of the log and aborts.
 
 ### 4. Lightweight load balancer
 
 * Generates an inline **`tcp_lb_rr.py`** in the logs directory.
 * The balancer is a ~100-line pure-Python round-robin proxy (asyncio-based).
 * No dependencies, no root access, supports HTTP/SSE streaming transparently.
-* Logs are written to `~/tmp02/logs/lb-<LB_PORT>.log
+* Logs written to `$WORKDIR/logs/lb-<LB_PORT>.log`
 * Listens on `$LB_PORT` and forwards to all healthy backends.
 
 ### 5. Run `variable-taxon-mapper`
 
-* The venv Python executes:
+* Executes:
 
   ```bash
   python -u -m main config.example.toml
   ```
-* Output is streamed live to the terminal and duplicated to: `~/tmp02/logs/vtm-<timestamp>.log`.
 
-### 6. Configuration (env vars)
+* Output is streamed live to the terminal and duplicated to `$WORKDIR/logs/vtm-<timestamp>.log`.
 
-The launcher is configured entirely via environment variables (no file edits needed):
+### 6. Configuration (environment variables)
 
-- `GPU_IDS` — space-separated CUDA IDs (default `"0 1"`).
-- `BASE_PORT` — first backend port (default `18080`).
-- `LB_PORT` — load balancer port (default `18000`).
-- `CTX` — llama.cpp context size `-c` (default `120000`).
-- `SLOTS` — llama.cpp parallel slots `-np` per server (default `6`).
-- `LOG_DIR` — logs output dir (default `~/tmp02/logs`).
-- `LLAMA_BIN` — path to `llama-server` (default `~/tmp02/Repositories/llama.cpp/build/bin/llama-server`).
-- `MODEL` — path to your GGUF (default `~/tmp02/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf`).
-- `VTM_DIR` — repo dir (default `~/tmp02/Repositories/variable-taxon-mapper`).
-- `VTM_CFG` — config file passed to `python -m main` (default `config.example.toml`).
-- `PORT` — exported to your app (defaults to `LB_PORT`).
+| Variable    | Description                               | Default                                                  |
+| ----------- | ----------------------------------------- | -------------------------------------------------------- |
+| `GPU_IDS`   | space-separated CUDA IDs                  | `"0 1"`                                                  |
+| `BASE_PORT` | first backend port                        | `18080`                                                  |
+| `LB_PORT`   | load balancer port                        | `18000`                                                  |
+| `CTX`       | llama.cpp context size `-c`               | `120000`                                                 |
+| `SLOTS`     | llama.cpp parallel slots `-np` per server | `6`                                                      |
+| `LOG_DIR`   | logs output dir                           | `$WORKDIR/logs`                                          |
+| `LLAMA_BIN` | path to `llama-server`                    | `$WORKDIR/Repositories/llama.cpp/build/bin/llama-server` |
+| `MODEL`     | path to GGUF model                        | `$WORKDIR/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf`  |
+| `VTM_DIR`   | repo dir                                  | `$WORKDIR/Repositories/variable-taxon-mapper`            |
+| `VTM_CFG`   | config file passed to Python              | `config.example.toml`                                    |
+| `PORT`      | exported app port                         | `$LB_PORT`                                               |
 
-For example, use a custom model path and single GPU 0:
+Example (custom model, single GPU):
 
 ```bash
-MODEL=~/tmp02/Models/GGUF/MyModel.gguf GPU_IDS="0" ./run_pipeline_lb.sh
+MODEL=$WORKDIR/Models/GGUF/MyModel.gguf GPU_IDS="0" ./run_pipeline_lb.sh
 ```
+
+---
 
 ## Submitting as a SLURM batch job
 
@@ -212,13 +258,18 @@ To run non-interactively, wrap the script in a simple `sbatch` file:
 LB_PORT=8080 ./run_pipeline_lb.sh
 ```
 
-Submit it with:
+Submit with:
 
 ```bash
-BASE="$(readlink -f "$HOME/tmp02" 2>/dev/null || echo)" # absolute path
+BASE="${WORKDIR:-$HOME/tmp02}"
+mkdir -p "$BASE/logs"
+
 sbatch --chdir="$BASE/Repositories/variable-taxon-mapper" \
        --output="$BASE/logs/%x_%j.out" \
-       --error="$BASE/logs/%x_%j.err"
+       --error="$BASE/logs/%x_%j.err" \
+       vtm.sbatch
 ```
 
-Logs from llama.cpp, the load balancer, and the main Python process all land under `~/tmp02/logs/`, while SLURM captures a combined stdout/stderr in its usual `vtm-<jobid>.out` file.
+Logs from `llama.cpp`, the load balancer, and the main Python process all land under `$WORKDIR/logs/`, while SLURM captures combined stdout/stderr in its usual `vtm-<jobid>.out` file.
+
+```
