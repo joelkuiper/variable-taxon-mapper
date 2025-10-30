@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import random
+from pathlib import Path
 from typing import Any, List, Optional
 
 import numpy as np
@@ -68,3 +69,12 @@ def set_global_seed(seed: int) -> None:
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+
+def ensure_file_exists(path: Path, description: Optional[str] = None) -> Path:
+    """Ensure ``path`` exists, raising a helpful :class:`FileNotFoundError`."""
+
+    if not path.exists():
+        desc = description or "file"
+        raise FileNotFoundError(f"Required {desc} not found at {path}")
+    return path

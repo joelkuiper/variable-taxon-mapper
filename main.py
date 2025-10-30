@@ -19,7 +19,7 @@ from src.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from src.utils import set_global_seed
+from src.utils import ensure_file_exists, set_global_seed
 from src.reporting import report_results
 
 
@@ -46,8 +46,22 @@ def run_pipeline(
 ) -> Tuple[pd.DataFrame, dict[str, object]]:
     set_global_seed(config.seed)
 
-    variables_default, keywords_path = config.data.to_paths(base_path)
-    variables_path = variables_csv or variables_default
+    variables_default, keywords_default = config.data.to_paths(base_path)
+
+    def _resolve_input(default: Path, override: Path | None) -> Path:
+        if override is None:
+            return default.resolve()
+        if override.is_absolute():
+            return override.resolve()
+        if base_path is not None:
+            return (base_path / override).resolve()
+        return override.resolve()
+
+    variables_path = _resolve_input(variables_default, variables_csv)
+    keywords_path = _resolve_input(keywords_default, None)
+
+    ensure_file_exists(variables_path, "variables CSV")
+    ensure_file_exists(keywords_path, "keywords CSV")
 
     parallel_cfg = config.parallelism
     print(

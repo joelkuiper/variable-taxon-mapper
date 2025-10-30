@@ -31,6 +31,7 @@ from src.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
+from src.utils import ensure_file_exists
 
 
 # ======================================================================================
@@ -266,8 +267,11 @@ def prepare_context(
     row_limit: Optional[int],
 ) -> EvaluationContext:
     variables_default, keywords_default = config.data.to_paths(base_path)
-    variables_path = _resolve_path(base_path, variables, variables_default)
-    keywords_path = _resolve_path(base_path, keywords, keywords_default)
+    variables_path = _resolve_path(base_path, variables, variables_default).resolve()
+    keywords_path = _resolve_path(base_path, keywords, keywords_default).resolve()
+
+    ensure_file_exists(variables_path, "variables CSV")
+    ensure_file_exists(keywords_path, "keywords CSV")
 
     variables_df = pd.read_csv(variables_path, low_memory=False)
     keywords_raw = pd.read_csv(keywords_path)

@@ -18,7 +18,7 @@ from src.taxonomy import (
     build_taxonomy_graph,
 )
 from src.pruning import pruned_tree_markdown_for_item
-from src.utils import clean_str_or_none, split_keywords_comma
+from src.utils import clean_str_or_none, ensure_file_exists, split_keywords_comma
 
 
 def _parse_limit(value: str) -> int:
@@ -193,8 +193,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     config: AppConfig = load_config(config_path)
 
     variables_default, keywords_default = config.data.to_paths(base_path)
-    variables_path = _resolve_path(base_path, args.variables, variables_default)
-    keywords_path = _resolve_path(base_path, args.keywords, keywords_default)
+    variables_path = _resolve_path(base_path, args.variables, variables_default).resolve()
+    keywords_path = _resolve_path(base_path, args.keywords, keywords_default).resolve()
+
+    ensure_file_exists(variables_path, "variables CSV")
+    ensure_file_exists(keywords_path, "keywords CSV")
 
     variables = pd.read_csv(variables_path, low_memory=False)
     keywords_raw = pd.read_csv(keywords_path)
