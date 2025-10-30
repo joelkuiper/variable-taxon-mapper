@@ -109,7 +109,7 @@ wget https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwe
 
 ## Running interactively
 
-Reserve an interactive GPU node (example: 2×A40 GPUs, 16 CPUs, 32 GB RAM):
+Reserve an interactive GPU node (example: 2×A40 GPUs, 16 CPUs, 32 GB RAM for 4 hours):
 
 ```bash
 srun --pty --gres=gpu:a40:2 --time=04:00:00 --cpus-per-task=16 --mem=32G bash -l
@@ -117,7 +117,7 @@ srun --pty --gres=gpu:a40:2 --time=04:00:00 --cpus-per-task=16 --mem=32G bash -l
 
 Once inside the node:
 
-1. Check that the `config.example.toml` points to your correct CSV files.
+1. Check that the `config.example.toml` points to your correct CSV files and adjust parallelism tunables as needed.
 2. Launch the pipeline with the bundled script:
 
    ```bash

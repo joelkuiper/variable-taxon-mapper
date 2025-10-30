@@ -39,8 +39,7 @@ VTM_CFG="${VTM_CFG:-config.example.toml}"
 # -------------------- Environment (HPC) --------------------
 # Load modules if available (no-op on systems without module)
 if command -v module >/dev/null 2>&1; then
-  module load cURL/8.7.1-GCCcore-13.3.0 || true
-  module load GCCcore/13.3.0 || true
+  module load GCCcore/11.3.0 || true
   module load CUDA/12.2.0 || true
 fi
 
