@@ -260,15 +260,13 @@ LB_PORT=8080 ./run_pipeline_lb.sh
 Submit with:
 
 ```bash
-BASE="${WORKDIR:-$HOME/tmp02}"
-mkdir -p "$BASE/logs"
+mkdir -p "$WORKDIR/logs"
 
-sbatch --chdir="$BASE/Repositories/variable-taxon-mapper" \
-       --output="$BASE/logs/%x_%j.out" \
-       --error="$BASE/logs/%x_%j.err" \
+sbatch --chdir="$WORKDIR/Repositories/variable-taxon-mapper" \
+       --output="$WORKDIR/logs/%x_%j.out" \
+       --error="$WORKDIR/logs/%x_%j.err" \
        vtm.sbatch
 ```
 
 Logs from `llama.cpp`, the load balancer, and the main Python process all land under `$WORKDIR/logs/`, while SLURM captures combined stdout/stderr in its usual `vtm-<jobid>.out` file.
 
-```
