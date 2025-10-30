@@ -1,7 +1,7 @@
 # Running on the Nibbler HPC Cluster
 
 These notes describe how to run **`variable-taxon-mapper`** and its accompanying multi-GPU llama.cpp backend on the [Nibbler HPC cluster](https://docs.gcc.rug.nl/nibbler/cluster/).
-Most steps are portable to other SLURM-based clusters with similar restrictions (no root access, shared home quotas, temporary SSD storage under `/groups/.../tmp02`).
+Most steps are portable to other SLURM-based clusters with similar restrictions (no root access, shared home quotas, temporary storage under `/groups/.../tmp02`).
 
 ---
 
@@ -56,7 +56,7 @@ This will:
 
 * Create the virtual environment at `~/tmp02/Repositories/variable-taxon-mapper/.venv`
 * Install all dependencies listed in `pyproject.toml` or `requirements.txt`
-* Prepare the environment used by `run_multi_llama_with_lb.sh`
+* Prepare the environment used by [run_pipeline_lb.sh](../run_pipeline_lb.sh)
 
 You can verify that the venv works with:
 
@@ -93,6 +93,7 @@ cmake --build build -j 2 --config Release
 This compilation can take several hours.
 Run it inside a `screen` or `tmux` session so it survives disconnections.
 Do not change the number of threads (e.g. `-j 8`)! It is detrimental to other users to pin the CPU on high load, and the process will be killed.
+Alternartively, and perhaps ideally, you'd do this step on a compute node, the commands will be the same and it would allow you to compile faster. 
 
 
 ## Downloading a model
@@ -119,13 +120,13 @@ Once inside the node:
 
    ```bash
    cd ~/tmp02/Repositories/variable-taxon-mapper
-   ./run_multi_llama_with_lb.sh
+   LB_PORT=8080 ./run_pipeline_lb.sh
    ```
 
 
 ## What the script does
 
-`run_multi_llama_with_lb.sh` is a self-contained orchestrator.
+`run_pipeline_lb.sh` is a self-contained orchestrator.
 
 ### 1. Environment setup
 
@@ -188,7 +189,7 @@ To run non-interactively, wrap the script in a simple `sbatch` file:
 #SBATCH --error=%x-%j.err
 
 cd ~/tmp02/Repositories/variable-taxon-mapper
-./run_multi_llama_with_lb.sh
+LB_PORT=8080 ./run_pipeline_lb.sh
 ```
 
 Submit it with:
