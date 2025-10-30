@@ -46,7 +46,7 @@ fi
 mkdir -p "$LOG_DIR"
 export TERM="${TERM:-xterm}"
 
-# -------------------- Activate venv EARLY  --------------------
+# -------------------- Activate venv --------------------
 if [[ ! -f "$VTM_DIR/.venv/bin/activate" ]]; then
   echo "ERROR: Python venv not found at: $VTM_DIR/.venv"
   exit 1
@@ -80,7 +80,7 @@ cleanup() {
     fi
   done
 
-  # allow processes to die
+  # allow processes to terminate
   sleep 1
   for pid in "${PIDS[@]:-}"; do
     if kill -0 "$pid" 2>/dev/null; then
@@ -242,7 +242,7 @@ done
 
 echo "  • LB ready at http://127.0.0.1:${LB_PORT}"
 
-# -------------------- 4) Run variable-taxon-mapper (unbuffered + tee) --------------------
+# -------------------- 4) Run variable-taxon-mapper  --------------------
 echo "[4/4] Running variable-taxon-mapper against LB :$LB_PORT"
 cd "$VTM_DIR"
 VTM_LOG="$LOG_DIR/vtm-$(date +%F_%H%M%S).log"
