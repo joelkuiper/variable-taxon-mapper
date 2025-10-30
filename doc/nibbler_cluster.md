@@ -54,7 +54,7 @@ All paths below use the `$WORKDIR`.
 
   ```bash
   rsync -avhP ~/Repositories/variable-taxon-mapper/data/ \
-      tunnel+nibbler:"<your workdir>/Repositories/variable-taxon-mapper/data/"
+    tunnel+nibbler:/groups/<your group>/tmp02/users/<your username>/Repositories/variable-taxon-mapper/data/
   ```
 
   > Note the trailing slash `/` after `data/`: it copies contents into the target folder, not the directory itself!
