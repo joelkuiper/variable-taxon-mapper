@@ -185,7 +185,7 @@ The launcher is configured entirely via **environment variables** (no file edits
 - `SLOTS` — llama.cpp parallel slots `-np` per server (default `6`).
 - `LOG_DIR` — logs output dir (default `~/tmp02/logs`).
 - `LLAMA_BIN` — path to `llama-server` (default `~/tmp02/Repositories/llama.cpp/build/bin/llama-server`).
-- `MODEL` — **path to your GGUF** (default `~/tmp02/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf`).
+- `MODEL` — path to your GGUF (default `~/tmp02/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf`).
 - `VTM_DIR` — repo dir (default `~/tmp02/Repositories/variable-taxon-mapper`).
 - `VTM_CFG` — config file passed to `python -m main` (default `config.example.toml`).
 - `PORT` — exported to your app (defaults to `LB_PORT`).
