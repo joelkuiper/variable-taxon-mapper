@@ -2,7 +2,7 @@
 # run_multi_llama_with_lb.sh
 # Self-contained sbatch-friendly launcher:
 #  - loads modules
-#  - ACTIVATES VENV EARLY (hard requirement; aborts if missing)
+#  - Activates venv (hard requirement; aborts if missing)
 #  - starts one llama-server per GPU (CUDA_VISIBLE_DEVICES per process)
 #  - waits for each backend to be healthy
 #  - writes & launches a tiny pure-python TCP round-robin LB (no deps)
