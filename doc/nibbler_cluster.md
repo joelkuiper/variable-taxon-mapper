@@ -84,9 +84,8 @@ Notes:
 
 * `HF_HUB_DISABLE_XET=True` avoids HTTP 500 errors when Hugging Face tries to use Xet for large model downloads.
 * `TERM` is set for compatibility with text-based tools and job shells.
-* After editing `.bashrc`, re-source it (`source ~/.bashrc`) or log out and back in.
 
-Then install the Python dependencies with:
+After editing `.bashrc`, re-source it (`source ~/.bashrc`) or log out and back in. Then install the Python dependencies with:
 
 ```bash
 cd "$WORKDIR/Repositories/variable-taxon-mapper"
