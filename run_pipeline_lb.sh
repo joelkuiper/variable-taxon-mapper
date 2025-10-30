@@ -47,11 +47,9 @@ fi
 mkdir -p "$LOG_DIR"
 export TERM="${TERM:-xterm}"
 
-# -------------------- Activate venv EARLY (hard requirement) --------------------
+# -------------------- Activate venv EARLY  --------------------
 if [[ ! -f "$VTM_DIR/.venv/bin/activate" ]]; then
   echo "ERROR: Python venv not found at: $VTM_DIR/.venv"
-  echo "Create it first, e.g.:"
-  echo "  cd \"$VTM_DIR\" && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
   exit 1
 fi
 pushd "$VTM_DIR" >/dev/null
