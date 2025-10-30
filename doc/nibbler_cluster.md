@@ -56,7 +56,7 @@ This will:
 
 * Create the virtual environment at `~/tmp02/Repositories/variable-taxon-mapper/.venv`
 * Install all dependencies listed in `pyproject.toml` or `requirements.txt`
-* Prepare the environment used by `run_multi_llama_with_lb.sh`
+* Prepare the environment used by `run_pipeline_lb.sh`
 
 You can verify that the venv works with:
 
@@ -126,7 +126,7 @@ Once inside the node:
 
 ## What the script does
 
-`run_multi_llama_with_lb.sh` is a self-contained orchestrator.
+`run_pipeline_lb.sh` is a self-contained orchestrator.
 
 ### 1. Environment setup
 
