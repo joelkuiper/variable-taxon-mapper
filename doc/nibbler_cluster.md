@@ -132,7 +132,7 @@ Once inside the node:
 
 ### 1. Environment setup
 
-* Loads necessary HPC modules (`cURL`, `GCCcore`, `CUDA`).
+* Loads necessary HPC modules (`GCCcore`, `CUDA`).
 * Activates the Python venv in this repo (`.venv/` is required).
 
 ### 2. Launch one `llama-server` per GPU
