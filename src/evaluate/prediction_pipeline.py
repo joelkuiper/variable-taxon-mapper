@@ -195,6 +195,15 @@ class PredictionPipeline:
                 self.prune_queue.task_done()
             raise
 
+        results = list(results)
+        if len(results) != len(batch):
+            for _ in batch:
+                self.prune_queue.task_done()
+            raise RuntimeError(
+                "Pruner returned %d results for batch of %d items (worker=%s)."
+                % (len(results), len(batch), worker_id)
+            )
+
         prompt_batch: List[Tuple[int, PredictionJob, PrunedTreeResult]] = []
         for (idx, job), (result_idx, pruned) in zip(batch, results):
             assert idx == result_idx
