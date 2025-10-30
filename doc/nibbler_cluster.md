@@ -49,12 +49,12 @@ All paths below use the `$WORKDIR`.
       "$WORKDIR/Repositories/variable-taxon-mapper"
   ```
 
-* Copy your `Variables.csv` and `Keywords.csv` data into `$WORKDIR/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
+* Copy your local `Variables.csv` and `Keywords.csv` data into `$WORKDIR/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
   For example, if your data lives locally in `~/Repositories/variable-taxon-mapper/data/`:
 
   ```bash
   rsync -avhP ~/Repositories/variable-taxon-mapper/data/ \
-      tunnel+nibbler:"$WORKDIR/Repositories/variable-taxon-mapper/data/"
+      tunnel+nibbler:"<your workdir>/Repositories/variable-taxon-mapper/data/"
   ```
 
   > Note the trailing slash `/` after `data/`: it copies contents into the target folder, not the directory itself!
