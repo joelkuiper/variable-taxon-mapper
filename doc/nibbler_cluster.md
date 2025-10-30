@@ -23,7 +23,7 @@ git clone https://github.com/joelkuiper/variable-taxon-mapper.git ~/tmp02/Reposi
 ```
 
 * Copy your `Variables.csv` and `Keywords.csv` data into `~/tmp02/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
-For example, if your data lives in `~/Repositories/variable-taxon-mapper/data/ (otherwise change the path):
+For example, if your data lives in `~/Repositories/variable-taxon-mapper/data/`:
 
 ```bash
 rsync -avhP ~/Repositories/variable-taxon-mapper/data/ \
