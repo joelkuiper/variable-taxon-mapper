@@ -16,10 +16,21 @@ Most steps are portable to other SLURM-based clusters with similar configuration
   ln -s /groups/<your group>/tmp02/users/<your username> ~/tmp02
   mkdir -p ~/tmp02/Repositories
   ```
-* Clone this repository into `~/tmp02/Repositories/variable-taxon-mapper`.
-* Copy your `Variables.csv` and `Keywords.csv` data into
-  `~/tmp02/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
+* Clone this repository
 
+```bash
+git clone https://github.com/joelkuiper/variable-taxon-mapper.git ~/tmp02/Repositories/variable-taxon-mapper
+```
+
+* Copy your `Variables.csv` and `Keywords.csv` data into `~/tmp02/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
+For example, if your data lives in `~/Repositories/variable-taxon-mapper/data/ (otherwise change the path):
+
+```bash
+rsync -avhP ~/Repositories/variable-taxon-mapper/data/ \
+    tunnel+nibbler:~/tmp02/Repositories/variable-taxon-mapper/data/
+```
+
+> Note the trailing slash / after data/: it copies contents into the target folder, not the directory itself!
 
 ## Setting up `uv` and cache directories
 
