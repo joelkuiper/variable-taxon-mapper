@@ -92,8 +92,7 @@ cmake --build build -j 2 --config Release
 
 This compilation can take several hours.
 Run it inside a `screen` or `tmux` session so it survives disconnections.
-Do not change the number of threads (e.g. `-j 8`)! It is detrimental to other users to pin the CPU on high load, and the process will be killed.
-Alternartively, and perhaps ideally, you'd do this step on a compute node, the commands will be the same and it would allow you to compile faster. 
+Use `-j 2` to avoid hogging CPUs on the shared jumphost. Jobs with high parallelism may be killed by admins. Alternatively, and ideally, compile on a compute node and set a higher `-j <num cores>`; the commands are the same and will finish faster.
 
 
 ## Downloading a model
@@ -103,7 +102,8 @@ mkdir -p ~/tmp02/Models/GGUF
 wget https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q8_0.gguf \
      -O ~/tmp02/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf
 ```
-
+> **Note:** You can pass a custom model at runtime:
+> `MODEL=~/tmp02/Models/GGUF/SomeOtherModel.gguf ./run_pipeline_lb.sh`
 
 ## Running interactively
 
@@ -173,6 +173,28 @@ Once inside the node:
   ```
   ~/tmp02/logs/vtm-<timestamp>.log
   ```
+
+### 6. Configuration (env vars)
+
+The launcher is configured entirely via **environment variables** (no file edits needed):
+
+- `GPU_IDS` — space-separated CUDA IDs (default `"0 1"`).
+- `BASE_PORT` — first backend port (default `18080`).
+- `LB_PORT` — load balancer port (default `18000`).
+- `CTX` — llama.cpp context size `-c` (default `120000`).
+- `SLOTS` — llama.cpp parallel slots `-np` per server (default `6`).
+- `LOG_DIR` — logs output dir (default `~/tmp02/logs`).
+- `LLAMA_BIN` — path to `llama-server` (default `~/tmp02/Repositories/llama.cpp/build/bin/llama-server`).
+- `MODEL` — **path to your GGUF** (default `~/tmp02/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf`).
+- `VTM_DIR` — repo dir (default `~/tmp02/Repositories/variable-taxon-mapper`).
+- `VTM_CFG` — config file passed to `python -m main` (default `config.example.toml`).
+- `PORT` — exported to your app (defaults to `LB_PORT`).
+
+For examples, use a custom model path and single GPU 0:
+
+```bash
+MODEL=~/tmp02/Models/GGUF/MyModel.gguf GPU_IDS="0" ./run_pipeline_lb.sh
+```
 
 ## Submitting as a SLURM batch job
 
