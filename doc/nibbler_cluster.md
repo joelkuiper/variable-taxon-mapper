@@ -92,7 +92,7 @@ cmake --build build -j 2 --config Release
 
 This compilation can take several hours.
 Run it inside a `screen` or `tmux` session so it survives disconnections.
-Use `-j 2` to avoid hogging CPUs on the shared jumphost. Jobs with high parallelism may be killed by admins. Alternatively, and ideally, compile on a compute node and set a higher `-j <num cores>`; the commands are the same and will finish faster.
+Use `-j 2` to avoid hogging CPUs on the shared jumphost. Jobs with high parallelism may be killed by admins. Alternatively, and ideally, compile on a compute node and set a higher `-j <num cores>`; the commands are the same and will finish faster, but you need to `module load CMake` first.
 
 
 ## Downloading a model
