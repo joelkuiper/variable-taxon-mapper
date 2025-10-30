@@ -140,11 +140,7 @@ Once inside the node:
 * Each GPU ID in `$GPU_IDS` spawns its own `llama.cpp` instance using
   `CUDA_VISIBLE_DEVICES=<id>`.
 * Default ports: starting at `$BASE_PORT` (e.g. 18080, 18081, …).
-* Logs are written to:
-
-  ```
-  ~/tmp02/logs/llama-g<gpu>-p<port>.log
-  ```
+* Logs are written to `~/tmp02/logs/llama-g<gpu>-p<port>.log
 
 ### 3. Health checks
 
@@ -156,11 +152,7 @@ Once inside the node:
 * Generates an inline **`tcp_lb_rr.py`** in the logs directory.
 * The balancer is a ~100-line pure-Python round-robin proxy (asyncio-based).
 * No dependencies, no root access, supports HTTP/SSE streaming transparently.
-* Logs are written to:
-
-  ```
-  ~/tmp02/logs/lb-<LB_PORT>.log
-  ```
+* Logs are written to `~/tmp02/logs/lb-<LB_PORT>.log
 * Listens on `$LB_PORT` and forwards to all healthy backends.
 
 ### 5. Run `variable-taxon-mapper`
@@ -170,11 +162,7 @@ Once inside the node:
   ```bash
   python -u -m main config.example.toml
   ```
-* Output is streamed live to the terminal and duplicated to:
-
-  ```
-  ~/tmp02/logs/vtm-<timestamp>.log
-  ```
+* Output is streamed live to the terminal and duplicated to: `~/tmp02/logs/vtm-<timestamp>.log`.
 
 ### 6. Configuration (env vars)
 
