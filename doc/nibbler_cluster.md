@@ -1,7 +1,7 @@
 # Running on the Nibbler HPC Cluster
 
 These notes describe how to run **`variable-taxon-mapper`** and its accompanying multi-GPU llama.cpp backend on the [Nibbler HPC cluster](https://docs.gcc.rug.nl/nibbler/cluster/).
-Most steps are portable to other SLURM-based clusters with similar restrictions (no root access, shared home quotas, temporary SSD storage under `/groups/.../tmp02`).
+Most steps are portable to other SLURM-based clusters with similar restrictions (no root access, shared home quotas, temporary storage under `/groups/.../tmp02`).
 
 ---
 
