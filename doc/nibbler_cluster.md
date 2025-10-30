@@ -189,7 +189,7 @@ To run non-interactively, wrap the script in a simple `sbatch` file:
 #SBATCH --error=%x-%j.err
 
 cd ~/tmp02/Repositories/variable-taxon-mapper
-./run_multi_llama_with_lb.sh
+LB_PORT=8080 ./run_pipeline_lb.sh
 ```
 
 Submit it with:
