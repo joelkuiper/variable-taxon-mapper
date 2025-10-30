@@ -56,7 +56,7 @@ This will:
 
 * Create the virtual environment at `~/tmp02/Repositories/variable-taxon-mapper/.venv`
 * Install all dependencies listed in `pyproject.toml` or `requirements.txt`
-* Prepare the environment used by `run_pipeline_lb.sh`
+* Prepare the environment used by [run_pipeline_lb.sh](../run_pipeline_lb.sh)
 
 You can verify that the venv works with:
 
