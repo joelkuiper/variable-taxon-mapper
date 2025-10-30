@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import logging
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -69,6 +70,22 @@ def set_global_seed(seed: int) -> None:
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+
+def configure_logging(level: int | str = logging.INFO) -> None:
+    """Initialize application logging if it has not already been configured."""
+
+    if isinstance(level, str):
+        resolved_level = logging.getLevelName(level.upper())
+        if isinstance(resolved_level, int):
+            level = resolved_level
+        else:
+            raise ValueError(f"Invalid log level: {level}")
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 
 def ensure_file_exists(path: Path, description: Optional[str] = None) -> Path:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import sys
+import logging
 from typing import Any, Dict, List, Sequence
 
 import aiohttp
@@ -17,6 +17,9 @@ from ..graph_utils import compute_node_depths, get_undirected_taxonomy
 from .parallelism import sock_read_timeout
 from .prediction_pipeline import PredictionPipeline
 from .types import PredictionJob, ProgressHook
+
+
+logger = logging.getLogger(__name__)
 
 
 def collect_predictions(
@@ -37,6 +40,7 @@ def collect_predictions(
     gloss_map: Dict[str, str],
     progress_hook: ProgressHook | None,
 ) -> List[Dict[str, Any]]:
+    logger.info("Collecting predictions for %d jobs", len(jobs))
     undirected_graph = get_undirected_taxonomy(graph) if graph is not None else None
     depth_map = compute_node_depths(graph) if graph is not None else {}
 
@@ -47,6 +51,12 @@ def collect_predictions(
             sock_read=sock_read_timeout(http_cfg, llm_cfg),
         )
         pool_limit = max(1, int(getattr(parallel_cfg, "pool_maxsize", 1)))
+        logger.debug(
+            "Opening HTTP session with pool_limit=%d (connect=%s, read=%s)",
+            pool_limit,
+            timeout_cfg.sock_connect,
+            timeout_cfg.sock_read,
+        )
         connector = aiohttp.TCPConnector(
             limit=pool_limit,
             limit_per_host=pool_limit,
@@ -76,19 +86,27 @@ def collect_predictions(
             )
 
             pipeline.run_prune_workers()
+            logger.debug(
+                "Started %d prune workers with batch size %d", 
+                pipeline._prune_workers,
+                pipeline._prune_batch_size,
+            )
             producer_task = asyncio.create_task(pipeline.queue_prune_jobs())
+            logger.debug("Queued prune jobs task created")
 
             try:
                 await producer_task
+                logger.debug("All prune jobs queued; awaiting final results")
                 return await pipeline.finalise_results()
             except Exception:
+                logger.exception("Prediction pipeline failed; cancelling workers")
                 await pipeline.cancel_workers()
                 raise
 
     try:
         rows = asyncio.run(_predict_all())
     except KeyboardInterrupt:
-        sys.stderr.write("\nEvaluation cancelled.\n")
+        logger.warning("Evaluation cancelled by user")
         raise
     except RuntimeError as exc:
         if "asyncio.run()" in str(exc) and "running event loop" in str(exc):
@@ -98,4 +116,5 @@ def collect_predictions(
             ) from exc
         raise
 
+    logger.info("Finished collecting predictions (%d rows)", len(rows))
     return list(rows)

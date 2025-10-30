@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
-import sys
+import logging
 import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -23,6 +23,8 @@ from .llm_chat import (
 
 _PROMPT_DEBUG_SHOWN = False
 
+logger = logging.getLogger(__name__)
+
 
 def _print_prompt_once(prompt: str) -> None:
     """Print the first LLM prompt for debugging."""
@@ -30,10 +32,7 @@ def _print_prompt_once(prompt: str) -> None:
     global _PROMPT_DEBUG_SHOWN
     if not _PROMPT_DEBUG_SHOWN:
         _PROMPT_DEBUG_SHOWN = True
-        print("\n====== LLM PROMPT (one-time) ======\n")
-        print(prompt)
-        print("\n====== END PROMPT ======\n")
-        sys.stdout.flush()
+        logger.debug("\n====== LLM PROMPT (one-time) ======\n%s\n====== END PROMPT ======\n", prompt)
 
 
 def _build_allowed_index_map(

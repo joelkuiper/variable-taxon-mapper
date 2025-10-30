@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import logging
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 import numpy as np
@@ -24,6 +25,9 @@ from ..utils import clean_str_or_none, split_keywords_comma
 from .collector import collect_predictions
 from .metrics import summarise_dataframe
 from .types import PredictionJob, ProgressHook
+
+
+logger = logging.getLogger(__name__)
 
 
 def _dedupe_variables(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
@@ -149,6 +153,11 @@ def run_label_benchmark(
     evaluate: bool = True,
     progress_hook: ProgressHook | None = None,
 ) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    logger.info(
+        "Preparing benchmark: total_rows=%d, evaluate=%s",
+        len(variables),
+        evaluate,
+    )
     cfg = coerce_eval_config(eval_config)
     pruning_cfg = coerce_config(pruning_config, PruningConfig, "pruning_config")
     llm_cfg = coerce_config(llm_config, LLMConfig, "llm_config")
@@ -157,6 +166,13 @@ def run_label_benchmark(
 
     work_df = _dedupe_variables(variables, cfg.dedupe_on or [])
     total_rows = len(work_df)
+    if total_rows != len(variables):
+        logger.debug(
+            "Deduplicated variables frame from %d to %d rows using columns %s",
+            len(variables),
+            total_rows,
+            cfg.dedupe_on,
+        )
     cleaned_kw = (
         work_df["keywords"].map(clean_str_or_none)
         if "keywords" in work_df.columns
@@ -182,11 +198,18 @@ def run_label_benchmark(
             )
         eligible_idxs = list(work_df.index[eligible_mask])
         idxs = _select_indices_for_evaluation(eligible_idxs, seed=cfg.seed, limit=cfg.n)
+        logger.info(
+            "Selected %d eligible rows for evaluation (%d excluded, limit=%s)",
+            len(idxs),
+            n_excluded_not_in_taxonomy,
+            cfg.n,
+        )
     else:
         idxs = list(work_df.index)
         if isinstance(cfg.n, int) and cfg.n > 0:
             idxs = idxs[: min(cfg.n, len(idxs))]
         n_eligible = len(idxs)
+        logger.info("Evaluation disabled; predicting %d rows", n_eligible)
 
     jobs = _iter_prediction_jobs(
         work_df,
@@ -196,11 +219,13 @@ def run_label_benchmark(
         parallel_cfg=parallel_cfg,
         evaluate=evaluate,
     )
+    logger.info("Created %d prediction jobs", len(jobs))
 
     default_progress_hook: ProgressHook | None = None
     progress_bar: tqdm | None = None
     if progress_hook is None and evaluate:
         default_progress_hook, progress_bar = _create_progress_hook(len(jobs))
+        logger.debug("Initialized default progress hook for %d jobs", len(jobs))
 
     rows = collect_predictions(
         jobs,
@@ -230,6 +255,7 @@ def run_label_benchmark(
         row.pop("_slot", None)
 
     df = pd.DataFrame(rows)
+    logger.info("Collected %d prediction rows", len(df))
 
     metrics = summarise_dataframe(
         df,
@@ -239,5 +265,6 @@ def run_label_benchmark(
         n_eligible=n_eligible,
         n_excluded_not_in_taxonomy=n_excluded_not_in_taxonomy,
     )
+    logger.debug("Computed metrics: %s", metrics)
 
     return df, metrics

@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 from pathlib import Path
 from typing import Any, Optional
+
 from tqdm.auto import tqdm
 
 from config import load_config
 from main import run_pipeline
 from src.evaluate import ProgressHook
-from src.utils import set_global_seed
+from src.utils import configure_logging, set_global_seed
+
+
+logger = logging.getLogger(__name__)
 
 
 def _make_tqdm_progress() -> ProgressHook:
@@ -75,27 +81,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    configure_logging(level=os.getenv("LOG_LEVEL", logging.INFO))
+
     args = parse_args(argv)
 
     config_path = args.config.resolve()
     base_path = config_path.parent
     config = load_config(config_path)
+    logger.info("Loaded configuration from %s", config_path)
 
     set_global_seed(config.seed)
 
     if "row_limit_override" in vars(args):
         config.evaluation.n = args.row_limit_override
+        logger.info("Row limit overridden to %s", args.row_limit_override)
 
     variables_default, _ = config.data.to_paths(base_path)
     variables_path = (
         args.variables.resolve() if args.variables is not None else variables_default
     )
+    logger.debug("Using variables path: %s", variables_path)
 
     parallel_cfg = config.parallelism
-    print(
-        "[predict] concurrency settings: "
-        f"pruning_workers={parallel_cfg.pruning_workers}, "
-        f"pruning_batch={parallel_cfg.pruning_batch_size}"
+    logger.info(
+        "[predict] concurrency settings: pruning_workers=%s, pruning_batch=%s",
+        parallel_cfg.pruning_workers,
+        parallel_cfg.pruning_batch_size,
     )
 
     progress_hook = _make_tqdm_progress()
@@ -120,7 +131,7 @@ def main(argv: list[str] | None = None) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
 
-    print(f"Saved {len(df)} predictions to {output_path}")
+    logger.info("Saved %d predictions to %s", len(df), output_path)
 
 
 if __name__ == "__main__":

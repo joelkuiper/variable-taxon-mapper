@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import os
 import re
 import sys
@@ -29,6 +30,10 @@ import requests
 from tqdm.auto import tqdm
 
 from src.taxonomy import build_name_maps_from_graph, build_taxonomy_graph
+from src.utils import configure_logging
+
+
+logger = logging.getLogger(__name__)
 
 
 # -------------------------------
@@ -148,6 +153,8 @@ def summarize_once(context: SummaryContext, endpoint: str, max_words: int) -> st
 
 
 def main():
+    configure_logging(level=os.getenv("LOG_LEVEL", logging.INFO))
+
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--in", dest="in_csv", default="data/Keywords.csv", help="Input CSV"
@@ -174,13 +181,15 @@ def main():
     max_workers = max(1, args.max_workers)
 
     if not os.path.exists(in_path):
-        print(f"ERROR: input not found: {in_path}", file=sys.stderr)
+        logger.error("Input not found: %s", in_path)
         sys.exit(2)
 
     df = pd.read_csv(in_path, low_memory=False)
     if "definition" not in df.columns:
-        print("ERROR: Input CSV lacks 'definition' column.", file=sys.stderr)
+        logger.error("Input CSV lacks 'definition' column.")
         sys.exit(2)
+
+    logger.info("Loaded %d rows from %s", len(df), in_path)
 
     name_to_path: Dict[str, str] = {}
     name_to_label_path: Dict[str, str] = {}
@@ -224,9 +233,9 @@ def main():
             else:
                 name_to_path = raw_name_to_path
         except Exception as exc:
-            print(
-                f"[WARN] Unable to build taxonomy paths; continuing without them: {exc}",
-                file=sys.stderr,
+            logger.warning(
+                "Unable to build taxonomy paths; continuing without them: %s",
+                exc,
             )
 
     def _row_to_context(row) -> SummaryContext:
@@ -264,6 +273,13 @@ def main():
         key=lambda c: (c.definition, c.label, c.path),
     )
 
+    logger.info(
+        "Summarizing %d unique contexts using %d workers (max %d words)",
+        len(unique_contexts),
+        max_workers,
+        max_words,
+    )
+
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {
             ex.submit(summarize_once, ctx, endpoint, max_words): ctx
@@ -276,7 +292,7 @@ def main():
             except Exception as e:
                 # Leave empty on failure
                 summary_map[ctx] = ""
-                print(f"[WARN] Summarization failed: {e}", file=sys.stderr)
+                logger.warning("Summarization failed: %s", e)
 
     df["definition_summary"] = [summary_map.get(ctx, "") for ctx in row_contexts]
 
@@ -284,8 +300,13 @@ def main():
     df.to_csv(out_path, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
 
     n_nonempty = int((df["definition_summary"].str.len() > 0).sum())
-    print(f"Wrote summarized CSV to: {out_path}")
-    print(f"Summaries created: {n_nonempty} / {len(df)} rows (≤ {max_words} words)")
+    logger.info("Wrote summarized CSV to: %s", out_path)
+    logger.info(
+        "Summaries created: %d / %d rows (≤ %d words)",
+        n_nonempty,
+        len(df),
+        max_words,
+    )
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -18,7 +20,15 @@ from src.taxonomy import (
     build_taxonomy_graph,
 )
 from src.pruning import pruned_tree_markdown_for_item
-from src.utils import clean_str_or_none, ensure_file_exists, split_keywords_comma
+from src.utils import (
+    clean_str_or_none,
+    configure_logging,
+    ensure_file_exists,
+    split_keywords_comma,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_limit(value: str) -> int:
@@ -186,11 +196,14 @@ def _prepare_outputs(
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
+    configure_logging(level=os.getenv("LOG_LEVEL", logging.INFO))
+
     args = parse_args(argv)
 
     config_path = args.config.resolve()
     base_path = config_path.parent
     config: AppConfig = load_config(config_path)
+    logger.info("Loaded configuration from %s", config_path)
 
     variables_default, keywords_default = config.data.to_paths(base_path)
     variables_path = _resolve_path(base_path, args.variables, variables_default).resolve()
@@ -201,6 +214,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     variables = pd.read_csv(variables_path, low_memory=False)
     keywords_raw = pd.read_csv(keywords_path)
+    logger.info(
+        "Loaded %d variables rows and %d keyword rows",
+        len(variables),
+        len(keywords_raw),
+    )
     keywords, summary_df = _prepare_keywords(keywords_raw)
 
     G = build_taxonomy_graph(
@@ -222,6 +240,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     )
     hnsw_index = build_hnsw_index(tax_embs, **config.hnsw.to_kwargs())
     gloss_map = build_gloss_map(summary_source)
+    logger.debug("Constructed resources for %d taxonomy labels", len(tax_names))
 
     work_df, token_sets, meta = _compute_effective_subset(
         variables,
@@ -229,11 +248,21 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         cfg=config.evaluation,
         row_limit_override=args.row_limit_override,
     )
+    logger.info(
+        "Prepared %d candidate rows for evaluation (eligible=%d)",
+        len(work_df),
+        meta.n_eligible,
+    )
 
     evaluation_rows: List[Dict[str, Any]] = []
     tax_name_set = set(tax_names)
     iterator = range(len(work_df))
     total_nodes_in_graph = int(G.number_of_nodes())
+    logger.info(
+        "Evaluating pruning coverage across %d items and %d taxonomy nodes",
+        len(work_df),
+        total_nodes_in_graph,
+    )
 
     for idx in tqdm(iterator, desc="Evaluating", unit="item"):
         row = work_df.iloc[idx]
@@ -423,22 +452,20 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         )
 
     metrics_text = _format_metrics(metrics)
-    print("Allowed subtree containment metrics:")
-    print(metrics_text)
+    logger.info("Allowed subtree containment metrics:\n%s", metrics_text)
 
     if not summary_df.empty:
-        print("\nPer-dataset summary:")
-        print(summary_df.to_string(index=False))
+        logger.info("Per-dataset summary:\n%s", summary_df.to_string(index=False))
 
     output_path, summary_output_path = _prepare_outputs(
         base_path, args.output, args.summary_output
     )
     if output_path is not None:
         result_df.to_csv(output_path, index=False)
-        print(f"Saved row-level results to {output_path}")
+        logger.info("Saved row-level results to %s", output_path)
     if summary_output_path is not None and not summary_df.empty:
         summary_df.to_csv(summary_output_path, index=False)
-        print(f"Saved summary results to {summary_output_path}")
+        logger.info("Saved summary results to %s", summary_output_path)
 
 
 if __name__ == "__main__":

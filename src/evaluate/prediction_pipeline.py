@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -18,6 +19,9 @@ from ..matching import MatchRequest, match_items_to_tree
 from ..pruning import AsyncTreePruner, PrunedTreeResult
 from .metrics import build_result_row
 from .types import PredictionJob, ProgressHook
+
+
+logger = logging.getLogger(__name__)
 
 
 class PredictionPipeline:
@@ -102,11 +106,20 @@ class PredictionPipeline:
         self.prune_tasks: List[asyncio.Task[None]] = []
         self._closed = False
 
+        logger.debug(
+            "Initialized PredictionPipeline with %d jobs (workers=%d, batch_size=%d, queue_size=%d)",
+            self.total,
+            self._prune_workers,
+            self._prune_batch_size,
+            self._prune_queue_size,
+        )
+
     def close(self) -> None:
         if self._closed:
             return
         self.pruner.close()
         self._closed = True
+        logger.debug("Closed PredictionPipeline resources")
 
     async def cancel_workers(self) -> None:
         for task in self.prune_tasks:
@@ -114,49 +127,64 @@ class PredictionPipeline:
         if self.prune_tasks:
             await asyncio.gather(*self.prune_tasks, return_exceptions=True)
         self.close()
+        logger.debug("Cancelled %d prune workers", len(self.prune_tasks))
 
     def run_prune_workers(self) -> List[asyncio.Task[None]]:
         if not self.prune_tasks:
-            self.prune_tasks = [
-                asyncio.create_task(self._prune_worker())
-                for _ in range(self._prune_workers)
-            ]
+            self.prune_tasks = []
+            for worker_id in range(self._prune_workers):
+                task = asyncio.create_task(self._prune_worker(worker_id))
+                self.prune_tasks.append(task)
+            logger.debug("Spawned %d prune worker tasks", len(self.prune_tasks))
         return self.prune_tasks
 
     async def queue_prune_jobs(self) -> None:
+        logger.debug("Queueing %d prune jobs", len(self.jobs))
         for idx, job in enumerate(self.jobs):
             await self.prune_queue.put((idx, job))
         for _ in range(self._prune_workers):
             await self.prune_queue.put(self.SENTINEL)
+        logger.debug("Finished queueing prune jobs and sentinels")
 
     async def finalise_results(self) -> List[Dict[str, Any]]:
         try:
+            logger.debug("Awaiting prune queue completion")
             await self.prune_queue.join()
             if self.prune_tasks:
                 await asyncio.gather(*self.prune_tasks)
         finally:
             self.close()
+        logger.debug("Collected %d final result rows", sum(row is not None for row in self.rows))
         return [row for row in self.rows if row is not None]
 
-    async def _prune_worker(self) -> None:
+    async def _prune_worker(self, worker_id: int) -> None:
+        logger.debug("Prune worker %d started", worker_id)
         pending: List[Tuple[int, PredictionJob]] = []
         while True:
             item = await self.prune_queue.get()
             if item is self.SENTINEL:
-                await self._flush_prune(pending)
+                await self._flush_prune(pending, worker_id)
                 self.prune_queue.task_done()
+                logger.debug("Prune worker %d received sentinel", worker_id)
                 break
             pending.append(item)
             if len(pending) >= self._prune_batch_size:
-                await self._flush_prune(pending)
+                await self._flush_prune(pending, worker_id)
         if pending:
-            await self._flush_prune(pending)
+            await self._flush_prune(pending, worker_id)
+        logger.debug("Prune worker %d finished", worker_id)
 
-    async def _flush_prune(self, pending: List[Tuple[int, PredictionJob]]) -> None:
+    async def _flush_prune(
+        self, pending: List[Tuple[int, PredictionJob]], worker_id: int | None = None
+    ) -> None:
         if not pending:
             return
         batch = list(pending)
         pending.clear()
+
+        logger.debug(
+            "Worker %s flushing prune batch of %d items", worker_id, len(batch)
+        )
 
         try:
             results = await self.pruner.prune_many(
@@ -174,18 +202,28 @@ class PredictionPipeline:
             self.prune_queue.task_done()
 
         if prompt_batch:
+            logger.debug(
+                "Worker %s dispatching %d prompts for matching", worker_id, len(prompt_batch)
+            )
             await self._process_prompt_batch(prompt_batch)
 
     async def _process_prompt_batch(
         self, prompt_batch: List[Tuple[int, PredictionJob, PrunedTreeResult]]
     ) -> None:
         for idx, job, pruned in prompt_batch:
+            logger.debug(
+                "Processing prediction %d (slot=%s, allowed=%d)",
+                idx,
+                job.slot_id,
+                len(pruned.allowed_labels),
+            )
             await self._handle_single_prediction(idx, job, pruned)
 
     async def _handle_single_prediction(
         self, idx: int, job: PredictionJob, pruned: PrunedTreeResult
     ) -> None:
         request = self._build_request(job, pruned)
+        logger.debug("Fetching predictions for index %d (slot=%s)", idx, job.slot_id)
         predictions = await self._fetch_predictions(request, idx, job)
         if not predictions:
             raise RuntimeError(
@@ -208,6 +246,11 @@ class PredictionPipeline:
     def _build_request(
         self, job: PredictionJob, pruned: PrunedTreeResult
     ) -> MatchRequest:
+        logger.debug(
+            "Building match request for slot %s with %d allowed labels",
+            job.slot_id,
+            len(pruned.allowed_labels),
+        )
         return MatchRequest(
             item=job.item,
             tree_markdown=pruned.markdown,
@@ -220,6 +263,11 @@ class PredictionPipeline:
         self, request: MatchRequest, idx: int, job: PredictionJob
     ) -> Sequence[Mapping[str, Any]]:
         try:
+            logger.debug(
+                "Submitting match request for index %d (slot=%s)",
+                idx,
+                job.slot_id,
+            )
             return await match_items_to_tree(
                 [request],
                 name_to_id=self.name_to_id,
@@ -233,6 +281,9 @@ class PredictionPipeline:
                 encode_lock=self.encode_lock,
             )
         except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception(
+                "LLM matching failed for index %d (slot=%s)", idx, job.slot_id
+            )
             raise RuntimeError(
                 "LLM matching failed for prompt request at "
                 f"index {idx} (slot_id={job.slot_id})."
@@ -248,4 +299,11 @@ class PredictionPipeline:
 
         elapsed = max(time.time() - self.start_time, 0.0)
         hook_correct = self.correct_sum if self.gold_progress_seen else None
+        logger.debug(
+            "Progress update: completed=%d/%d, correct_sum=%s, elapsed=%.2fs",
+            self.completed,
+            self.total,
+            hook_correct,
+            elapsed,
+        )
         self.progress_hook(self.completed, self.total, hook_correct, elapsed)
