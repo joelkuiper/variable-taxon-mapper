@@ -71,7 +71,7 @@ Although pre-built binaries exist, the safest option on Nibbler is to **compile 
 
 ```bash
 cd ~/tmp02/Repositories
-git clone https://github.com/ggml-org/llama.cpp
+git clone --depth 1 https://github.com/ggml-org/llama.cpp
 cd llama.cpp
 
 module load GCCcore/11.3.0
