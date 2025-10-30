@@ -8,7 +8,7 @@ Most steps are portable to other SLURM-based clusters with similar configuration
 ## Prerequisites
 
 * You must be able to log in to the **jumphost** (`ssh tunnel+nibbler`).
-* Configure **GitHub SSH access** (add your cluster SSH public key to GitHub).
+* Configure **GitHub SSH access** (add your cluster SSH public key to GitHub). See [the Nibbler documentation](https://docs.gcc.rug.nl/nibbler/generate-key-pair-openssh/) for generating the key if none exists yet. 
 * Create a personal workspace on `tmp02` (change the group and username to reflect your own):
 
   ```bash
