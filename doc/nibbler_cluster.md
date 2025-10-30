@@ -218,7 +218,10 @@ LB_PORT=8080 ./run_pipeline_lb.sh
 Submit it with:
 
 ```bash
-sbatch run_vtm.sbatch
+BASE="$(readlink -f "$HOME/tmp02" 2>/dev/null || echo)" # absolute path
+sbatch --chdir="$BASE/Repositories/variable-taxon-mapper" \
+       --output="$BASE/logs/%x_%j.out" \
+       --error="$BASE/logs/%x_%j.err"
 ```
 
 Logs from llama.cpp, the load balancer, and the main Python process all land under `~/tmp02/logs/`, while SLURM captures a combined stdout/stderr in its usual `vtm-<jobid>.out` file.
