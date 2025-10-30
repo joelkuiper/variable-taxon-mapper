@@ -59,11 +59,18 @@ class Embedder:
 
     @torch.no_grad()
     def encode(self, texts: Sequence[str]) -> np.ndarray:
-        out = []
+        n_texts = len(texts)
+        if n_texts == 0:
+            hidden_size = getattr(self.model.config, "hidden_size", 768)
+            return np.zeros((0, hidden_size), dtype=np.float32)
+
+        hidden_size = getattr(self.model.config, "hidden_size", 768)
+        out = np.empty((n_texts, hidden_size), dtype=np.float32)
         bs = self.batch_size
         total_tokens = 0
+        offset = 0
 
-        for i in range(0, len(texts), bs):
+        for i in range(0, n_texts, bs):
             batch = texts[i : i + bs]
             toks = self.tok.batch_encode_plus(
                 batch,
@@ -74,19 +81,20 @@ class Embedder:
             )
             total_tokens += int(toks["attention_mask"].sum().item())
             toks = {k: v.to(self.device) for k, v in toks.items()}
-            last_hidden = self.model(**toks)[0]
-            if self.mean_pool:
-                attn = (toks["attention_mask"].unsqueeze(-1)).float()
-                summed = (last_hidden * attn).sum(dim=1)
-                denom = attn.sum(dim=1).clamp(min=1e-6)
-                rep = summed / denom
-            else:
-                rep = last_hidden[:, 0, :]
-            out.append(rep.float().cpu().numpy())
-        embs = (
-            np.concatenate(out, axis=0) if out else np.zeros((0, 768), dtype=np.float32)
-        )
-        return l2_normalize(embs).astype(np.float32)
+            with torch.inference_mode():
+                last_hidden = self.model(**toks)[0]
+                if self.mean_pool:
+                    attn = (toks["attention_mask"].unsqueeze(-1)).float()
+                    summed = (last_hidden * attn).sum(dim=1)
+                    denom = attn.sum(dim=1).clamp(min=1e-6)
+                    rep = summed / denom
+                else:
+                    rep = last_hidden[:, 0, :]
+            batch_size = rep.shape[0]
+            out[offset : offset + batch_size] = rep.float().cpu().numpy()
+            offset += batch_size
+
+        return l2_normalize(out)
 
 
 def collect_item_texts(
