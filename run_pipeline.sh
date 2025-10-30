@@ -65,9 +65,10 @@ for i in {1..180}; do
 done
 
 if [ "$READY" -ne 1 ]; then
-    echo "ERROR: llama-server did not become ready in time."
-    echo "Tail of stderr:"
-    tail -n 60 "$LOG_DIR/llama-server.err" || true                                                                                             exit 1
+  echo "ERROR: llama-server did not become ready in time."
+  echo "Tail of stderr:"
+  tail -n 60 -- "$LOG_DIR/llama-server.err" || true
+  exit 1
 fi
 
 echo "  • llama.cpp is online on http://127.0.0.1:${PORT}"
