@@ -120,7 +120,7 @@ Once inside the node:
 
    ```bash
    cd ~/tmp02/Repositories/variable-taxon-mapper
-   ./run_multi_llama_with_lb.sh
+   LB_PORT=8080 ./run_pipeline_lb.sh
    ```
 
 
