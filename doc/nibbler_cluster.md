@@ -208,10 +208,7 @@ To run non-interactively, wrap the script in a simple `sbatch` file:
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
-#SBATCH --output=%x-%j.out
-#SBATCH --error=%x-%j.err
 
-cd ~/tmp02/Repositories/variable-taxon-mapper
 LB_PORT=8080 ./run_pipeline_lb.sh
 ```
 
