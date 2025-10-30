@@ -1,7 +1,7 @@
 # Running on the Nibbler HPC Cluster
 
-These notes describe how to run **`variable-taxon-mapper`** and its accompanying multi-GPU llama.cpp backend on the [Nibbler HPC cluster](https://docs.gcc.rug.nl/nibbler/cluster/).
-Most steps are portable to other SLURM-based clusters with similar restrictions (no root access, shared home quotas, temporary storage under `/groups/.../tmp02`).
+These notes describe how to run **`variable-taxon-mapper`** and its accompanying multi-GPU llama.cpp backend on the [Nibbler HPC cluster](https://docs.gcc.rug.nl/nibbler/cluster/) using the provided  [run_pipeline_lb.sh](../run_pipeline_lb.sh) script (lb for load balancer).
+Most steps are portable to other SLURM-based clusters with similar configuration and restrictions (no root access, shared home quotas, temporary storage under `/groups/.../tmp02`).
 
 ---
 
@@ -74,7 +74,7 @@ cd ~/tmp02/Repositories
 git clone https://github.com/ggml-org/llama.cpp
 cd llama.cpp
 
-module load CUDA
+module load CUDA/12.2.0
 
 export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
 export LD_LIBRARY_PATH="$CUDA_HOME/lib64/stubs:$LD_LIBRARY_PATH"
