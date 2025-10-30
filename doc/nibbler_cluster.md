@@ -178,7 +178,7 @@ Once inside the node:
 
 ### 6. Configuration (env vars)
 
-The launcher is configured entirely via **environment variables** (no file edits needed):
+The launcher is configured entirely via environment variables (no file edits needed):
 
 - `GPU_IDS` — space-separated CUDA IDs (default `"0 1"`).
 - `BASE_PORT` — first backend port (default `18080`).
