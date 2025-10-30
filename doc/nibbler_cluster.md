@@ -74,6 +74,8 @@ cd ~/tmp02/Repositories
 git clone https://github.com/ggml-org/llama.cpp
 cd llama.cpp
 
+module load GCCcore/11.3.0
+module load CMake/3.23.1-GCCcore-11.3.0
 module load CUDA/12.2.0
 
 export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
