@@ -94,7 +94,7 @@ cmake --build build -j 2 --config Release
 
 This compilation can take several hours.
 Run it inside a `screen` or `tmux` session so it survives disconnections.
-Use `-j 2` to avoid hogging CPUs on the shared jumphost. Jobs with high parallelism may be killed by admins. Alternatively, and ideally, compile on a compute node and set a higher `-j <num cores>`; the commands are the same and will finish faster and you don't need a GPU for this. So `srun --pty --time=00:30:00 --cpus-per-task=32 --mem=32G bash -l` and run these commands from there (with `-j 32`) is strongly advisable (but you may have to wait in the queue).
+Use `-j 2` to avoid hogging CPUs on the shared jumphost. Jobs with high parallelism may be killed by admins. Alternatively, and ideally, compile on a compute node and set a higher `-j <num cores>`; the commands are the same and will finish faster, and you don't need a GPU for this. So `srun --pty --time=00:30:00 --cpus-per-task=32 --mem=32G bash -l` and run these commands from there (with `-j 32`) is strongly advisable (but you may have to wait in the queue).
 
 
 ## Downloading a model
@@ -192,7 +192,7 @@ The launcher is configured entirely via environment variables (no file edits nee
 - `VTM_CFG` — config file passed to `python -m main` (default `config.example.toml`).
 - `PORT` — exported to your app (defaults to `LB_PORT`).
 
-For examples, use a custom model path and single GPU 0:
+For example, use a custom model path and single GPU 0:
 
 ```bash
 MODEL=~/tmp02/Models/GGUF/MyModel.gguf GPU_IDS="0" ./run_pipeline_lb.sh
