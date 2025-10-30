@@ -93,6 +93,7 @@ cmake --build build -j 2 --config Release
 This compilation can take several hours.
 Run it inside a `screen` or `tmux` session so it survives disconnections.
 Do not change the number of threads (e.g. `-j 8`)! It is detrimental to other users to pin the CPU on high load, and the process will be killed.
+Alternartively, and perhaps ideally, you'd do this step on a compute node, the commands will be the same and it would allow you to compile faster. 
 
 
 ## Downloading a model
