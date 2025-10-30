@@ -13,7 +13,7 @@ Most steps are portable to other SLURM-based clusters with similar configuration
 
   ```bash
   mkdir -p /groups/<your group>/tmp02/users/<your username>
-````
+  ```
 
 * Define an environment variable that points to your personal temporary workspace, add this to your `~/.bashrc`:
 
