@@ -159,7 +159,7 @@ Once inside the node:
   ```
   ~/tmp02/logs/lb-<LB_PORT>.log
   ```
-* Listens on `$LB_PORT` (default 18000) and forwards to all healthy backends.
+* Listens on `$LB_PORT` and forwards to all healthy backends.
 
 ### 5. Run `variable-taxon-mapper`
 
