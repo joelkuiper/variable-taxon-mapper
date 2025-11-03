@@ -53,3 +53,6 @@ python -m predict config.example.toml
 # Testing the tree pruning
 python -m check_pruned_tree config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
 ```
+
+## Running on HPC clusters
+See [Nibbler Cluster documentation](./doc/nibbler_cluster.md)
