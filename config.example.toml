@@ -71,6 +71,7 @@ top_p = 0.8
 min_p = 0.0
 cache_prompt = true
 n_keep = -1
+force_slot_id = false # set true to force explicit slot ids on the llama server
 embedding_remap_threshold = 0.25
 # Enable snapping ancestor predictions down to a better-matching child label.
 snap_to_child = true

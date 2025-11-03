@@ -19,6 +19,7 @@
 #   CTX       (llama -c, default 120000)
 #   SLOTS     (llama -np, default 6)
 #   PORT      (exported to variable-taxon-mapper, default -> LB_PORT)
+#   (arguments) final command override, e.g. `./run_pipeline_lb.sh python -u -m predict config.toml`
 set -euo pipefail
 
 # -------------------- Configurable defaults --------------------
@@ -35,6 +36,15 @@ MODEL="${MODEL:-$HOME/tmp02/Models/GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf}"
 
 VTM_DIR="${VTM_DIR:-$HOME/tmp02/Repositories/variable-taxon-mapper}"
 VTM_CFG="${VTM_CFG:-config.example.toml}"
+
+# -------------------- Determine final command --------------------
+DEFAULT_CMD=(python -u -m main "$VTM_CFG")
+
+if [[ $# -gt 0 ]]; then
+  RUN_CMD=("$@")
+else
+  RUN_CMD=("${DEFAULT_CMD[@]}")
+fi
 
 # -------------------- Environment (HPC) --------------------
 # Load modules if available (no-op on systems without module)
@@ -247,8 +257,9 @@ echo "[4/4] Running variable-taxon-mapper against LB :$LB_PORT"
 cd "$VTM_DIR"
 VTM_LOG="$LOG_DIR/vtm-$(date +%F_%H%M%S).log"
 echo "  • VTM log -> $VTM_LOG"
+echo "  • Command -> ${RUN_CMD[*]}"
 export PORT
 
 # Use venv python only
 PYTHONUNBUFFERED=1 stdbuf -oL -eL \
-  python -u -m main "$VTM_CFG" 2>&1 | tee -a "$VTM_LOG"
+  "${RUN_CMD[@]}" 2>&1 | tee -a "$VTM_LOG"

@@ -208,13 +208,21 @@ Once inside the node:
 * No dependencies, no root access, supports HTTP/SSE streaming transparently.
 * Logs written to `$WORKDIR/logs/lb-<LB_PORT>.log`
 * Listens on `$LB_PORT` and forwards to all healthy backends.
+* The client asks llama.cpp to auto-assign request slots (`slot_id=-1`),
+  so round-robin dispatching does not conflict with cached contexts.
 
 ### 5. Run `variable-taxon-mapper`
 
-* Executes:
+* By default executes:
 
   ```bash
   python -u -m main config.example.toml
+  ```
+
+* You can override the final command by passing arguments, for example:
+
+  ```bash
+  ./run_pipeline_lb.sh python -u -m predict config.example.toml
   ```
 
 * Output is streamed live to the terminal and duplicated to `$WORKDIR/logs/vtm-<timestamp>.log`.

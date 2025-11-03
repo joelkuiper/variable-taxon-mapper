@@ -138,6 +138,7 @@ class LLMConfig:
     snap_margin: float = 0.1
     snap_similarity: str = "token_sort"
     snap_descendant_depth: int = 1
+    force_slot_id: bool = False
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)

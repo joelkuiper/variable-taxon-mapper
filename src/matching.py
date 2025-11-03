@@ -153,6 +153,8 @@ class MatchRequest:
 
 
 def _llm_kwargs_for_config(cfg: LLMConfig, *, slot_id: int) -> Dict[str, Any]:
+    use_explicit_slots = getattr(cfg, "force_slot_id", False)
+
     kwargs: Dict[str, Any] = {
         "temperature": cfg.temperature,
         "top_k": cfg.top_k,
@@ -161,8 +163,11 @@ def _llm_kwargs_for_config(cfg: LLMConfig, *, slot_id: int) -> Dict[str, Any]:
         "grammar": cfg.grammar if cfg.grammar is not None else GRAMMAR_RESPONSE,
         "cache_prompt": cfg.cache_prompt,
         "n_keep": cfg.n_keep,
-        "slot_id": slot_id,
     }
+    if use_explicit_slots:
+        kwargs["slot_id"] = slot_id
+    else:
+        kwargs["slot_id"] = -1
     kwargs["n_predict"] = max(int(cfg.n_predict), 64)
     return kwargs
 
