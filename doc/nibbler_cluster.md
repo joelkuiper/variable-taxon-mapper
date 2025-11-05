@@ -140,7 +140,8 @@ Use `-j 2` to avoid hogging CPUs on the shared jumphost.
 Alternatively, compile on a compute node (faster, safer):
 
 ```bash
-srun --pty --time=00:30:00 --cpus-per-task=32 --mem=32G bash -l
+srun --cpus-per-task=32 —mem=32gb --nodes=1 --time=00:30:00 --qos=interactive --pty bash -i
+
 # once inside the node:
 cmake --build build -j 32 --config Release
 ```
@@ -165,7 +166,7 @@ wget https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwe
 Reserve an interactive GPU node (example: 2×A40 GPUs, 16 CPUs, 32 GB RAM for 4 h):
 
 ```bash
-srun --pty --gres=gpu:a40:2 --time=04:00:00 --cpus-per-task=16 --mem=32G bash -l
+srun --cpus-per-task=4 —mem=32gb --nodes=1 --gres=gpu:a40:2 --time=04:00:00 --qos=interactive --pty bash -i
 ```
 
 Once inside the node:
