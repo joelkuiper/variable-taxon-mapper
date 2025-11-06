@@ -110,7 +110,7 @@ def _build_summary_section(metrics: dict[str, Any], consumed: set[str]) -> str:
         consumed.add(key)
 
     add("Rows after dedupe", "n_total_rows_after_dedupe", "int")
-    add("Rows with keywords", "n_with_any_keyword", "int")
+    add("Rows with gold-label values", "n_with_any_gold_label", "int")
     add("Eligible rows", "n_eligible", "int")
     add("Excluded (not in taxonomy)", "n_excluded_not_in_taxonomy", "int")
     add("Evaluated rows", "n_evaluated", "int")
@@ -424,7 +424,7 @@ def _build_top_error_sections(df: pd.DataFrame | None) -> list[str]:
             top_wrong_table = _markdown(top_wrong_df)
             if top_wrong_table:
                 sections.extend(
-                    ["### Top wrong predicted keywords", top_wrong_table, ""]
+                    ["### Top wrong predicted labels", top_wrong_table, ""]
                 )
 
     if "gold_labels" in incorrect_df.columns:
@@ -448,7 +448,7 @@ def _build_top_error_sections(df: pd.DataFrame | None) -> list[str]:
                     if top_gold_table:
                         sections.extend(
                             [
-                                "### Top wrong gold keywords",
+                                "### Top wrong gold labels",
                                 top_gold_table,
                                 "",
                             ]

@@ -186,14 +186,14 @@ def summarise_dataframe(
     *,
     evaluate: bool,
     total_rows: int,
-    total_with_any_keyword: int,
+    total_with_any_gold_label: int,
     n_eligible: int,
     n_excluded_not_in_taxonomy: int,
 ) -> Dict[str, Any]:
     total_processed = int(len(df))
     metrics: Dict[str, Any] = {
         "n_total_rows_after_dedupe": int(total_rows),
-        "n_with_any_keyword": int(total_with_any_keyword),
+        "n_with_any_gold_label": int(total_with_any_gold_label),
         "n_eligible": int(n_eligible),
         "n_excluded_not_in_taxonomy": int(n_excluded_not_in_taxonomy),
         "n_evaluated": total_processed,

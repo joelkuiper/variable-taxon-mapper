@@ -147,6 +147,7 @@ def run_pipeline(
         http_config=config.http,
         evaluate=evaluate,
         progress_hook=progress_hook,
+        field_mapping=config.fields,
     )
     logger.info("Completed label benchmark evaluation")
 

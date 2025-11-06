@@ -6,6 +6,15 @@ seed = 37
 variables_csv = "data/Variables_with_keywords_and_desc.csv"
 keywords_csv = "data/Keywords_summarized_new.csv"
 
+[fields]
+# Map logical variable fields to the column names used in your variables CSV.
+# Set a field to "" or omit it entirely if it is not available.
+# dataset = "dataset"
+# label = "label"
+# name = "name"
+# description = "description"
+# gold_labels = "keywords"
+
 [embedder]
 model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
 # model_name = "BAAI/bge-large-en-v1.5"
@@ -29,6 +38,7 @@ num_threads = 0
 [evaluation]
 n = 10_000
 seed = 37
+# Use logical field names (dataset, label, name, description) or raw column names.
 dedupe_on = ["name"]
 progress_log_interval = 10
 

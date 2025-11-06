@@ -12,6 +12,7 @@ from tqdm.auto import tqdm
 
 from config import (
     EvaluationConfig,
+    FieldMappingConfig,
     HttpConfig,
     LLMConfig,
     ParallelismConfig,
@@ -65,18 +66,27 @@ def _iter_prediction_jobs(
     known_labels: Set[str],
     parallel_cfg: ParallelismConfig,
     evaluate: bool,
+    field_mapping: FieldMappingConfig,
 ) -> List[PredictionJob]:
     jobs: List[PredictionJob] = []
     slot_base = max(1, parallel_cfg.num_slots)
 
+    dataset_col = field_mapping.resolve_column("dataset")
+    label_col = field_mapping.resolve_column("label")
+    name_col = field_mapping.resolve_column("name")
+    desc_col = field_mapping.resolve_column("description")
+    text_keys = field_mapping.item_text_keys()
+
     for j, idx in enumerate(idxs):
         row = df.loc[idx]
         item = {
-            "dataset": row.get("dataset"),
-            "label": row.get("label"),
-            "name": row.get("name"),
-            "description": row.get("description"),
+            "dataset": row.get(dataset_col) if dataset_col else None,
+            "label": row.get(label_col) if label_col else None,
+            "name": row.get(name_col) if name_col else None,
+            "description": row.get(desc_col) if desc_col else None,
         }
+        if text_keys:
+            item["_text_fields"] = tuple(text_keys)
 
         gold_labels: Optional[Sequence[str]] = None
         if evaluate and token_sets is not None:
@@ -152,6 +162,7 @@ def run_label_benchmark(
     http_config: HttpConfig | Dict[str, Any] | None = None,
     evaluate: bool = True,
     progress_hook: ProgressHook | None = None,
+    field_mapping: FieldMappingConfig | Dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, Dict[str, Any]]:
     logger.info(
         "Preparing benchmark: total_rows=%d, evaluate=%s",
@@ -163,35 +174,54 @@ def run_label_benchmark(
     llm_cfg = coerce_config(llm_config, LLMConfig, "llm_config")
     parallel_cfg = coerce_config(parallel_config, ParallelismConfig, "parallel_config")
     http_cfg = coerce_config(http_config, HttpConfig, "http_config")
+    field_cfg = coerce_config(field_mapping, FieldMappingConfig, "field_mapping")
 
-    work_df = _dedupe_variables(variables, cfg.dedupe_on or [])
+    dedupe_columns: list[str] = []
+    for column in cfg.dedupe_on or []:
+        resolved = field_cfg.resolve_column(column)
+        if isinstance(resolved, str) and resolved and resolved not in dedupe_columns:
+            dedupe_columns.append(resolved)
+
+    work_df = _dedupe_variables(variables, dedupe_columns)
     total_rows = len(work_df)
     if total_rows != len(variables):
         logger.debug(
             "Deduplicated variables frame from %d to %d rows using columns %s",
             len(variables),
             total_rows,
-            cfg.dedupe_on,
+            dedupe_columns,
         )
-    cleaned_kw = (
-        work_df["keywords"].map(clean_str_or_none)
-        if "keywords" in work_df.columns
+    resolved_gold_column = field_cfg.resolve_column("gold_labels")
+    gold_column: Optional[str] = (
+        resolved_gold_column if isinstance(resolved_gold_column, str) else None
+    )
+    cleaned_gold = (
+        work_df[gold_column].map(clean_str_or_none)
+        if isinstance(gold_column, str) and gold_column in work_df.columns
         else pd.Series(index=work_df.index, dtype=object)
     )
 
     known_labels: Set[str] = set(tax_names)
     token_sets: Optional[pd.Series] = None
-    total_with_any_keyword = int(cleaned_kw.notna().sum()) if total_rows else 0
+    total_with_any_gold_label = int(cleaned_gold.notna().sum()) if total_rows else 0
     n_excluded_not_in_taxonomy = 0
 
     if evaluate:
-        if "keywords" not in work_df.columns:
-            raise KeyError("variables must have a 'keywords' column")
-        token_lists = cleaned_kw.map(split_keywords_comma)
+        if gold_column is None or gold_column not in work_df.columns:
+            configured_name = field_cfg.gold_labels
+            if configured_name:
+                raise KeyError(
+                    "variables must include the column configured in "
+                    f"fields.gold_labels ('{configured_name}')",
+                )
+            raise KeyError(
+                "Evaluation requires a gold label column; set fields.gold_labels",
+            )
+        token_lists = cleaned_gold.map(split_keywords_comma)
         token_sets = token_lists.map(lambda values: {val for val in values if val})
         eligible_mask = token_sets.map(lambda values: len(values & known_labels) > 0)
         n_eligible = int(eligible_mask.sum())
-        n_excluded_not_in_taxonomy = total_with_any_keyword - n_eligible
+        n_excluded_not_in_taxonomy = total_with_any_gold_label - n_eligible
         if n_eligible == 0:
             raise ValueError(
                 "No eligible rows: no comma-split keywords present in the taxonomy."
@@ -218,6 +248,7 @@ def run_label_benchmark(
         known_labels=known_labels,
         parallel_cfg=parallel_cfg,
         evaluate=evaluate,
+        field_mapping=field_cfg,
     )
     logger.info("Created %d prediction jobs", len(jobs))
 
@@ -261,7 +292,7 @@ def run_label_benchmark(
         df,
         evaluate=evaluate,
         total_rows=total_rows,
-        total_with_any_keyword=total_with_any_keyword,
+        total_with_any_gold_label=total_with_any_gold_label,
         n_eligible=n_eligible,
         n_excluded_not_in_taxonomy=n_excluded_not_in_taxonomy,
     )

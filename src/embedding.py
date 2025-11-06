@@ -14,6 +14,7 @@ import pandas as pd
 
 from .taxonomy import taxonomy_node_texts
 from .utils import clean_text
+from config import FieldMappingConfig
 
 
 def l2_normalize(a: np.ndarray, eps: float = 1e-9) -> np.ndarray:
@@ -97,14 +98,42 @@ class Embedder:
         return l2_normalize(out)
 
 
+def _resolve_default_fields(
+    item: Mapping[str, Optional[str]],
+    field_mapping: FieldMappingConfig | None,
+) -> List[str]:
+    if field_mapping is not None:
+        return field_mapping.item_text_keys()
+    candidate = item.get("_text_fields")
+    if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes)):
+        fields = [
+            str(key)
+            for key in candidate
+            if isinstance(key, str) and key and not key.startswith("_")
+        ]
+        if fields:
+            seen: set[str] = set()
+            unique: List[str] = []
+            for key in fields:
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(key)
+            return unique
+    return FieldMappingConfig().item_text_keys()
+
+
 def collect_item_texts(
     item: Mapping[str, Optional[str]],
     *,
-    fields: Sequence[str] = ("label", "name", "description"),
+    fields: Sequence[str] | None = None,
+    field_mapping: FieldMappingConfig | None = None,
     clean: bool = True,
     max_length: int = 256,
 ) -> List[str]:
     """Extract candidate text fields from an item for embedding."""
+
+    if fields is None:
+        fields = _resolve_default_fields(item, field_mapping)
 
     texts: List[str] = []
     for key in fields:
@@ -129,7 +158,8 @@ def encode_item_texts(
     item: Mapping[str, Optional[str]],
     embedder: Embedder,
     *,
-    fields: Sequence[str] = ("label", "name", "description"),
+    fields: Sequence[str] | None = None,
+    field_mapping: FieldMappingConfig | None = None,
     clean: bool = True,
     max_length: int = 256,
     texts: Optional[Sequence[str]] = None,
@@ -138,7 +168,11 @@ def encode_item_texts(
 
     if texts is None:
         texts = collect_item_texts(
-            item, fields=fields, clean=clean, max_length=max_length
+            item,
+            fields=fields,
+            field_mapping=field_mapping,
+            clean=clean,
+            max_length=max_length,
         )
     else:
         texts = list(texts)

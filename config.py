@@ -20,6 +20,53 @@ class DataConfig:
 
 
 @dataclass
+class FieldMappingConfig:
+    """Logical field to column mapping for variable datasets."""
+
+    dataset: Optional[str] = "dataset"
+    label: Optional[str] = "label"
+    name: Optional[str] = "name"
+    description: Optional[str] = "description"
+    gold_labels: Optional[str] = "keywords"
+
+    def as_dict(self) -> dict[str, Optional[str]]:
+        return {
+            "dataset": self.dataset,
+            "label": self.label,
+            "name": self.name,
+            "description": self.description,
+            "gold_labels": self.gold_labels,
+        }
+
+    def resolve_column(self, key: str) -> Optional[str]:
+        mapping = self.as_dict()
+        if key in mapping:
+            value = mapping[key]
+            return value if value else None
+        return key
+
+    def item_text_keys(self) -> list[str]:
+        keys: list[str] = []
+        seen: set[str] = set()
+        for key in ("label", "name", "description"):
+            value = self.resolve_column(key)
+            if isinstance(value, str) and value and key not in seen:
+                keys.append(key)
+                seen.add(key)
+        return keys
+
+    def item_text_columns(self) -> list[str]:
+        columns: list[str] = []
+        seen: set[str] = set()
+        for key in self.item_text_keys():
+            column = self.resolve_column(key)
+            if isinstance(column, str) and column not in seen:
+                columns.append(column)
+                seen.add(column)
+        return columns
+
+
+@dataclass
 class EmbedderConfig:
     """Model and batching configuration for the embedding model."""
 
@@ -175,6 +222,7 @@ class AppConfig:
 
     seed: int = 37
     data: DataConfig = field(default_factory=DataConfig)
+    fields: FieldMappingConfig = field(default_factory=FieldMappingConfig)
     embedder: EmbedderConfig = field(default_factory=EmbedderConfig)
     taxonomy_embeddings: TaxonomyEmbeddingConfig = field(
         default_factory=TaxonomyEmbeddingConfig
@@ -220,6 +268,7 @@ def load_config(path: str | Path) -> AppConfig:
         raise TypeError("Config 'seed' must be an integer.") from exc
 
     data_section = raw.get("data")
+    fields_section = raw.get("fields")
     embedder_section = raw.get("embedder")
     taxonomy_section = raw.get("taxonomy_embeddings")
     hnsw_section = raw.get("hnsw")
@@ -236,6 +285,7 @@ def load_config(path: str | Path) -> AppConfig:
     app_config = AppConfig(
         seed=seed_value,
         data=_coerce_section(data_section, DataConfig),
+        fields=_coerce_section(fields_section, FieldMappingConfig),
         embedder=_coerce_section(embedder_section, EmbedderConfig),
         taxonomy_embeddings=_coerce_section(taxonomy_section, TaxonomyEmbeddingConfig),
         hnsw=_coerce_section(hnsw_section, HNSWConfig),
@@ -285,6 +335,7 @@ def coerce_config(config: Any, cls: Type[T], label: str) -> T:
 __all__ = [
     "AppConfig",
     "DataConfig",
+    "FieldMappingConfig",
     "EmbedderConfig",
     "EvaluationConfig",
     "HttpConfig",

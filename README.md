@@ -25,6 +25,29 @@ This is a tool designed to map free-text variable metadata (from datasets) to a 
 In summary, the tool's idea is to use semantic embedding search to narrow the taxonomy and then leverage an LLM's contextual understanding to pick the best-fitting category. All operational parameters (model names, number of neighbors, pruning depth, LLM endpoint, etc.) are defined in a config TOML file (see [config.example.toml](./config.example.toml)) for flexibility, making it easy to tweak the pipeline without changing code.
 
 
+## Configuring variable column mappings
+
+Many datasets use different column headers for the same logical fields (e.g.,
+`variable_id` instead of `dataset`, `display_name` instead of `label`, etc.).
+Use the `[fields]` section in the TOML configuration to map those logical
+fields to your CSV columns:
+
+```toml
+[fields]
+dataset = "source_id"
+label = "display_name"
+name = "short_name"
+description = "long_description"
+gold_labels = "manual_tags"
+```
+
+Any field can be omitted or set to an empty string when the dataset does not
+provide it. The evaluation pipeline, pruning logic, and reporting utilities all
+respect this mapping. Settings such as `evaluation.dedupe_on` can reference the
+logical names (`dataset`, `label`, `name`, `description`) or raw column names;
+the mapper resolves them through this section before touching your data.
+
+
 ## Dependencies
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
