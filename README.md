@@ -77,6 +77,12 @@ python -m predict config.example.toml
 python -m check_pruned_tree config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
 ```
 
+`check_pruned_tree` respects the `[fields]` logical-to-physical column mapping
+from the configuration file. Override entries such as
+`gold_labels = "my_gold_column"` (and `dataset`, `label`, `name`,
+`description`) when your variables CSV uses different headers; the script will
+resolve column access through that mapping before evaluating coverage.
+
 ## Reviewing Model Errors Interactively
 
 Use the error review CLI to quickly inspect misclassifications and record

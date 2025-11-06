@@ -305,10 +305,18 @@ def prepare_context(
     hnsw_index = build_hnsw_index(tax_embs, **hnsw_kwargs)
     gloss_map = build_gloss_map(summary_source)
 
+    field_cfg = config.fields
+    dataset_col = field_cfg.resolve_column("dataset")
+    label_col = field_cfg.resolve_column("label")
+    name_col = field_cfg.resolve_column("name")
+    desc_col = field_cfg.resolve_column("description")
+    text_keys = field_cfg.item_text_keys()
+
     work_df, token_sets, _meta = _compute_effective_subset(
         variables_df,
         tax_names,
         cfg=config.evaluation,
+        field_mapping=field_cfg,
         row_limit_override=row_limit,
     )
 
@@ -318,11 +326,13 @@ def prepare_context(
         row = work_df.iloc[idx]
         token_set = token_sets.iloc[idx]
         item = {
-            "dataset": row.get("dataset"),
-            "label": row.get("label"),
-            "name": row.get("name"),
-            "description": row.get("description"),
+            "dataset": row.get(dataset_col) if dataset_col else None,
+            "label": row.get(label_col) if label_col else None,
+            "name": row.get(name_col) if name_col else None,
+            "description": row.get(desc_col) if desc_col else None,
         }
+        if text_keys:
+            item["_text_fields"] = tuple(text_keys)
         gold_labels = sorted(set(token_set) & tax_name_set)
         rows.append(EvaluationRow(item=item, gold_labels=gold_labels))
 
