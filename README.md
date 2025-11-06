@@ -54,5 +54,30 @@ python -m predict config.example.toml
 python -m check_pruned_tree config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
 ```
 
+## Reviewing Model Errors Interactively
+
+Use the error review CLI to quickly inspect misclassifications and record
+judgments about whether they are acceptable mistakes.
+
+```shell
+python -m src.error_review_cli --predictions path/to/predictions.csv \
+    --keywords path/to/Keywords.csv \
+    --output data/error_review_decisions.csv
+```
+
+The tool displays one error at a time, showing the variable context, the gold
+labels with their `definition_summary` values from `Keywords.csv`, and the model
+prediction with its definition and resolved path. Record your judgment using the
+keyboard:
+
+- `A` – acceptable mistake
+- `X` – reject the prediction
+- `U` – unclear / requires follow-up
+- `B` – move back to the previous item
+- `Q` – quit the session (progress is saved automatically)
+
+Decisions are appended to the output CSV, which allows the session to be resumed
+later. Records that already appear in the output file are skipped automatically.
+
 ## Running on HPC clusters
 See [Nibbler Cluster documentation](./doc/nibbler_cluster.md)
