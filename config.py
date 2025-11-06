@@ -171,7 +171,8 @@ class PruningConfig:
 class LLMConfig:
     """Settings for LLM matching requests."""
 
-    endpoint: str = "http://127.0.0.1:8080/completions"
+    endpoint: str = "http://127.0.0.1:8080/v1"
+    model: str = "gpt-3.5-turbo"
     n_predict: int = 512
     temperature: float = 0.0
     top_k: int = 20

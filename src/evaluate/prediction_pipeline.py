@@ -8,7 +8,6 @@ import threading
 import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-import aiohttp
 import numpy as np
 import pandas as pd
 
@@ -47,7 +46,6 @@ class PredictionPipeline:
         name_to_id: Dict[str, str],
         name_to_path: Dict[str, str],
         gloss_map: Dict[str, str],
-        session: aiohttp.ClientSession,
         progress_hook: ProgressHook | None,
     ) -> None:
         self.jobs = list(jobs)
@@ -71,7 +69,6 @@ class PredictionPipeline:
         self.name_to_id = name_to_id
         self.name_to_path = name_to_path
         self.gloss_map = gloss_map
-        self.session = session
         self.progress_hook = progress_hook
 
         self.total = len(self.jobs)
@@ -286,7 +283,6 @@ class PredictionPipeline:
                 embedder=self.embedder,
                 hnsw_index=self.hnsw_index,
                 llm_config=self.llm_cfg,
-                session=self.session,
                 encode_lock=self.encode_lock,
             )
         except Exception as exc:  # pragma: no cover - defensive logging

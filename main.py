@@ -17,6 +17,7 @@ from src.reporting import report_results
 
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def run_pipeline(

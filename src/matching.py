@@ -10,7 +10,6 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-import aiohttp
 import numpy as np
 from config import LLMConfig
 from .embedding import Embedder, collect_item_texts
@@ -18,7 +17,7 @@ from .snap import maybe_snap_to_child
 from .llm_chat import (
     GRAMMAR_RESPONSE,
     llama_completion_many,
-    make_tree_match_prompt,
+    make_tree_match_messages,
 )
 
 _PROMPT_DEBUG_SHOWN = False
@@ -26,13 +25,25 @@ _PROMPT_DEBUG_SHOWN = False
 logger = logging.getLogger(__name__)
 
 
-def _print_prompt_once(prompt: str) -> None:
+def _format_prompt(messages: Sequence[Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for message in messages:
+        role = str(message.get("role", "?")).upper()
+        content = str(message.get("content", ""))
+        parts.append(f"{role}:\n{content}")
+    return "\n\n".join(parts)
+
+
+def _print_prompt_once(messages: Sequence[Dict[str, Any]]) -> None:
     """Print the first LLM prompt for debugging."""
 
     global _PROMPT_DEBUG_SHOWN
     if not _PROMPT_DEBUG_SHOWN:
         _PROMPT_DEBUG_SHOWN = True
-        logger.debug("\n====== LLM PROMPT (one-time) ======\n%s\n====== END PROMPT ======\n", prompt)
+        logger.debug(
+            "\n====== LLM PROMPT (one-time) ======\n%s\n====== END PROMPT ======\n",
+            _format_prompt(messages),
+        )
 
 
 def _build_allowed_index_map(
@@ -182,7 +193,6 @@ async def match_items_to_tree(
     embedder: Embedder,
     hnsw_index,
     llm_config: LLMConfig,
-    session: Optional[aiohttp.ClientSession] = None,
     encode_lock: Optional[threading.Lock] = None,
 ) -> List[Dict[str, Any]]:
     """Resolve ``requests`` to taxonomy nodes via the LLM and embedding remap."""
@@ -190,19 +200,19 @@ async def match_items_to_tree(
     if not requests:
         return []
 
-    prompt_payloads: List[Tuple[str, Dict[str, Any]]] = []
+    message_payloads: List[Tuple[Sequence[Dict[str, Any]], Dict[str, Any]]] = []
     for req in requests:
-        prompt = make_tree_match_prompt(req.tree_markdown, req.item)
-        _print_prompt_once(prompt)
-        prompt_payloads.append(
-            (prompt, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id))
+        messages = make_tree_match_messages(req.tree_markdown, req.item)
+        _print_prompt_once(messages)
+        message_payloads.append(
+            (messages, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id))
         )
 
     raw_responses = await llama_completion_many(
-        prompt_payloads,
+        message_payloads,
         llm_config.endpoint,
+        model=llm_config.model,
         timeout=max(float(llm_config.n_predict), 64.0),
-        session=session,
     )
 
     encode_guard = encode_lock or threading.Lock()
@@ -347,7 +357,6 @@ async def match_item_to_tree(
     hnsw_index,
     llm_config: LLMConfig,
     slot_id: int = 0,
-    session: Optional[aiohttp.ClientSession] = None,
     encode_lock: Optional[threading.Lock] = None,
 ) -> Dict[str, Any]:
     """Compatibility wrapper for single-item matching."""
@@ -369,7 +378,6 @@ async def match_item_to_tree(
         embedder=embedder,
         hnsw_index=hnsw_index,
         llm_config=llm_config,
-        session=session,
         encode_lock=encode_lock,
     )
     return result[0]

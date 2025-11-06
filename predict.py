@@ -16,6 +16,7 @@ from src.utils import configure_logging, ensure_file_exists, set_global_seed
 
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def _make_tqdm_progress() -> ProgressHook:

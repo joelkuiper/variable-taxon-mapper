@@ -2,13 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 Summarize the 'definition' column of data/Keywords.csv to <= N words
-using a local llama.cpp HTTP endpoint, and write data/Keywords_summarized.csv.
+using an OpenAI-compatible chat completion endpoint, and write
+data/Keywords_summarized.csv.
 
 Usage:
     python summarize_definitions.py \
         --in data/Keywords.csv \
         --out data/Keywords_summarized.csv \
-        --endpoint http://127.0.0.1:8080/completions \
+        --endpoint http://127.0.0.1:8080/v1 \
+        --model gpt-3.5-turbo \
         --max-words 25 \
         --max-workers 8
 """
@@ -23,10 +25,10 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Sequence, Set
 
 import pandas as pd
-import requests
+from openai import OpenAI
 from tqdm.auto import tqdm
 
 from src.taxonomy import build_name_maps_from_graph, build_taxonomy_graph
@@ -34,47 +36,81 @@ from src.utils import configure_logging
 
 
 logger = logging.getLogger(__name__)
-
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # -------------------------------
-# llama.cpp client (minimal)
+# OpenAI-compatible chat client helpers
 # -------------------------------
 
-_SESSION: Optional[requests.Session] = None
+_CLIENTS: Dict[str, OpenAI] = {}
 
 
-def get_session() -> requests.Session:
-    global _SESSION
-    if _SESSION is None:
-        _SESSION = requests.Session()
-    return _SESSION
+def _normalize_api_base(endpoint: str) -> str:
+    base = (endpoint or "").strip()
+    if not base:
+        raise ValueError("Endpoint must be a non-empty string")
+    base = base.rstrip("/")
+    if base.endswith("/completions"):
+        base = base[: -len("/completions")]
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    return base
 
 
-def llama_completion(
-    endpoint: str,
-    prompt: str,
-    *,
-    temperature: float = 0.8,
-    top_k: int = 20,
-    top_p: float = 0.8,
-    min_p: float = 0.0,
-    n_predict: int = 96,
-    timeout: float = 120.0,
-) -> str:
-    """POST /completions to llama.cpp; returns 'content' text."""
-    s = get_session()
-    payload = {
-        "prompt": prompt,
-        "stream": False,
-        "temperature": temperature,
-        "top_k": top_k,
-        "top_p": top_p,
-        "min_p": min_p,
-        "n_predict": n_predict,
+def _get_client(endpoint: str) -> OpenAI:
+    base = _normalize_api_base(endpoint)
+    client = _CLIENTS.get(base)
+    if client is None:
+        api_key = os.getenv("OPENAI_API_KEY", "sk-no-key-required")
+        client = OpenAI(base_url=base, api_key=api_key)
+        _CLIENTS[base] = client
+    return client
+
+
+def _split_request_kwargs(kwargs: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    recognized = {}
+    extra = {}
+    recognized_keys = {
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "response_format",
+        "stop",
+        "temperature",
+        "top_p",
     }
-    r = s.post(endpoint, json=payload, timeout=(10, timeout))
-    r.raise_for_status()
-    return r.json().get("content", "")
+    for key, value in kwargs.items():
+        if key in recognized_keys:
+            if value is not None:
+                recognized[key] = value
+        elif value is not None:
+            extra[key] = value
+    return recognized, extra
+
+
+def chat_completion(
+    *,
+    endpoint: str,
+    model: str,
+    messages: Sequence[Dict[str, str]],
+    timeout: float = 120.0,
+    **kwargs: Any,
+) -> str:
+    client = _get_client(endpoint)
+    standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
+    response = client.chat.completions.create(
+        model=model,
+        messages=list(messages),
+        timeout=timeout,
+        extra_body=extra_body or None,
+        **standard_kwargs,
+    )
+    if not response.choices:
+        raise RuntimeError("LLM returned no choices for the chat completion request")
+    message = response.choices[0].message
+    if message is None or message.content is None:
+        raise RuntimeError("Chat completion response did not include message content")
+    return message.content
 
 
 # -------------------------------
@@ -111,7 +147,7 @@ def trim_to_words(s: str, max_words: int) -> str:
     return s
 
 
-def make_prompt(context: SummaryContext, max_words: int) -> str:
+def make_messages(context: SummaryContext, max_words: int) -> list[Dict[str, str]]:
     sysmsg = SYSTEM_INSTRUCTIONS_TEMPLATE.format(max_words=max_words)
 
     user_lines = []
@@ -122,21 +158,25 @@ def make_prompt(context: SummaryContext, max_words: int) -> str:
     user_lines.append(f"Definition: {context.definition}")
     user = "\n".join(user_lines)
 
-    # Chat-style markers commonly supported by llama.cpp chat templates
-    return (
-        "<|im_start|>system\n" + sysmsg + "\n<|im_end|>\n"
-        "<|im_start|>user\n" + user + "\n<|im_end|>\n"
-        "<|im_start|>assistant\n"
-    )
+    return [
+        {"role": "system", "content": sysmsg},
+        {"role": "user", "content": user},
+    ]
 
 
-def summarize_once(context: SummaryContext, endpoint: str, max_words: int) -> str:
+def summarize_once(
+    context: SummaryContext,
+    endpoint: str,
+    model: str,
+    max_words: int,
+) -> str:
     if not context.definition:
         return ""
-    prompt = make_prompt(context, max_words)
-    out = llama_completion(
+    messages = make_messages(context, max_words)
+    out = chat_completion(
         endpoint=endpoint,
-        prompt=prompt,
+        model=model,
+        messages=messages,
         temperature=0.8,
         top_k=20,
         top_p=0.8,
@@ -167,8 +207,13 @@ def main():
     )
     ap.add_argument(
         "--endpoint",
-        default="http://127.0.0.1:8080/completions",
-        help="llama.cpp /completions URL",
+        default="http://127.0.0.1:8080/v1",
+        help="OpenAI-compatible API base URL (e.g. http://127.0.0.1:8080/v1)",
+    )
+    ap.add_argument(
+        "--model",
+        default="gpt-3.5-turbo",
+        help="Chat completion model name",
     )
     ap.add_argument("--max-words", type=int, default=25, help="Max words per summary")
     ap.add_argument("--max-workers", type=int, default=8, help="Thread pool size")
@@ -177,6 +222,7 @@ def main():
     in_path = args.in_csv
     out_path = args.out_csv
     endpoint = args.endpoint
+    model = args.model
     max_words = max(1, args.max_words)
     max_workers = max(1, args.max_workers)
 
@@ -282,7 +328,7 @@ def main():
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {
-            ex.submit(summarize_once, ctx, endpoint, max_words): ctx
+            ex.submit(summarize_once, ctx, endpoint, model, max_words): ctx
             for ctx in unique_contexts
         }
         for fut in tqdm(as_completed(futures), total=len(futures), desc="Summarizing"):

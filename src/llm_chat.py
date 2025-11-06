@@ -1,15 +1,19 @@
-"""Prompt building and llama.cpp HTTP client helpers."""
+"""Prompt building and OpenAI-compatible chat client helpers."""
 
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
+import os
 from textwrap import dedent
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-import aiohttp
+from openai import AsyncOpenAI, OpenAI
 
 from .utils import clean_text
+
+
+logger = logging.getLogger(__name__)
 
 
 GRAMMAR_RESPONSE = r"""
@@ -27,204 +31,211 @@ obj ::= ("{" quote "concept_label" quote ": " string "}")
 """
 
 
-class LlamaHTTPError(RuntimeError):
-    def __init__(self, status: int, body: str):
-        super().__init__(f"HTTP {status}: {body}")
-        self.status = status
-        self.body = body
+_SYNC_CLIENTS: Dict[str, OpenAI] = {}
+_ASYNC_CLIENTS: Dict[str, AsyncOpenAI] = {}
+_PROMPT_DEBUG_SHOWN = False
+
+
+def _normalize_api_base(endpoint: str) -> str:
+    base = (endpoint or "").strip()
+    if not base:
+        raise ValueError("Endpoint must be a non-empty string")
+    base = base.rstrip("/")
+    if base.endswith("/completions"):
+        base = base[: -len("/completions")]
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    return base
+
+
+def _api_key() -> str:
+    return os.getenv("OPENAI_API_KEY", "sk-no-key-required")
+
+
+def _get_sync_client(endpoint: str) -> OpenAI:
+    base = _normalize_api_base(endpoint)
+    client = _SYNC_CLIENTS.get(base)
+    if client is None:
+        client = OpenAI(base_url=base, api_key=_api_key())
+        _SYNC_CLIENTS[base] = client
+    return client
+
+
+def _get_async_client(endpoint: str) -> AsyncOpenAI:
+    base = _normalize_api_base(endpoint)
+    client = _ASYNC_CLIENTS.get(base)
+    if client is None:
+        client = AsyncOpenAI(base_url=base, api_key=_api_key())
+        _ASYNC_CLIENTS[base] = client
+    return client
+
+
+def _split_request_kwargs(kwargs: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    recognized_keys = {
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "response_format",
+        "stop",
+        "temperature",
+        "top_p",
+    }
+    standard: Dict[str, Any] = {}
+    extra: Dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if value is None:
+            continue
+        if key in recognized_keys:
+            standard[key] = value
+        else:
+            extra[key] = value
+    return standard, extra
 
 
 async def llama_completion_async(
-    prompt: Union[str, Iterable[Union[str, int]]],
+    messages: Sequence[Dict[str, Any]],
     endpoint: str,
     *,
+    model: str,
     timeout: float = 120.0,
-    session: Optional[aiohttp.ClientSession] = None,
     **kwargs: Any,
 ) -> str:
-    payload: Dict[str, Any] = {"prompt": prompt}
-    payload.update(kwargs)
-
-    close_session = False
-    if session is None:
-        timeout_cfg = aiohttp.ClientTimeout(
-            total=None, sock_connect=10, sock_read=timeout
-        )
-        session = aiohttp.ClientSession(timeout=timeout_cfg)
-        close_session = True
-    try:
-        request_timeout = aiohttp.ClientTimeout(
-            total=None, sock_connect=10, sock_read=timeout
-        )
-        async with session.post(
-            endpoint,
-            json=payload,
-            timeout=request_timeout,
-        ) as resp:
-            if resp.status >= 400:
-                raise LlamaHTTPError(resp.status, await resp.text())
-
-            try:
-                raw_body = await resp.text()
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                raise RuntimeError(
-                    f"Failed to read response from LLM endpoint {endpoint!r}: {exc}"
-                ) from exc
-
-            if not raw_body.strip():
-                raise RuntimeError(
-                    "LLM endpoint returned an empty response body; "
-                    "cannot extract completion."
-                )
-
-            try:
-                data = json.loads(raw_body)
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    "LLM endpoint returned invalid JSON; cannot extract completion."
-                ) from exc
-
-            if "error" in data and data.get("error"):
-                raise RuntimeError(
-                    f"LLM endpoint reported an error: {data.get('error')}"
-                )
-
-            content = data.get("content")
-            if isinstance(content, list):
-                parts: List[str] = []
-                for chunk in content:
-                    if isinstance(chunk, dict):
-                        text = chunk.get("text")
-                        if isinstance(text, str):
-                            parts.append(text)
-                    elif isinstance(chunk, str):
-                        parts.append(chunk)
-                content = "".join(parts)
-
-            if not isinstance(content, str) or not content.strip():
-                raise RuntimeError("LLM endpoint response is missing completion text.")
-
-            return content
-    except asyncio.CancelledError:
-        raise
-    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-        raise RuntimeError(
-            f"Error while contacting LLM endpoint {endpoint!r}: {exc}"
-        ) from exc
-    finally:
-        if close_session and session is not None:
-            await session.close()
+    client = _get_async_client(endpoint)
+    standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
+    response = await client.chat.completions.create(
+        model=model,
+        messages=list(messages),
+        timeout=timeout,
+        extra_body=extra_body or None,
+        **standard_kwargs,
+    )
+    if not response.choices:
+        raise RuntimeError("Chat completion returned no choices")
+    message = response.choices[0].message
+    if message is None or message.content is None:
+        raise RuntimeError("Chat completion response missing message content")
+    return message.content
 
 
 async def llama_completion_many(
-    requests: Sequence[Tuple[Union[str, Iterable[Union[str, int]]], Dict[str, Any]]],
+    requests: Sequence[Tuple[Sequence[Dict[str, Any]], Dict[str, Any]]],
     endpoint: str,
     *,
+    model: str,
     timeout: float = 120.0,
-    session: Optional[aiohttp.ClientSession] = None,
 ) -> List[str]:
-    """Resolve multiple prompts concurrently while sharing an HTTP session."""
+    """Resolve multiple chat prompts concurrently."""
 
     if not requests:
         return []
 
-    close_session = False
-    if session is None:
-        timeout_cfg = aiohttp.ClientTimeout(
-            total=None, sock_connect=10, sock_read=timeout
-        )
-        session = aiohttp.ClientSession(timeout=timeout_cfg)
-        close_session = True
+    client = _get_async_client(endpoint)
 
     async def _run_single(
-        prompt: Union[str, Iterable[Union[str, int]]], kwargs: Dict[str, Any]
+        messages: Sequence[Dict[str, Any]], kwargs: Dict[str, Any]
     ) -> str:
-        payload = dict(kwargs)
-        payload.setdefault("session", session)
-        payload.setdefault("timeout", timeout)
-        return await llama_completion_async(prompt, endpoint, **payload)
+        standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
+        response = await client.chat.completions.create(
+            model=model,
+            messages=list(messages),
+            timeout=timeout,
+            extra_body=extra_body or None,
+            **standard_kwargs,
+        )
+        if not response.choices:
+            raise RuntimeError("Chat completion returned no choices")
+        message = response.choices[0].message
+        if message is None or message.content is None:
+            raise RuntimeError("Chat completion response missing message content")
+        return message.content
+
+    tasks = [asyncio.create_task(_run_single(messages, kwargs)) for messages, kwargs in requests]
+    pending: Set[asyncio.Task[str]] = set(tasks)
 
     try:
-        tasks = [
-            asyncio.create_task(_run_single(prompt, kwargs))
-            for prompt, kwargs in requests
-        ]
-
-        pending_tasks: Set[asyncio.Task[str]] = set(tasks)
-
-        while pending_tasks:
-            done, pending_tasks = await asyncio.wait(
-                pending_tasks, return_when=asyncio.FIRST_EXCEPTION
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_EXCEPTION
             )
-
             first_exc: Optional[BaseException] = None
             for task in done:
                 exc = task.exception()
                 if exc is not None:
                     first_exc = exc
                     break
-
             if first_exc is not None:
-                for task in pending_tasks:
+                for task in pending:
                     task.cancel()
-                if pending_tasks:
-                    await asyncio.gather(*pending_tasks, return_exceptions=True)
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
                 raise first_exc
-
-        results = [task.result() for task in tasks]
+        return [task.result() for task in tasks]
     finally:
-        if close_session and session is not None:
-            await session.close()
-
-    return list(results)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 def llama_completion(
-    prompt: Union[str, Iterable[Union[str, int]]],
+    messages: Sequence[Dict[str, Any]],
     endpoint: str,
     *,
+    model: str,
     timeout: float = 120.0,
-    session: Optional[aiohttp.ClientSession] = None,
     **kwargs: Any,
 ) -> str:
-    async def _runner() -> str:
-        return await llama_completion_async(
-            prompt,
-            endpoint,
-            timeout=timeout,
-            session=session,
-            **kwargs,
+    client = _get_sync_client(endpoint)
+    standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
+    response = client.chat.completions.create(
+        model=model,
+        messages=list(messages),
+        timeout=timeout,
+        extra_body=extra_body or None,
+        **standard_kwargs,
+    )
+    if not response.choices:
+        raise RuntimeError("Chat completion returned no choices")
+    message = response.choices[0].message
+    if message is None or message.content is None:
+        raise RuntimeError("Chat completion response missing message content")
+    return message.content
+
+
+def _format_chat_messages(messages: Sequence[Dict[str, Any]]) -> str:
+    parts = []
+    for message in messages:
+        role = str(message.get("role", "?")).upper()
+        content = str(message.get("content", ""))
+        parts.append(f"{role}:\n{content}")
+    return "\n\n".join(parts)
+
+
+def _print_prompt_once(messages: Sequence[Dict[str, Any]]) -> None:
+    """Print the first LLM prompt for debugging."""
+
+    global _PROMPT_DEBUG_SHOWN
+    if not _PROMPT_DEBUG_SHOWN:
+        _PROMPT_DEBUG_SHOWN = True
+        formatted = _format_chat_messages(messages)
+        logger.debug(
+            "\n====== LLM PROMPT (one-time) ======\n%s\n====== END PROMPT ======\n",
+            formatted,
         )
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(_runner())
-    else:
-        if loop.is_running():
-            raise RuntimeError(
-                "llama_completion cannot be called while an event loop is running; "
-                "use llama_completion_async instead."
-            )
-        return loop.run_until_complete(_runner())
 
-
-def make_tree_match_prompt(
+def make_tree_match_messages(
     tree_markdown_labels_only: str,
     item: Dict[str, Optional[str]],
-    *,
-    role_prefix: str = "<|im_start|>",
-    role_suffix: str = "",
-    eot: str = "<|im_end|>",
-) -> str:
+) -> List[Dict[str, str]]:
     tree_md = (tree_markdown_labels_only or "").strip()
     lab = clean_text(item.get("label"))
     nam = clean_text(item.get("name"))
     dat = clean_text(item.get("dataset"))
     desc = clean_text(item.get("description"))
 
-    template = """\
-        {role_prefix}system{role_suffix}
+    system_content = dedent(
+        """\
         # TASK
         • From the TREE (or SUGGESTIONS), choose **exactly one** concept that best matches the ITEM.
         • Prefer the most specific matching child, if present; only choose the parent if no child fits.
@@ -232,28 +243,28 @@ def make_tree_match_prompt(
         • Concepts may include a short description in square brackets.
           Those descriptions are guidance only; **output must be the exact concept label (no description)**.
         • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive.
-        • Output a single-line JSON, for example `{{"concept_label":"..."}}`.{eot}
-        {role_prefix}user{role_suffix}
+        • Output a single-line JSON, for example `{"concept_label":"..."}`.
+        """
+    ).strip()
+
+    user_content = dedent(
+        """\
         {tree}
 
         # ITEM:
         **{item_label}** ({item_name})
         dataset: {item_dataset}
-        description: {item_desc}{eot}
-        {role_prefix}assistant{role_suffix}
+        description: {item_desc}
+        """
+    ).format(
+        tree=tree_md,
+        item_label=lab,
+        item_name=nam,
+        item_dataset=dat,
+        item_desc=desc,
+    ).strip()
 
-    """
-    return (
-        dedent(template)
-        .format(
-            role_prefix=role_prefix,
-            role_suffix=role_suffix,
-            eot=eot,
-            tree=tree_md,
-            item_label=lab,
-            item_dataset=dat,
-            item_name=nam,
-            item_desc=desc,
-        )
-        .strip()
-    )
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content},
+    ]
