@@ -12,11 +12,14 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, List, Sequence
 
 import pandas as pd
+
+from .taxonomy import build_name_maps_from_graph, build_taxonomy_graph
 
 
 DECISION_KEYS = {
@@ -36,6 +39,7 @@ class ErrorRecord:
     description: str
     gold_labels: List[str]
     gold_definitions: List[str]
+    gold_paths: List[str]
     resolved_label: str
     resolved_definition: str
     resolved_path: str
@@ -86,10 +90,11 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def load_keywords_definitions(keywords_path: Path) -> dict[str, str]:
-    """Load keyword definitions keyed by the `name` column."""
+def load_keywords_metadata(keywords_path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Return definition summaries and taxonomy paths keyed by keyword name."""
 
     df = pd.read_csv(keywords_path, dtype=str).fillna("")
+
     # In case of duplicate names, keep the first non-empty definition summary.
     definitions: dict[str, str] = {}
     for row in df.itertuples():
@@ -97,7 +102,25 @@ def load_keywords_definitions(keywords_path: Path) -> dict[str, str]:
         definition = str(getattr(row, "definition_summary", ""))
         if name not in definitions or not definitions[name]:
             definitions[name] = definition
-    return definitions
+
+    taxonomy_paths: dict[str, str] = {}
+    if {"name", "parent"}.issubset(df.columns):
+        # Reconstruct the taxonomy graph using the original (non-filled) parent column.
+        taxonomy_df = pd.read_csv(keywords_path)
+        if "parent" in taxonomy_df.columns:
+            taxonomy_df["parent"] = taxonomy_df["parent"].apply(
+                lambda value: value
+                if pd.notna(value) and str(value).strip()
+                else pd.NA
+            )
+        try:
+            graph = build_taxonomy_graph(taxonomy_df)
+        except Exception:
+            graph = None
+        if graph is not None:
+            _, taxonomy_paths = build_name_maps_from_graph(graph)
+
+    return definitions, taxonomy_paths
 
 
 def load_prediction_errors(predictions_path: Path) -> pd.DataFrame:
@@ -140,12 +163,15 @@ def parse_label_list(value: str) -> List[str]:
 
 
 def enrich_records(
-    errors: pd.DataFrame, definitions: dict[str, str]
+    errors: pd.DataFrame,
+    definitions: dict[str, str],
+    taxonomy_paths: dict[str, str],
 ) -> List[ErrorRecord]:
     records: List[ErrorRecord] = []
     for row in errors.itertuples():
         gold_labels = parse_label_list(getattr(row, "gold_labels", ""))
         gold_definitions = [definitions.get(label, "") for label in gold_labels]
+        gold_paths = [taxonomy_paths.get(label, "") for label in gold_labels]
         resolved_label = str(getattr(row, "resolved_label", ""))
         resolved_definition = definitions.get(resolved_label, "")
 
@@ -158,6 +184,7 @@ def enrich_records(
                 description=str(getattr(row, "description", "")),
                 gold_labels=gold_labels,
                 gold_definitions=gold_definitions,
+                gold_paths=gold_paths,
                 resolved_label=resolved_label,
                 resolved_definition=resolved_definition,
                 resolved_path=str(getattr(row, "resolved_path", "")),
@@ -186,58 +213,84 @@ def clear_screen() -> None:
 
 def present_record(record: ErrorRecord, index: int, total: int) -> None:
     clear_screen()
-    header = f"Reviewing error {index + 1} of {total}"
-    print("=" * len(header))
-    print(header)
-    print("=" * len(header))
+    header_text = f"🔎  Reviewing Error {index + 1} of {total}"
+    minimum_width = max(len(header_text) + 4, 62)
+    terminal_width = shutil.get_terminal_size(fallback=(minimum_width, 24)).columns
+    content_width = max(minimum_width, terminal_width)
+    divider = "─" * content_width
+
+    print(f"╭{'─' * (content_width - 2)}╮")
+    print(f"│{header_text.center(content_width - 2)}│")
+    print(f"╰{'─' * (content_width - 2)}╯")
     print()
 
-    context_lines = [
-        f"Dataset       : {record.dataset}",
-        f"Label         : {record.label}",
-        f"Name          : {record.name}",
-        f"Description   : {record.description}",
-    ]
-    print("Context:")
-    for line in context_lines:
-        print(f"  {line}")
+    label_width = 13
+    indent = "  "
+    value_width = max(20, content_width - len(indent) - label_width - 3)
+
+    def print_field(label: str, value: str) -> None:
+        clean_value = value or ""
+        lines = list(wrap_text(clean_value, width=value_width)) or [""]
+        label_text = f"{label:<{label_width}}"
+        first, *rest = lines
+        print(f"{indent}{label_text} : {first}")
+        for line in rest:
+            print(f"{indent}{' ' * label_width}   {line}")
+
+    print("📁 Item")
+    print(divider)
+    print_field("Dataset", record.dataset)
+    print_field("Label", record.label)
+    print_field("Name", record.name)
+    print_field("Description", record.description)
     print()
 
-    gold_lines = []
-    for label, definition in zip(record.gold_labels, record.gold_definitions):
-        gold_lines.append(f"{label}")
-        if definition:
-            for wrapped in wrap_text(definition):
-                gold_lines.append(f"    {wrapped}")
-        else:
-            gold_lines.append("    (no definition)")
-        gold_lines.append("")
-    if gold_lines:
-        print("Ground Truth:")
-        for line in gold_lines:
-            print(f"  {line}")
+    print("🏷️  Ground Truth")
+    print(divider)
+    if record.gold_labels:
+        for label, path, definition in zip(
+            record.gold_labels, record.gold_paths, record.gold_definitions
+        ):
+            print_field("Label", label)
+            print_field("Path", path or "(no path)")
+            print_field("Definition", definition or "(no definition)")
+            print()
     else:
-        print("Ground Truth:\n  (no gold labels provided)")
-    print()
+        print(f"{indent}(no gold labels provided)")
+        print()
 
-    print("Model Prediction:")
-    print(f"  Resolved Label : {record.resolved_label or '(none)'}")
+    print("🤖 Model Prediction")
+    print(divider)
+    print_field("Resolved Label", record.resolved_label or "(none)")
+    print_field("Path", record.resolved_path or "(none)")
     if record.resolved_definition:
-        print("  Definition     :")
-        for wrapped in wrap_text(record.resolved_definition):
-            print(f"    {wrapped}")
+        print_field("Definition", record.resolved_definition)
     else:
-        print("  Definition     : (no definition)")
-    print(f"  Resolved Path  : {record.resolved_path or '(none)'}")
-    print()
-
-    print("Options: [A]ccept  [X] Reject  [U]nknown  [B]ack  [Q]uit")
+        print_field("Definition", "(no definition)")
+    print(divider)
+    print("Options: [A] Accept   [X] Reject   [U] Unknown   [B] Back   [Q] Quit")
+    print(divider)
 
 
 def wrap_text(text: str, width: int = 70) -> Iterator[str]:
     import textwrap
 
-    return iter(textwrap.wrap(text, width=width, replace_whitespace=False))
+    if text is None:
+        return iter(())
+
+    lines: List[str] = []
+    for paragraph in str(text).splitlines() or [""]:
+        if not paragraph:
+            lines.append("")
+            continue
+        wrapped = textwrap.wrap(
+            paragraph, width=width, replace_whitespace=False, drop_whitespace=False
+        )
+        if not wrapped:
+            lines.append("")
+        else:
+            lines.extend(wrapped)
+    return iter(lines)
 
 
 def append_decision(output_path: Path, row: dict[str, str]) -> None:
@@ -296,9 +349,9 @@ def review_records(
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_arguments(argv)
 
-    definitions = load_keywords_definitions(args.keywords)
+    definitions, taxonomy_paths = load_keywords_metadata(args.keywords)
     errors = load_prediction_errors(args.predictions)
-    records = enrich_records(errors, definitions)
+    records = enrich_records(errors, definitions, taxonomy_paths)
     existing_decisions = load_existing_decisions(args.output)
 
     review_records(records, existing_decisions, args.output)
