@@ -6,12 +6,13 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+import pandas as pd
 from tqdm.auto import tqdm
 
 from config import load_config
-from main import run_pipeline
 from src.evaluate import ProgressHook
-from src.utils import configure_logging, set_global_seed
+from src.pipeline import VariableTaxonMapper
+from src.utils import configure_logging, ensure_file_exists, set_global_seed
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> None:
     variables_path = (
         args.variables.resolve() if args.variables is not None else variables_default
     )
+    variables_path = variables_path.resolve()
     logger.debug("Using variables path: %s", variables_path)
 
     parallel_cfg = config.parallelism
@@ -109,11 +111,18 @@ def main(argv: list[str] | None = None) -> None:
         parallel_cfg.pruning_batch_size,
     )
 
+    ensure_file_exists(variables_path, "variables CSV")
+    variables = pd.read_csv(variables_path, low_memory=False)
+    logger.info(
+        "Loaded variables frame with %d rows and %d columns",
+        len(variables),
+        len(variables.columns),
+    )
+
+    mapper = VariableTaxonMapper.from_config(config, base_path=base_path)
     progress_hook = _make_tqdm_progress()
-    df, _ = run_pipeline(
-        config,
-        base_path=base_path,
-        variables_csv=variables_path,
+    df, _ = mapper.predict(
+        variables,
         evaluate=False,
         progress_hook=progress_hook,
     )

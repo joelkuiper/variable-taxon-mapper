@@ -5,40 +5,18 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 import pandas as pd
 
 from config import AppConfig, load_config
-from src.embedding import (
-    Embedder,
-    build_hnsw_index,
-    build_taxonomy_embeddings_composed,
-)
-from src.evaluate import ProgressHook, run_label_benchmark
-from src.taxonomy import (
-    build_gloss_map,
-    build_name_maps_from_graph,
-    build_taxonomy_graph,
-)
+from src.evaluate import ProgressHook
+from src.pipeline import VariableTaxonMapper
 from src.utils import configure_logging, ensure_file_exists, set_global_seed
 from src.reporting import report_results
 
 
 logger = logging.getLogger(__name__)
-
-
-def _prepare_keywords(
-    keywords: pd.DataFrame,
-) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
-    required_columns = {"name", "parent", "order"}
-    missing = sorted(required_columns - set(keywords.columns))
-    if missing:
-        raise KeyError(f"Keywords data missing required columns: {missing}")
-
-    summary_df = keywords if "definition_summary" in keywords.columns else None
-
-    return keywords, summary_df
 
 
 def run_pipeline(
@@ -66,11 +44,7 @@ def run_pipeline(
     variables_path = _resolve_input(variables_default, variables_csv)
     keywords_path = _resolve_input(keywords_default, None)
 
-    logger.debug("Resolved variables path: %s", variables_path)
-    logger.debug("Resolved keywords path: %s", keywords_path)
-
     ensure_file_exists(variables_path, "variables CSV")
-    ensure_file_exists(keywords_path, "keywords CSV")
 
     parallel_cfg = config.parallelism
     logger.info(
@@ -83,73 +57,20 @@ def run_pipeline(
     logger.info(
         "Loaded variables frame with %d rows and %d columns", len(variables), len(variables.columns)
     )
-    keywords_raw = pd.read_csv(keywords_path)
-    logger.info(
-        "Loaded keywords frame with %d rows and %d columns",
-        len(keywords_raw),
-        len(keywords_raw.columns),
+    logger.debug("Resolved variables path: %s", variables_path)
+    logger.debug("Resolved keywords path: %s", keywords_path)
+
+    mapper = VariableTaxonMapper.from_config(
+        config,
+        base_path=base_path,
+        keywords_path=keywords_path,
     )
 
-    keywords, summary_df = _prepare_keywords(keywords_raw)
-    logger.debug(
-        "Prepared keywords dataframe; summaries_present=%s",
-        summary_df is not None,
-    )
-
-    G = build_taxonomy_graph(
-        keywords,
-        name_col="name",
-        parent_col="parent",
-        order_col="order",
-    )
-    logger.info("Constructed taxonomy graph with %d nodes", len(G))
-    name_to_id, name_to_path = build_name_maps_from_graph(G)
-    logger.debug("Generated taxonomy name mappings: %d entries", len(name_to_id))
-
-    embedder = Embedder(**config.embedder.to_kwargs())
-    logger.info("Initialized embedder %s", embedder.__class__.__name__)
-
-    taxonomy_kwargs = config.taxonomy_embeddings.to_kwargs()
-    summary_source = summary_df if summary_df is not None else None
-    tax_names, tax_embs = build_taxonomy_embeddings_composed(
-        G,
-        embedder,
-        summaries=summary_source,
-        **taxonomy_kwargs,
-    )
-    logger.info("Built taxonomy embeddings for %d labels", len(tax_names))
-
-    hnsw_index = build_hnsw_index(tax_embs, **config.hnsw.to_kwargs())
-    logger.debug("Constructed HNSW index for %d-dimensional embeddings", tax_embs.shape[1])
-    gloss_map = build_gloss_map(summary_source)
-    logger.debug("Constructed gloss map with %d entries", len(gloss_map))
-
-    logger.info(
-        "Starting label benchmark evaluation; evaluate=%s, total_variables=%d",
-        evaluate,
-        len(variables),
-    )
-    df, metrics = run_label_benchmark(
+    df, metrics = mapper.predict(
         variables,
-        keywords,
-        G=G,
-        embedder=embedder,
-        tax_names=tax_names,
-        tax_embs_unit=tax_embs,
-        hnsw_index=hnsw_index,
-        name_to_id=name_to_id,
-        name_to_path=name_to_path,
-        gloss_map=gloss_map,
-        eval_config=config.evaluation,
-        pruning_config=config.pruning,
-        llm_config=config.llm,
-        parallel_config=config.parallelism,
-        http_config=config.http,
         evaluate=evaluate,
         progress_hook=progress_hook,
-        field_mapping=config.fields,
     )
-    logger.info("Completed label benchmark evaluation")
 
     return df, metrics
 
@@ -173,12 +94,22 @@ def main(argv: list[str] | None = None) -> None:
     config = load_config(config_path)
     logger.info("Loaded configuration from %s", config_path)
     set_global_seed(config.seed)
-    variables_path, _ = config.data.to_paths(base_path)
-    df, metrics = run_pipeline(
+    variables_path, keywords_path = config.data.to_paths(base_path)
+    mapper = VariableTaxonMapper.from_config(
         config,
         base_path=base_path,
-        variables_csv=variables_path,
+        keywords_path=keywords_path,
     )
+
+    ensure_file_exists(variables_path, "variables CSV")
+    variables = pd.read_csv(variables_path, low_memory=False)
+    logger.info(
+        "Loaded variables frame with %d rows and %d columns",
+        len(variables),
+        len(variables.columns),
+    )
+
+    df, metrics = mapper.predict(variables)
 
     results_path = config.evaluation.resolve_results_path(
         base_path=base_path,
