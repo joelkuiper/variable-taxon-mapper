@@ -115,7 +115,7 @@ pruning_queue_size = 16
 # Coordinator-side embeddings keep GPU usage serial while pruning runs in a
 # thread pool by default. Set ``pruning_embed_on_workers = true`` to clone the
 # embedder in each worker process and optionally provide device affinity.
-pruning_embed_on_workers = false
+pruning_embed_on_workers = true
 # pruning_worker_devices = ["cuda:0", "cuda:1"]
 
 [http]
