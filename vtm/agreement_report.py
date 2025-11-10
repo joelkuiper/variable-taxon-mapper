@@ -248,7 +248,8 @@ def _format_table(data: Iterable[dict[str, object]] | pd.DataFrame) -> str:
     if isinstance(data, pd.DataFrame):
         if data.empty:
             return "(no data)"
-        return tabulate(data, headers="keys", tablefmt="rounded_grid", showindex=False)
+        records = data.to_dict(orient="records")
+        return tabulate(records, headers="keys", tablefmt="rounded_grid", showindex=False)
     data = list(data)
     if not data:
         return "(no data)"
@@ -313,8 +314,9 @@ def generate_report(args: argparse.Namespace) -> None:
 
     if n_raters == 2:
         r1, r2 = rater_names
-        overall = (merged[r1] == merged[r2]).mean()
-        summary_rows.append({"Metric": "Percent Agreement", "Value": f"{overall * 100:.2f}%"})
+        overall_value = float((merged[r1] == merged[r2]).mean())
+        overall = overall_value
+        summary_rows.append({"Metric": "Percent Agreement", "Value": f"{overall_value * 100:.2f}%"})
     else:
         kappa = _fleiss_kappa(merged, rater_names)
         summary_rows.append({"Metric": "Fleiss' Kappa", "Value": f"{kappa:.4f}"})

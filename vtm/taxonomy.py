@@ -6,7 +6,7 @@ import hashlib
 import logging
 import math
 import time
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
 
 import networkx as nx
 import pandas as pd
@@ -269,7 +269,7 @@ def ancestors_to_root(G: nx.DiGraph, node: str) -> List[str]:
     ancestors.update(canonical_path.get(node, (node,)))
     ancestors.add(node)
 
-    def _sort_key(label: str) -> Tuple[int, str]:
+    def _sort_key(label: str) -> Tuple[float, str]:
         depth = depth_map.get(label)
         if depth is None:
             return (math.inf, label.lower())

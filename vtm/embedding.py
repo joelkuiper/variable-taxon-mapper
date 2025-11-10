@@ -4,7 +4,20 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
+
+from typing import Literal
 
 
 import numpy as np
@@ -139,9 +152,10 @@ def _resolve_default_fields(
         return field_mapping.item_text_keys()
     candidate = item.get("_text_fields")
     if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes)):
+        candidate_seq: Sequence[object] = list(candidate)
         fields = [
             str(key)
-            for key in candidate
+            for key in candidate_seq
             if isinstance(key, str) and key and not key.startswith("_")
         ]
         if fields:
@@ -165,11 +179,14 @@ def collect_item_texts(
 ) -> List[str]:
     """Extract candidate text fields from an item for embedding."""
 
+    resolved_fields: Sequence[str]
     if fields is None:
-        fields = _resolve_default_fields(item, field_mapping)
+        resolved_fields = _resolve_default_fields(item, field_mapping)
+    else:
+        resolved_fields = list(fields)
 
     texts: List[str] = []
-    for key in fields:
+    for key in resolved_fields:
         raw = item.get(key)
         if clean:
             text = clean_text(raw)
@@ -224,6 +241,15 @@ def cosine_match_maxpool(
     return j, float(best[j])
 
 
+def _normalize_hnsw_space(space: str) -> Literal["l2", "ip", "cosine"]:
+    candidate = space.strip().lower()
+    if candidate not in {"l2", "ip", "cosine"}:
+        raise ValueError(
+            "HNSW space must be one of {'l2', 'ip', 'cosine'}, got %r" % space
+        )
+    return cast(Literal["l2", "ip", "cosine"], candidate)
+
+
 def build_hnsw_index(
     embs_unit: np.ndarray,
     *,
@@ -232,13 +258,14 @@ def build_hnsw_index(
     ef_construction: int = 200,
     ef_search: int = 128,
     num_threads: int = 0,
-):
+) -> Any:
     if embs_unit.dtype != np.float32:
         embs_unit = embs_unit.astype(np.float32, copy=False)
     N, D = embs_unit.shape
     import hnswlib
 
-    index = hnswlib.Index(space=space, dim=D)
+    normalized_space = _normalize_hnsw_space(space)
+    index = hnswlib.Index(space=normalized_space, dim=D)
     index.init_index(max_elements=N, ef_construction=ef_construction, M=M)
     index.add_items(embs_unit, np.arange(N), num_threads=num_threads)
     index.set_ef(ef_search)

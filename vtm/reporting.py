@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
 
@@ -61,23 +61,25 @@ def format_metrics(
     sections.extend(["## Evaluation Metrics", ""])
     consumed: set[str] = set()
 
-    summary_table = _build_summary_section(metrics, consumed)
+    metrics_map: Mapping[str, Any] = metrics or {}
+
+    summary_table = _build_summary_section(metrics_map, consumed)
     if summary_table:
         sections.extend(["### Summary", summary_table, ""])
 
-    accuracy_table = _build_accuracy_section(metrics, consumed)
+    accuracy_table = _build_accuracy_section(metrics_map, consumed)
     if accuracy_table:
         sections.extend(["### Accuracy", accuracy_table, ""])
 
-    match_table = _build_match_type_section(metrics, consumed)
+    match_table = _build_match_type_section(metrics_map, consumed)
     if match_table:
         sections.extend(["### Match types", match_table, ""])
 
-    strategy_table = _build_strategy_section(metrics, consumed)
+    strategy_table = _build_strategy_section(metrics_map, consumed)
     if strategy_table:
         sections.extend(["### Match strategy performance", strategy_table, ""])
 
-    hierarchy_table = _build_hierarchical_section(metrics, consumed)
+    hierarchy_table = _build_hierarchical_section(metrics_map, consumed)
     if hierarchy_table:
         sections.extend(["### Hierarchical distance metrics", hierarchy_table, ""])
 
@@ -95,17 +97,20 @@ def format_metrics(
     return "\n".join(part for part in sections if part).strip()
 
 
-def _build_summary_section(metrics: dict[str, Any], consumed: set[str]) -> str:
+def _build_summary_section(metrics: Mapping[str, Any], consumed: set[str]) -> str:
     rows: list[dict[str, str]] = []
 
     def add(label: str, key: str, kind: str) -> None:
         if key not in metrics:
             return
         value = metrics[key]
-        formatter = {"int": _as_int, "pct": _as_percent, "float": _as_float}.get(
-            kind, str
-        )
-        formatted = formatter(value) if callable(formatter) else str(value)
+        formatters: dict[str, Callable[[Any], str]] = {
+            "int": _as_int,
+            "pct": _as_percent,
+            "float": _as_float,
+        }
+        formatter = formatters.get(kind)
+        formatted = formatter(value) if formatter is not None else str(value)
         rows.append({"Metric": label, "Value": formatted})
         consumed.add(key)
 
@@ -139,7 +144,7 @@ def _build_summary_section(metrics: dict[str, Any], consumed: set[str]) -> str:
     return _markdown(summary_df)
 
 
-def _build_accuracy_section(metrics: dict[str, Any], consumed: set[str]) -> str:
+def _build_accuracy_section(metrics: Mapping[str, Any], consumed: set[str]) -> str:
     rows: list[dict[str, str]] = []
 
     def add(label: str, key: str) -> None:
@@ -161,7 +166,7 @@ def _build_accuracy_section(metrics: dict[str, Any], consumed: set[str]) -> str:
     return _markdown(accuracy_df)
 
 
-def _build_match_type_section(metrics: dict[str, Any], consumed: set[str]) -> str:
+def _build_match_type_section(metrics: Mapping[str, Any], consumed: set[str]) -> str:
     counts = metrics.get("match_type_counts") or {}
     rates = metrics.get("match_type_rates") or {}
 
@@ -186,7 +191,7 @@ def _build_match_type_section(metrics: dict[str, Any], consumed: set[str]) -> st
     return _markdown(match_df)
 
 
-def _build_hierarchical_section(metrics: dict[str, Any], consumed: set[str]) -> str:
+def _build_hierarchical_section(metrics: Mapping[str, Any], consumed: set[str]) -> str:
     # Human-readable labels for hierarchical metrics
     _HUMAN_LABELS: dict[str, tuple[str, str]] = {
         "hierarchical_distance_count": ("Rows with computable distances", "int"),
@@ -232,7 +237,7 @@ def _build_hierarchical_section(metrics: dict[str, Any], consumed: set[str]) -> 
     return _markdown(hier_df)
 
 
-def _build_strategy_section(metrics: dict[str, Any], consumed: set[str]) -> str:
+def _build_strategy_section(metrics: Mapping[str, Any], consumed: set[str]) -> str:
     strategy_perf: dict[str, Any] | None = metrics.get("match_strategy_performance")
     strategy_share: dict[str, Any] | None = metrics.get("match_strategy_correct_share")
     strategy_volume: dict[str, Any] | None = metrics.get("match_strategy_volume")

@@ -82,7 +82,8 @@ def _iter_prediction_jobs(
 
     for j, idx in enumerate(idxs):
         row = df.loc[idx]
-        row_dict = row.to_dict()
+        row_dict_raw = row.to_dict()
+        row_dict = {str(key): value for key, value in row_dict_raw.items()}
         item = {
             "dataset": row_dict.get(dataset_col) if dataset_col else None,
             "label": row_dict.get(label_col) if label_col else None,

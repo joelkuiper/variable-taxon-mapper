@@ -112,11 +112,16 @@ def _iter_descendant_layers(
 ) -> Iterable[Sequence[str]]:
     layer_list = list(layers)
     if not layer_list:
-        return []
+        return ()
     first = layer_list[0]
     if isinstance(first, str):
-        return [layer_list]
-    return [list(layer) for layer in layer_list]
+        flattened = [child for child in layer_list if isinstance(child, str)]
+        return (tuple(flattened),)
+    typed_layers: list[Sequence[str]] = []
+    for layer in layer_list:
+        if isinstance(layer, Sequence) and not isinstance(layer, (str, bytes)):
+            typed_layers.append(tuple(str(child) for child in layer if isinstance(child, str)))
+    return tuple(typed_layers)
 
 
 def maybe_snap_to_child(

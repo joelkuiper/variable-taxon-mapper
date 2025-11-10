@@ -29,6 +29,11 @@ from typing import Any, Dict, Optional, Sequence, Set
 
 import pandas as pd
 from openai import OpenAI
+from openai.types.chat import (
+    ChatCompletionMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+)
 from tqdm.auto import tqdm
 
 from vtm.taxonomy import build_name_maps_from_graph, build_taxonomy_graph
@@ -92,16 +97,15 @@ def chat_completion(
     *,
     endpoint: str,
     model: str,
-    messages: Sequence[Dict[str, str]],
+    messages: Sequence[ChatCompletionMessageParam],
     timeout: float = 120.0,
     **kwargs: Any,
 ) -> str:
-    client = _get_client(endpoint)
+    client = _get_client(endpoint).with_options(timeout=timeout)
     standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
     response = client.chat.completions.create(
         model=model,
         messages=list(messages),
-        timeout=timeout,
         extra_body=extra_body or None,
         **standard_kwargs,
     )
@@ -147,7 +151,9 @@ def trim_to_words(s: str, max_words: int) -> str:
     return s
 
 
-def make_messages(context: SummaryContext, max_words: int) -> list[Dict[str, str]]:
+def make_messages(
+    context: SummaryContext, max_words: int
+) -> list[ChatCompletionMessageParam]:
     sysmsg = SYSTEM_INSTRUCTIONS_TEMPLATE.format(max_words=max_words)
 
     user_lines = []
@@ -158,10 +164,15 @@ def make_messages(context: SummaryContext, max_words: int) -> list[Dict[str, str
     user_lines.append(f"Definition: {context.definition}")
     user = "\n".join(user_lines)
 
-    return [
-        {"role": "system", "content": sysmsg},
-        {"role": "user", "content": user},
-    ]
+    system_message: ChatCompletionSystemMessageParam = {
+        "role": "system",
+        "content": sysmsg,
+    }
+    user_message: ChatCompletionUserMessageParam = {
+        "role": "user",
+        "content": user,
+    }
+    return [system_message, user_message]
 
 
 def summarize_once(

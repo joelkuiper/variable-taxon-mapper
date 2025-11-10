@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 from config import LLMConfig
+from openai.types.chat import ChatCompletionMessageParam
 from .embedding import Embedder, collect_item_texts
 from .snap import maybe_snap_to_child
 from .llm_chat import (
@@ -25,7 +26,7 @@ _PROMPT_DEBUG_SHOWN = False
 logger = logging.getLogger(__name__)
 
 
-def _format_prompt(messages: Sequence[Dict[str, Any]]) -> str:
+def _format_prompt(messages: Sequence[ChatCompletionMessageParam]) -> str:
     parts: List[str] = []
     for message in messages:
         role = str(message.get("role", "?")).upper()
@@ -34,7 +35,7 @@ def _format_prompt(messages: Sequence[Dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
-def _print_prompt_once(messages: Sequence[Dict[str, Any]]) -> None:
+def _print_prompt_once(messages: Sequence[ChatCompletionMessageParam]) -> None:
     """Print the first LLM prompt for debugging."""
 
     global _PROMPT_DEBUG_SHOWN
@@ -204,7 +205,9 @@ async def match_items_to_tree(
 
     renderer = prompt_renderer or create_prompt_renderer()
 
-    message_payloads: List[Tuple[Sequence[Dict[str, Any]], Dict[str, Any]]] = []
+    message_payloads: List[
+        Tuple[Sequence[ChatCompletionMessageParam], Dict[str, Any]]
+    ] = []
     for req in requests:
         messages = renderer.render_messages(
             req.tree_markdown, req.item, item_columns=req.item_columns

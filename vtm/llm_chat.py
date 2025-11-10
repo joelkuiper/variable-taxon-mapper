@@ -8,6 +8,7 @@ import os
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from openai import AsyncOpenAI, OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ def _split_request_kwargs(kwargs: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[
 
 
 async def llama_completion_async(
-    messages: Sequence[Dict[str, Any]],
+    messages: Sequence[ChatCompletionMessageParam],
     endpoint: str,
     *,
     model: str,
@@ -109,12 +110,11 @@ async def llama_completion_async(
     api_key: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
-    client = _get_async_client(endpoint, api_key=api_key)
+    client = _get_async_client(endpoint, api_key=api_key).with_options(timeout=timeout)
     standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
     response = await client.chat.completions.create(
         model=model,
         messages=list(messages),
-        timeout=timeout,
         extra_body=extra_body or None,
         **standard_kwargs,
     )
@@ -127,7 +127,7 @@ async def llama_completion_async(
 
 
 async def llama_completion_many(
-    requests: Sequence[Tuple[Sequence[Dict[str, Any]], Dict[str, Any]]],
+    requests: Sequence[Tuple[Sequence[ChatCompletionMessageParam], Dict[str, Any]]],
     endpoint: str,
     *,
     model: str,
@@ -139,16 +139,15 @@ async def llama_completion_many(
     if not requests:
         return []
 
-    client = _get_async_client(endpoint, api_key=api_key)
+    client = _get_async_client(endpoint, api_key=api_key).with_options(timeout=timeout)
 
     async def _run_single(
-        messages: Sequence[Dict[str, Any]], kwargs: Dict[str, Any]
+        messages: Sequence[ChatCompletionMessageParam], kwargs: Dict[str, Any]
     ) -> str:
         standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
         response = await client.chat.completions.create(
             model=model,
             messages=list(messages),
-            timeout=timeout,
             extra_body=extra_body or None,
             **standard_kwargs,
         )
@@ -188,7 +187,7 @@ async def llama_completion_many(
 
 
 def llama_completion(
-    messages: Sequence[Dict[str, Any]],
+    messages: Sequence[ChatCompletionMessageParam],
     endpoint: str,
     *,
     model: str,
@@ -196,12 +195,11 @@ def llama_completion(
     api_key: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
-    client = _get_sync_client(endpoint, api_key=api_key)
+    client = _get_sync_client(endpoint, api_key=api_key).with_options(timeout=timeout)
     standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
     response = client.chat.completions.create(
         model=model,
         messages=list(messages),
-        timeout=timeout,
         extra_body=extra_body or None,
         **standard_kwargs,
     )

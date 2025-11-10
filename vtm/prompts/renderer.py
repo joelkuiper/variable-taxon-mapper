@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
+from openai.types.chat import (
+    ChatCompletionMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+)
+
 from jinja2 import Environment, StrictUndefined, Template
 
 from config import PromptTemplateConfig
@@ -105,7 +111,7 @@ class PromptRenderer:
         item: Mapping[str, Any],
         *,
         item_columns: Optional[Mapping[str, Any]] = None,
-    ) -> list[dict[str, str]]:
+    ) -> list[ChatCompletionMessageParam]:
         item_data = _normalise_mapping(item)
         item_clean = _clean_mapping(item_data)
 
@@ -124,10 +130,15 @@ class PromptRenderer:
 
         system_content = self.system_template.render(context).strip()
         user_content = self.user_template.render(context).strip()
-        return [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_content},
-        ]
+        system_message: ChatCompletionSystemMessageParam = {
+            "role": "system",
+            "content": system_content,
+        }
+        user_message: ChatCompletionUserMessageParam = {
+            "role": "user",
+            "content": user_content,
+        }
+        return [system_message, user_message]
 
 
 def create_prompt_renderer(

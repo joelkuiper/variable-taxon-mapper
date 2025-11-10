@@ -356,14 +356,9 @@ class TreePruner:
             for label in allowed_ranked[:top_k]
         ]
 
-        markdown = "\n".join(
-            [
-                "\n# TREE",
-                tree_markdown,
-                "\n# SUGGESTIONS",
-                *suggestion_lines,
-            ]
-        )
+        sections: List[str] = ["\n# TREE", tree_markdown, "\n# SUGGESTIONS"]
+        sections.extend(suggestion_lines)
+        markdown = "\n".join(sections)
 
         allowed_lookup = set(allowed_ranked)
         depth_limit = max(1, int(context.max_descendant_depth))

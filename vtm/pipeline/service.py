@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import pandas as pd
+from pandas._libs.missing import NAType
 
 from config import AppConfig, TaxonomyFieldMappingConfig
 from vtm.embedding import (
@@ -61,10 +62,16 @@ def prepare_keywords_dataframe(
 
     canonical = keywords.rename(columns=rename_map).copy()
 
-    def _clean_str(value: object):
-        if pd.isna(value):
+    def _is_na(value: Any) -> bool:
+        try:
+            return bool(pd.isna(value))
+        except TypeError:
+            return False
+
+    def _clean_str(value: Any) -> str | NAType:
+        if _is_na(value):
             return pd.NA
-        text = str(value) if not isinstance(value, str) else value
+        text = value if isinstance(value, str) else str(value)
         text = text.strip()
         if not text:
             return pd.NA
@@ -86,27 +93,28 @@ def prepare_keywords_dataframe(
 
     identifier_to_name: dict[str, str] = {}
     if lookup_columns and "name" in canonical.columns:
-        for idx, canonical_name in canonical["name"].items():
-            if pd.isna(canonical_name):
+        relevant_cols = ["name", *lookup_columns]
+        for values in canonical[relevant_cols].itertuples(index=False, name=None):
+            canonical_name = values[0]
+            if _is_na(canonical_name):
                 continue
-            for column in lookup_columns:
-                raw_identifier = canonical.at[idx, column]
+            for column, raw_identifier in zip(lookup_columns, values[1:]):
                 cleaned_identifier = _clean_str(raw_identifier)
-                if pd.isna(cleaned_identifier):
+                if _is_na(cleaned_identifier):
                     continue
                 identifier_to_name[str(cleaned_identifier)] = str(canonical_name)
 
-    def _normalize_parent(value: object) -> object:
+    def _normalize_parent(value: Any) -> Any:
         cleaned = _clean_str(value)
-        if pd.isna(cleaned):
+        if _is_na(cleaned):
             return pd.NA
         return identifier_to_name.get(str(cleaned), cleaned)
 
     if "parent" in canonical.columns:
         canonical["parent"] = canonical["parent"].map(_normalize_parent)
 
-    def _normalize_multi_parent(value: object) -> object:
-        if pd.isna(value):
+    def _normalize_multi_parent(value: Any) -> Any:
+        if _is_na(value):
             return pd.NA
         text = str(value) if not isinstance(value, str) else value
         parts = [part.strip() for part in text.split("|")]

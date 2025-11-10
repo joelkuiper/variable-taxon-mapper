@@ -12,7 +12,7 @@ import threading
 import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple, cast
 
 import networkx as nx
 import numpy as np
@@ -20,7 +20,13 @@ import optuna
 import pandas as pd
 
 from check_pruned_tree import _compute_effective_subset
-from config import AppConfig, PruningConfig, TaxonomyEmbeddingConfig, load_config
+from config import (
+    AppConfig,
+    HNSWConfig,
+    PruningConfig,
+    TaxonomyEmbeddingConfig,
+    load_config,
+)
 from vtm.pipeline.service import prepare_keywords_dataframe
 from vtm.embedding import (
     Embedder,
@@ -79,17 +85,17 @@ class EvaluationContext:
     frame: pd.DataFrame
     embedder: Embedder
     tax_names: Sequence[str]
-    tax_embs: object
+    tax_embs: np.ndarray
     hnsw_index: object
-    gloss_map: Mapping[str, str]
+    gloss_map: Dict[str, str]
     rows: Sequence[EvaluationRow]
     total_nodes: int
     encode_lock: threading.Lock
     index_lock: threading.Lock
     ancestor_cache: Dict[str, set[str]]
-    taxonomy_cache: Dict[Tuple[float, float], Tuple[object, object]]
+    taxonomy_cache: Dict[Tuple[float, float], Tuple[np.ndarray, object]]
     summary_frame: Optional[pd.DataFrame]
-    hnsw_kwargs: Dict[str, object]
+    hnsw_config: HNSWConfig
 
 
 @dataclass
@@ -104,24 +110,28 @@ class EvaluationMetrics:
     n_allowed_subtree_contains_gold_or_parent: int
 
 
-class CachingEmbedder:
-    """Wrapper around ``Embedder`` adding simple memoisation."""
+class CachingEmbedder(Embedder):
+    """``Embedder`` variant that memoises ``encode`` calls by input tuple."""
 
-    def __init__(self, base: Embedder) -> None:
-        self._base = base
-        self._cache: Dict[tuple[str, ...], object] = {}
-        for attr in ("device", "tok", "model", "max_length", "batch_size", "mean_pool"):
-            if hasattr(base, attr):
-                setattr(self, attr, getattr(base, attr))
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._cache: Dict[tuple[str, ...], np.ndarray] = {}
 
-    def encode(self, texts: Sequence[str]):
+    def encode(self, texts: Sequence[str]) -> np.ndarray:
         key = tuple(texts)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        encoded = self._base.encode(texts)
+        encoded = super().encode(texts)
         self._cache[key] = encoded
         return encoded
+
+
+class SupportsToKwargs(Protocol):
+    """Objects exposing a ``to_kwargs`` helper for logging."""
+
+    def to_kwargs(self) -> Dict[str, Any]:
+        ...
 
 
 @dataclass
@@ -292,15 +302,14 @@ def prepare_context(
     )
     build_name_maps_from_graph(graph)  # validation side-effect
 
-    embedder = Embedder(**config.embedder.to_kwargs())
-    cached_embedder = CachingEmbedder(embedder)
+    embedder = CachingEmbedder(**config.embedder.to_kwargs())
 
     taxonomy_kwargs = config.taxonomy_embeddings.to_kwargs()
     hnsw_kwargs = config.hnsw.to_kwargs()
     summary_source = summary_df if summary_df is not None else None
     tax_names, tax_embs = build_taxonomy_embeddings_composed(
         graph,
-        cached_embedder,
+        embedder,
         summaries=summary_source,
         **taxonomy_kwargs,
     )
@@ -341,7 +350,7 @@ def prepare_context(
     return EvaluationContext(
         graph=graph,
         frame=keywords_df,
-        embedder=cached_embedder,
+        embedder=embedder,
         tax_names=tax_names,
         tax_embs=tax_embs,
         hnsw_index=hnsw_index,
@@ -352,13 +361,13 @@ def prepare_context(
         index_lock=threading.Lock(),
         ancestor_cache={},
         taxonomy_cache={
-            (taxonomy_kwargs["gamma"], taxonomy_kwargs["summary_weight"]): (
-                tax_embs,
-                hnsw_index,
-            )
+            (
+                round(float(taxonomy_kwargs["gamma"]), 6),
+                round(float(taxonomy_kwargs["summary_weight"]), 6),
+            ): (tax_embs, hnsw_index)
         },
         summary_frame=summary_source,
-        hnsw_kwargs=hnsw_kwargs,
+        hnsw_config=config.hnsw,
     )
 
 
@@ -429,7 +438,7 @@ def build_taxonomy_config(
 def resolve_taxonomy_artifacts(
     context: EvaluationContext,
     taxonomy_cfg: TaxonomyEmbeddingConfig,
-) -> Tuple[object, object]:
+) -> Tuple[np.ndarray, object]:
     key = (round(taxonomy_cfg.gamma, 6), round(taxonomy_cfg.summary_weight, 6))
     cached = context.taxonomy_cache.get(key)
     if cached is not None:
@@ -441,7 +450,7 @@ def resolve_taxonomy_artifacts(
         summaries=context.summary_frame,
         **taxonomy_cfg.to_kwargs(),
     )
-    hnsw_index = build_hnsw_index(tax_embs, **context.hnsw_kwargs)
+    hnsw_index = build_hnsw_index(tax_embs, **context.hnsw_config.to_kwargs())
     context.taxonomy_cache[key] = (tax_embs, hnsw_index)
     return tax_embs, hnsw_index
 
@@ -449,7 +458,7 @@ def resolve_taxonomy_artifacts(
 def evaluate_pruning(
     context: EvaluationContext,
     pruning_cfg: PruningConfig,
-    tax_embs: object,
+    tax_embs: np.ndarray,
     hnsw_index: object,
 ) -> EvaluationMetrics:
     pruner = TreePruner(
@@ -751,7 +760,7 @@ def dump_trial_parameters(trial: optuna.trial.FrozenTrial) -> Dict[str, object]:
 
 def print_config_with_inline_comments(
     name: str,
-    cfg: object,
+    cfg: SupportsToKwargs,
     inline_comments: Mapping[str, str],
     *,
     inline_placeholders_if_missing: Optional[Mapping[str, str]] = None,
@@ -789,10 +798,20 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     # Optionally suppress Optuna experimental warnings
     if args.suppress_experimental_warnings:
         try:
-            from optuna.exceptions import ExperimentalWarning  # public alias
-        except Exception:
-            from optuna._experimental import ExperimentalWarning  # fallback
-        warnings.filterwarnings("ignore", category=ExperimentalWarning)
+            from optuna.exceptions import ExperimentalWarning as _ImportedExperimentalWarning
+        except Exception:  # pragma: no cover - optuna too old
+            class _FallbackExperimentalWarning(Warning):
+                """Fallback warning when Optuna lacks ``ExperimentalWarning``."""
+
+                pass
+
+            experimental_warning_type: type[Warning] = _FallbackExperimentalWarning
+        else:
+            experimental_warning_type = cast(
+                type[Warning], _ImportedExperimentalWarning
+            )
+
+        warnings.filterwarnings("ignore", category=experimental_warning_type)
 
     _set_global_seed(args.seed)
 

@@ -328,7 +328,7 @@ def prepare_pagerank_scores(
             for anchor in anchor_set:
                 candidate_nodes.update(ancestors_to_root(G, anchor))
 
-    subgraph = G.subgraph(candidate_nodes).copy()
+    subgraph = cast(nx.DiGraph, G.subgraph(candidate_nodes).copy())
     if subgraph.number_of_nodes() == 0:
         return set(), {}, distances_full
 
@@ -774,32 +774,32 @@ def tree_sort_key_factory(
     order_map: Mapping[str, float],
     distance_map: Optional[Mapping[str, float]] = None,
     pagerank_map: Optional[Mapping[str, float]] = None,
-) -> Callable[[str], Tuple]:
+) -> Callable[[str], Tuple[object, ...]]:
     """Return a key function used to order nodes in the rendered tree."""
 
     normalized = normalize_tree_sort_mode(mode)
 
     if normalized == "topological":
 
-        def sort_key(node_name: str) -> Tuple[float, str]:
+        def _topological_sort_key(node_name: str) -> Tuple[object, ...]:
             order_val = order_map.get(node_name, float("inf"))
             return (
                 order_val if pd.notna(order_val) else float("inf"),
                 node_name.lower(),
             )
 
-        return sort_key
+        return _topological_sort_key
 
     if normalized == "alphabetical":
 
-        def sort_key(node_name: str) -> Tuple[str]:
+        def _alphabetical_sort_key(node_name: str) -> Tuple[object, ...]:
             return (node_name.lower(),)
 
-        return sort_key
+        return _alphabetical_sort_key
 
     if normalized == "proximity":
 
-        def sort_key(node_name: str) -> Tuple[float, float, float, str]:
+        def _proximity_sort_key(node_name: str) -> Tuple[object, ...]:
             distance_val = float("inf")
             if distance_map is not None:
                 raw_distance = distance_map.get(node_name, float("inf"))
@@ -815,11 +815,11 @@ def tree_sort_key_factory(
                 node_name.lower(),
             )
 
-        return sort_key
+        return _proximity_sort_key
 
     if normalized == "pagerank":
 
-        def sort_key(node_name: str) -> Tuple[float, float, float, str]:
+        def _pagerank_sort_key(node_name: str) -> Tuple[object, ...]:
             pagerank_val = 0.0
             if pagerank_map is not None:
                 raw_pagerank = pagerank_map.get(node_name, 0.0)
@@ -833,9 +833,9 @@ def tree_sort_key_factory(
                 node_name.lower(),
             )
 
-        return sort_key
+        return _pagerank_sort_key
 
-    def sort_key(node_name: str) -> Tuple[float, float, str]:
+    def _relevance_sort_key(node_name: str) -> Tuple[object, ...]:
         score = similarity_map.get(node_name, float("-inf"))
         order_val = order_map.get(node_name, float("inf"))
         return (
@@ -844,7 +844,7 @@ def tree_sort_key_factory(
             node_name.lower(),
         )
 
-    return sort_key
+    return _relevance_sort_key
 
 
 def normalize_pruning_mode(mode: Optional[str]) -> str:
@@ -913,7 +913,7 @@ def render_tree_markdown(
     distance_map: Optional[Mapping[str, float]] = None,
     pagerank_map: Optional[Mapping[str, float]] = None,
     surrogate_root_label: Optional[str] = None,
-) -> Tuple[str, Optional[List[str]]]:
+) -> str:
     """Render the allowed subtree as markdown"""
 
     sort_key = tree_sort_key_factory(
@@ -950,5 +950,4 @@ def render_tree_markdown(
 
     if lines:
         return "\n".join(lines)
-    else:
-        return ""
+    return ""
