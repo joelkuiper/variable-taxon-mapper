@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Sequence
 import numpy as np
 import pandas as pd
 
-from config import HNSWConfig, HttpConfig, LLMConfig, ParallelismConfig, PruningConfig
+from vtm.config import HNSWConfig, HttpConfig, LLMConfig, ParallelismConfig, PruningConfig
 
 from ..embedding import Embedder
 from ..graph_utils import compute_node_depths, get_undirected_taxonomy

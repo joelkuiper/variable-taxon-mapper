@@ -11,7 +11,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-from config import PruningConfig
+from vtm.config import PruningConfig
 from ..embedding import (
     Embedder,
     build_hnsw_index,

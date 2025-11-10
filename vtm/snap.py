@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from typing import Iterable, Mapping, Optional, Sequence
 
-from config import LLMConfig
+from vtm.config import LLMConfig
 from .embedding import Embedder
 from .string_similarity import (
     normalized_token_set_ratio,

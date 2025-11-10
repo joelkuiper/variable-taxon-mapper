@@ -211,17 +211,19 @@ Once inside the node:
 
 ### 5. Run `variable-taxon-mapper`
 
-* By default executes:
+* By default executes (after `uv sync`, which installs the local `vtm` console script):
 
   ```bash
-  python -u -m main config.example.toml
+  vtm run config.example.toml
   ```
 
 * You can override the final command by passing arguments, for example:
 
   ```bash
-  ./run_pipeline_lb.sh python -u -m predict config.example.toml
+  ./run_pipeline_lb.sh vtm predict config.example.toml
   ```
+
+* Prefer a zero-install fallback? Prefix the command with `uv run python -m vtm.cli` instead of `vtm`.
 
 * Output is streamed live to the terminal and duplicated to `$WORKDIR/logs/vtm-<timestamp>.log`.
 

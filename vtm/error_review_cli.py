@@ -19,7 +19,7 @@ from typing import Iterator, List, Sequence
 
 import pandas as pd
 
-from config import TaxonomyFieldMappingConfig, load_config
+from vtm.config import TaxonomyFieldMappingConfig, load_config
 from vtm.pipeline.service import prepare_keywords_dataframe
 from .taxonomy import build_name_maps_from_graph, build_taxonomy_graph
 

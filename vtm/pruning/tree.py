@@ -7,7 +7,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-from config import PruningConfig
+from vtm.config import PruningConfig
 from ..embedding import Embedder, collect_item_texts, encode_item_texts
 from ..taxonomy import make_label_display, normalize_taxonomy_label
 from .errors import PrunedTreeComputationError

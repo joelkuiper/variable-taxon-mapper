@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from config import HNSWConfig, ParallelismConfig
+from vtm.config import HNSWConfig, ParallelismConfig
 
 from ..embedding import Embedder
 from ..matching import MatchRequest, match_items_to_tree

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from config import HttpConfig, LLMConfig
+from vtm.config import HttpConfig, LLMConfig
 
 
 def sock_read_timeout(http_cfg: HttpConfig, llm_cfg: LLMConfig) -> float:

@@ -29,7 +29,7 @@ import pandas as pd
 
 from .taxonomy import ensure_traversal_cache, taxonomy_node_texts
 from .utils import clean_text
-from config import FieldMappingConfig
+from vtm.config import FieldMappingConfig
 
 
 logger = logging.getLogger(__name__)

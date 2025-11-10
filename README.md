@@ -76,9 +76,8 @@ environment secret store such as `direnv`, `uv run --env`, or your CI system.
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
 ``` shell
-uv sync
+uv sync  # provisions the env *and* installs the local vtm console script
 source .venv/bin/activate
-ipython
 ```
 
 Download and install [llama.cpp](https://github.com/ggml-org/llama.cpp) (or run via Docker). The system has been tested with [Qwen3-4B-Instruct-2507-GUFF](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF), you can either download a GUFF and pass it via the `--model` parameter, or let the server download and cache it (as below).
@@ -93,13 +92,18 @@ llama-server -hf  unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
 # Configuration and parameters are set via TOML
 
 # Run evaluation
-python -m main config.example.toml
+vtm evaluate config.example.toml
 
 # Predictions
-python -m predict config.example.toml
+vtm predict config.example.toml
 
 # Testing the tree pruning
-python -m check_pruned_tree config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
+vtm prune-check config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
+
+# uv convenience (no activation required)
+uv run vtm run config.example.toml
+uv run vtm predict config.example.toml
+uv run vtm summarize config.example.toml
 ```
 
 `check_pruned_tree` respects the `[fields]` logical-to-physical column mapping

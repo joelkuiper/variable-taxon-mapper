@@ -1,24 +1,24 @@
 from __future__ import annotations
 
-import argparse
-import json
 import logging
-import os
 from pathlib import Path
 from typing import Tuple
 
 import pandas as pd
 
-from config import AppConfig, load_config
+from vtm.config import AppConfig
 from vtm.evaluate import ProgressHook
 from vtm.pipeline import VariableTaxonMapper
-from vtm.utils import (
-    configure_logging,
-    ensure_file_exists,
-    resolve_path,
-    set_global_seed,
-)
-from vtm.reporting import report_results
+from vtm.utils import ensure_file_exists, resolve_path, set_global_seed
+from vtm.cli import app as cli_app
+
+
+try:
+    from typer import Exit as _TyperExit
+    from typer.main import get_command as _get_typer_command
+except ImportError:  # pragma: no cover - typer always available via project deps
+    _TyperExit = None  # type: ignore[assignment]
+    _get_typer_command = None  # type: ignore[assignment]
 
 
 logger = logging.getLogger(__name__)
@@ -72,56 +72,28 @@ def run_pipeline(
     return df, metrics
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the variable taxonomy mapper")
-    parser.add_argument(
-        "config",
-        type=Path,
-        help="Path to the TOML configuration file controlling the run.",
-    )
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> None:
-    configure_logging(level=os.getenv("LOG_LEVEL", logging.INFO))
+    """Delegate to the unified Typer CLI when executed as a script."""
 
-    args = parse_args(argv)
-    config_path = args.config.resolve()
-    base_path = config_path.parent
-    config = load_config(config_path)
-    logger.info("Loaded configuration from %s", config_path)
-    set_global_seed(config.seed)
-    variables_path, keywords_path = config.data.to_paths(base_path)
-    mapper = VariableTaxonMapper.from_config(
-        config,
-        base_path=base_path,
-        keywords_path=keywords_path,
-    )
+    if _get_typer_command is None or _TyperExit is None:  # pragma: no cover - safety
+        raise RuntimeError("Typer is required to invoke the unified CLI")
 
-    ensure_file_exists(variables_path, "variables CSV")
-    variables = pd.read_csv(variables_path, low_memory=False)
-    logger.info(
-        "Loaded variables frame with %d rows and %d columns",
-        len(variables),
-        len(variables.columns),
-    )
+    if argv is None:
+        import sys
 
-    df, metrics = mapper.predict(variables)
+        args = list(sys.argv[1:])
+    else:
+        args = list(argv)
 
-    results_path = config.evaluation.resolve_results_path(
-        base_path=base_path,
-        variables_path=variables_path,
-    )
-    results_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(results_path, index=False)
-    logger.info("Results saved to %s", results_path)
-
-    metrics_path = results_path.with_name(f"{results_path.stem}_metrics.json")
-    with metrics_path.open("w", encoding="utf-8") as handle:
-        json.dump(metrics, handle, indent=2, sort_keys=True)
-    logger.info("Metrics saved to %s", metrics_path)
-
-    report_results(df, metrics)
+    command = _get_typer_command(cli_app)
+    try:
+        command.main(
+            args=["run", *args],
+            prog_name="vtm",
+            standalone_mode=False,
+        )
+    except _TyperExit as exc:  # pragma: no cover - pass through exit code
+        raise SystemExit(exc.exit_code) from exc
 
 
 if __name__ == "__main__":

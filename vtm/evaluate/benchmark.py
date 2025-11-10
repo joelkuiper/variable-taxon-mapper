@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-from config import (
+from vtm.config import (
     EvaluationConfig,
     FieldMappingConfig,
     HNSWConfig,

@@ -8,7 +8,7 @@ from typing import Any, Optional, Tuple
 import pandas as pd
 from pandas._libs.missing import NAType
 
-from config import AppConfig, TaxonomyFieldMappingConfig
+from vtm.config import AppConfig, TaxonomyFieldMappingConfig
 from vtm.embedding import (
     Embedder,
     build_hnsw_index,

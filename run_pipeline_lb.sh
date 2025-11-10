@@ -19,7 +19,7 @@
 #   CTX       (llama -c, default 120000)
 #   SLOTS     (llama -np, default 6)
 #   PORT      (exported to variable-taxon-mapper, default -> LB_PORT)
-#   (arguments) final command override, e.g. `./run_pipeline_lb.sh python -u -m predict config.toml`
+#   (arguments) final command override, e.g. `./run_pipeline_lb.sh vtm predict config.toml`
 set -euo pipefail
 
 # -------------------- Configurable defaults --------------------
@@ -38,12 +38,14 @@ VTM_DIR="${VTM_DIR:-$HOME/tmp02/Repositories/variable-taxon-mapper}"
 VTM_CFG="${VTM_CFG:-config.example.toml}"
 
 # -------------------- Determine final command --------------------
-DEFAULT_CMD=(python -u -m main "$VTM_CFG")
+DEFAULT_CMD=(vtm run "$VTM_CFG")
+USE_DEFAULT=0
 
 if [[ $# -gt 0 ]]; then
   RUN_CMD=("$@")
 else
   RUN_CMD=("${DEFAULT_CMD[@]}")
+  USE_DEFAULT=1
 fi
 
 # -------------------- Environment (HPC) --------------------
@@ -68,6 +70,17 @@ popd >/dev/null
 
 # From here on, we assume `python` is the venv python. No system-python fallback.
 command -v python >/dev/null 2>&1 || { echo "ERROR: python not found after venv activation"; exit 1; }
+
+# Fallback when the console script is unavailable (e.g., running without uv packaging the project)
+if [[ $USE_DEFAULT -eq 1 ]] && ! command -v "${DEFAULT_CMD[0]}" >/dev/null 2>&1; then
+  UV_BIN=${UV_BIN:-uv}
+  if command -v "$UV_BIN" >/dev/null 2>&1; then
+    DEFAULT_CMD=("$UV_BIN" run python -m vtm.cli run "$VTM_CFG")
+  else
+    DEFAULT_CMD=(python -m vtm.cli run "$VTM_CFG")
+  fi
+  RUN_CMD=("${DEFAULT_CMD[@]}")
+fi
 
 # -------------------- Cleanup trap --------------------
 PIDS=()          # llama server PIDs

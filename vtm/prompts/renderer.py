@@ -13,7 +13,7 @@ from openai.types.chat import (
 
 from jinja2 import Environment, StrictUndefined, Template
 
-from config import PromptTemplateConfig
+from vtm.config import PromptTemplateConfig
 from ..utils import clean_text
 
 logger = logging.getLogger(__name__)

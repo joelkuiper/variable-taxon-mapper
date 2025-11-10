@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
-from config import LLMConfig
+from vtm.config import LLMConfig
 from openai.types.chat import ChatCompletionMessageParam
 from .embedding import Embedder, collect_item_texts
 from .snap import maybe_snap_to_child

@@ -19,7 +19,7 @@ import optuna
 import pandas as pd
 
 from check_pruned_tree import _compute_effective_subset
-from config import (
+from vtm.config import (
     AppConfig,
     HNSWConfig,
     PruningConfig,
