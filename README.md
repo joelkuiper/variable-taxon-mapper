@@ -99,7 +99,7 @@ Use the error review CLI to quickly inspect misclassifications and record
 judgments about whether they are acceptable mistakes.
 
 ```shell
-python -m src.error_review_cli --predictions path/to/predictions.csv \
+python -m vtm.error_review_cli --predictions path/to/predictions.csv \
     --keywords path/to/Keywords.csv \
     --output data/error_review_decisions.csv
 # Add --config config.toml to reuse taxonomy column mappings from your pipeline.

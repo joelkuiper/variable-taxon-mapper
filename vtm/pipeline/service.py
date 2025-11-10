@@ -8,19 +8,19 @@ from typing import Optional, Tuple
 import pandas as pd
 
 from config import AppConfig, TaxonomyFieldMappingConfig
-from src.embedding import (
+from vtm.embedding import (
     Embedder,
     build_hnsw_index,
     build_taxonomy_embeddings_composed,
 )
-from src.evaluate import ProgressHook, run_label_benchmark
-from src.prompts import PromptRenderer, create_prompt_renderer
-from src.taxonomy import (
+from vtm.evaluate import ProgressHook, run_label_benchmark
+from vtm.prompts import PromptRenderer, create_prompt_renderer
+from vtm.taxonomy import (
     build_gloss_map,
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from src.utils import ensure_file_exists
+from vtm.utils import ensure_file_exists
 
 
 logger = logging.getLogger(__name__)

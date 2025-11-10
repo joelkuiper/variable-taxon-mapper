@@ -10,10 +10,10 @@ from typing import Tuple
 import pandas as pd
 
 from config import AppConfig, load_config
-from src.evaluate import ProgressHook
-from src.pipeline import VariableTaxonMapper
-from src.utils import configure_logging, ensure_file_exists, set_global_seed
-from src.reporting import report_results
+from vtm.evaluate import ProgressHook
+from vtm.pipeline import VariableTaxonMapper
+from vtm.utils import configure_logging, ensure_file_exists, set_global_seed
+from vtm.reporting import report_results
 
 
 logger = logging.getLogger(__name__)

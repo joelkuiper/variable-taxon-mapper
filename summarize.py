@@ -31,8 +31,8 @@ import pandas as pd
 from openai import OpenAI
 from tqdm.auto import tqdm
 
-from src.taxonomy import build_name_maps_from_graph, build_taxonomy_graph
-from src.utils import configure_logging
+from vtm.taxonomy import build_name_maps_from_graph, build_taxonomy_graph
+from vtm.utils import configure_logging
 
 
 logger = logging.getLogger(__name__)

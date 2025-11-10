@@ -12,15 +12,15 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from config import AppConfig, FieldMappingConfig, coerce_config, load_config
-from src.pipeline.service import prepare_keywords_dataframe
-from src.embedding import Embedder, build_hnsw_index, build_taxonomy_embeddings_composed
-from src.taxonomy import (
+from vtm.pipeline.service import prepare_keywords_dataframe
+from vtm.embedding import Embedder, build_hnsw_index, build_taxonomy_embeddings_composed
+from vtm.taxonomy import (
     build_gloss_map,
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from src.pruning import pruned_tree_markdown_for_item
-from src.utils import (
+from vtm.pruning import pruned_tree_markdown_for_item
+from vtm.utils import (
     clean_str_or_none,
     configure_logging,
     ensure_file_exists,

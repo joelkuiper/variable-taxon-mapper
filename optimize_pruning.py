@@ -21,19 +21,19 @@ import pandas as pd
 
 from check_pruned_tree import _compute_effective_subset
 from config import AppConfig, PruningConfig, TaxonomyEmbeddingConfig, load_config
-from src.pipeline.service import prepare_keywords_dataframe
-from src.embedding import (
+from vtm.pipeline.service import prepare_keywords_dataframe
+from vtm.embedding import (
     Embedder,
     build_hnsw_index,
     build_taxonomy_embeddings_composed,
 )
-from src.pruning.tree import TreePruner
-from src.taxonomy import (
+from vtm.pruning.tree import TreePruner
+from vtm.taxonomy import (
     build_gloss_map,
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from src.utils import configure_logging, ensure_file_exists
+from vtm.utils import configure_logging, ensure_file_exists
 
 
 logger = logging.getLogger(__name__)
