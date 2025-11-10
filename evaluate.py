@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> None:
     command = _get_typer_command(cli_app)
     try:
         command.main(
-            args=["run", *args],
+            args=["evaluate", *args],
             prog_name="vtm",
             standalone_mode=False,
         )
