@@ -4,18 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from typing import Any, Callable, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence
 
 import numpy as np
 import pandas as pd
 
 from config import HttpConfig, LLMConfig, ParallelismConfig, PruningConfig
-
-try:  # pragma: no cover - tqdm provides a visual aid only
-    from tqdm.auto import tqdm
-except Exception:  # pragma: no cover - fallback when tqdm missing/broken
-    tqdm = None  # type: ignore[assignment]
 
 from ..embedding import Embedder
 from ..graph_utils import compute_node_depths, get_undirected_taxonomy
@@ -49,8 +43,6 @@ def collect_predictions(
     logger.info("Collecting predictions for %d jobs", len(jobs))
     undirected_graph = get_undirected_taxonomy(graph) if graph is not None else None
     depth_map = compute_node_depths(graph) if graph is not None else {}
-
-    progress_hook, progress_cleanup = _build_progress_hook(progress_hook, len(jobs))
 
     async def _predict_all() -> List[Dict[str, Any]]:
         pipeline = PredictionPipeline(
@@ -103,56 +95,6 @@ def collect_predictions(
                 "without an active event loop."
             ) from exc
         raise
-    finally:
-        progress_cleanup()
 
     logger.info("Finished collecting predictions (%d rows)", len(rows))
     return list(rows)
-
-
-def _build_progress_hook(
-    progress_hook: ProgressHook | None, total_jobs: int
-) -> Tuple[ProgressHook | None, Callable[[], None]]:
-    """Create a logging progress hook when one isn't provided."""
-
-    if progress_hook is not None or total_jobs <= 0:
-        return progress_hook, lambda: None
-
-    log_interval = max(1, total_jobs // 20)
-    last_logged = {"count": 0, "time": time.time()}
-
-    bar = tqdm(total=total_jobs, desc="Collecting predictions", unit="job") if tqdm else None
-
-    def _cleanup() -> None:
-        if bar is not None:
-            bar.close()
-
-    def _hook(completed: int, total: int, correct: int | None, elapsed: float) -> None:
-        if bar is not None:
-            bar.n = completed
-            bar.refresh()
-
-        should_log = completed == total
-        if not should_log:
-            delta = completed - last_logged["count"]
-            time_delta = time.time() - last_logged["time"]
-            if delta >= log_interval or time_delta >= 30.0:
-                should_log = True
-
-        if should_log:
-            pct = (completed / total) * 100 if total else 0.0
-            correct_part = (
-                f", gold_correct={correct}" if correct is not None else ""
-            )
-            logger.info(
-                "Prediction progress: %d/%d (%.1f%%) elapsed=%.1fs%s",
-                completed,
-                total,
-                pct,
-                elapsed,
-                correct_part,
-            )
-            last_logged["count"] = completed
-            last_logged["time"] = time.time()
-
-    return _hook, _cleanup
