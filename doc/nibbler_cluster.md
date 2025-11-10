@@ -223,8 +223,6 @@ Once inside the node:
   ./run_pipeline_lb.sh vtm predict config.example.toml
   ```
 
-* Prefer a zero-install fallback? Prefix the command with `uv run python -m vtm.cli` instead of `vtm`.
-
 * Output is streamed live to the terminal and duplicated to `$WORKDIR/logs/vtm-<timestamp>.log`.
 
 ### 6. Configuration (environment variables)
