@@ -224,6 +224,7 @@ class LLMConfig:
     n_keep: int = -1
     grammar: Optional[str] = None
     embedding_remap_threshold: float = 0.45
+    alias_similarity_threshold: float = 0.9
     snap_to_child: bool = False
     snap_margin: float = 0.1
     snap_similarity: str = "token_sort"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import difflib
 import json
 import re
 import logging
@@ -20,6 +19,7 @@ from .llm_chat import (
     llama_completion_many,
 )
 from .prompts import PromptRenderer, create_prompt_renderer
+from .string_similarity import normalized_score, normalized_token_set_ratio
 
 _PROMPT_DEBUG_SHOWN = False
 
@@ -61,10 +61,22 @@ def _build_allowed_index_map(
     return idx_map
 
 
+def _normalize_similarity_cutoff(value: float) -> float:
+    """Clamp similarity cutoffs into the ``[0, 1]`` interval."""
+
+    if value <= 0.0:
+        return 0.0
+    if value <= 1.0:
+        return float(value)
+    limited = min(float(value), 100.0)
+    return min(1.0, normalized_score(limited))
+
+
 def _canonicalize_label_text(
     pred_text: Optional[str],
     *,
     allowed_labels: Sequence[str],
+    similarity_cutoff: float,
 ) -> Tuple[Optional[str], Optional[str]]:
     """Normalize the free-form text and case-fold into the allowed label set."""
 
@@ -111,12 +123,18 @@ def _canonicalize_label_text(
         if normalized_alias:
             resolved = alias_lookup.get(normalized_alias)
             if not resolved:
-                alias_keys = list(alias_lookup.keys())
-                close_matches = difflib.get_close_matches(
-                    normalized_alias, alias_keys, n=1, cutoff=0.9
-                )
-                if close_matches:
-                    resolved = alias_lookup.get(close_matches[0])
+                cutoff = _normalize_similarity_cutoff(similarity_cutoff)
+                best_label: Optional[str] = None
+                best_score = 0.0
+                for alias_key, candidate_label in alias_lookup.items():
+                    if not alias_key:
+                        continue
+                    score = normalized_token_set_ratio(normalized_alias, alias_key)
+                    if score > best_score:
+                        best_score = score
+                        best_label = candidate_label
+                if best_label and best_score >= cutoff:
+                    resolved = best_label
 
     return normalized if normalized else None, resolved
 
@@ -256,7 +274,11 @@ async def match_items_to_tree(
         node_label_raw: Optional[str] = payload.get("concept_label")
 
         normalized_text, canonical_label = _canonicalize_label_text(
-            node_label_raw, allowed_labels=req.allowed_labels
+            node_label_raw,
+            allowed_labels=req.allowed_labels,
+            similarity_cutoff=getattr(
+                llm_config, "alias_similarity_threshold", 0.9
+            ),
         )
 
         if canonical_label:
