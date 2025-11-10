@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 import networkx as nx
 import pandas as pd
 
@@ -73,13 +73,81 @@ def build_taxonomy_graph(
         raise ValueError(
             "Taxonomy graph contains a cycle; expected a DAG (forest of trees)."
         )
-    bad = [n for n in G.nodes if G.in_degree(n) > 1]
-    if bad:
-        raise ValueError(
-            f"Nodes with multiple parents found (≤1 expected): {', '.join(sorted(bad)[:8])}"
-        )
+    ensure_traversal_cache(G)
 
     return G
+
+
+def ensure_traversal_cache(G: nx.DiGraph) -> Dict[str, Any]:
+    """Ensure canonical traversal metadata is cached on ``G``."""
+
+    signature = (G.number_of_nodes(), G.number_of_edges())
+    cache = G.graph.get("_taxonomy_traversal_cache")
+    if cache and cache.get("signature") == signature:
+        return cache
+
+    try:
+        topo_nodes = list(nx.topological_sort(G))
+    except nx.NetworkXUnfeasible:
+        topo_nodes = list(G.nodes())
+
+    parent_map: Dict[str, Optional[str]] = {}
+    path_map: Dict[str, Tuple[str, ...]] = {}
+    depth_map: Dict[str, Optional[int]] = {}
+    ancestor_sets: Dict[str, FrozenSet[str]] = {}
+
+    for node in topo_nodes:
+        preds = list(G.predecessors(node))
+        if not preds:
+            parent_map[node] = None
+            path_map[node] = (node,)
+            depth_map[node] = 0
+            ancestor_sets[node] = frozenset()
+            continue
+
+        best_parent: Optional[str] = None
+        best_path: Tuple[str, ...] | None = None
+        best_key: Tuple[int, Tuple[str, ...], Tuple[str, ...]] | None = None
+        combined_ancestors: Set[str] = set()
+        for parent in preds:
+            parent_path = path_map.get(parent)
+            if parent_path is None:
+                continue
+            candidate_path = parent_path + (node,)
+            candidate_key = (
+                len(candidate_path),
+                tuple(part.lower() for part in candidate_path),
+                candidate_path,
+            )
+            if best_key is None or candidate_key < best_key:
+                best_key = candidate_key
+                best_parent = parent
+                best_path = candidate_path
+
+            combined_ancestors.update(ancestor_sets.get(parent, frozenset()))
+            combined_ancestors.add(parent)
+
+        if best_key is None or best_path is None:
+            parent_map[node] = None
+            path_map[node] = (node,)
+            depth_map[node] = 0
+            ancestor_sets[node] = frozenset(combined_ancestors)
+            continue
+
+        parent_map[node] = best_parent
+        path_map[node] = best_path
+        depth_map[node] = len(best_path) - 1
+        ancestor_sets[node] = frozenset(combined_ancestors)
+
+    cache = {
+        "signature": signature,
+        "primary_parent": parent_map,
+        "canonical_path": path_map,
+        "depth_map": depth_map,
+        "ancestor_sets": ancestor_sets,
+    }
+    G.graph["_taxonomy_traversal_cache"] = cache
+    return cache
 
 
 def roots_in_order(G: nx.DiGraph, sort_key) -> List[str]:
@@ -89,17 +157,16 @@ def roots_in_order(G: nx.DiGraph, sort_key) -> List[str]:
 
 
 def path_to_root(G: nx.DiGraph, node: str) -> List[str]:
-    """Unique path from root to ``node`` (since ≤1 parent per node)."""
-    path = [node]
-    cur = node
-    while True:
-        preds = list(G.predecessors(cur))
-        if not preds:
-            break
-        cur = preds[0]
-        path.append(cur)
-    path.reverse()
-    return path
+    """Return a canonical path from a root to ``node``."""
+
+    if node not in G:
+        return []
+
+    cache = ensure_traversal_cache(G)
+    path = cache.get("canonical_path", {}).get(node)
+    if not path:
+        return [node]
+    return list(path)
 
 
 def build_name_maps_from_graph(G: nx.DiGraph) -> Tuple[Dict, Dict]:
@@ -120,16 +187,22 @@ def taxonomy_node_texts(G: nx.DiGraph) -> List[str]:
 
 
 def ancestors_to_root(G: nx.DiGraph, node: str) -> List[str]:
-    path = []
-    cur = node
-    while True:
-        path.append(cur)
-        preds = list(G.predecessors(cur))
-        if not preds:
-            break
-        cur = preds[0]
-    path.reverse()
-    return path
+    if node not in G:
+        return []
+
+    cache = ensure_traversal_cache(G)
+    depth_map = cache.get("depth_map", {})
+    ancestor_sets = cache.get("ancestor_sets", {})
+    ancestors = set(ancestor_sets.get(node, frozenset()))
+    ancestors.add(node)
+
+    def _sort_key(label: str) -> Tuple[int, str]:
+        depth = depth_map.get(label)
+        if depth is None:
+            return (math.inf, label.lower())
+        return (depth, label.lower())
+
+    return sorted(ancestors, key=_sort_key)
 
 
 def collect_descendants(G: nx.DiGraph, node: str, max_depth: int) -> Set[str]:
@@ -178,24 +251,16 @@ def make_label_display(
 
 
 def ancestors_inclusive(G: nx.DiGraph, node: str) -> List[str]:
-    out, cur, seen = [], node, set()
-    while True:
-        if cur in seen:
-            break
-        seen.add(cur)
-        out.append(cur)
-        preds = list(G.predecessors(cur))
-        if not preds:
-            break
-        cur = preds[0]
-    return out[::-1]
+    return ancestors_to_root(G, node)
 
 
 def is_ancestor_of(G: nx.DiGraph, maybe_ancestor: str, node: str) -> bool:
     if maybe_ancestor == node:
         return True
-    return (
-        maybe_ancestor in ancestors_inclusive(G, node)
-        if (maybe_ancestor in G and node in G)
-        else False
-    )
+    if maybe_ancestor not in G or node not in G:
+        return False
+
+    cache = ensure_traversal_cache(G)
+    ancestor_sets = cache.get("ancestor_sets", {})
+    ancestors = ancestor_sets.get(node, frozenset())
+    return maybe_ancestor in ancestors

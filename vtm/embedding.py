@@ -12,7 +12,7 @@ from transformers import AutoModel, AutoTokenizer
 
 import pandas as pd
 
-from .taxonomy import taxonomy_node_texts
+from .taxonomy import ensure_traversal_cache, taxonomy_node_texts
 from .utils import clean_text
 from config import FieldMappingConfig
 
@@ -255,11 +255,7 @@ def build_taxonomy_embeddings_composed(
     label2idx = {n: i for i, n in enumerate(names)}
 
     topo = _topological_order(G)
-    parent_idx = np.full(len(names), -1, dtype=np.int32)
-    for node in topo:
-        preds = list(G.predecessors(node))
-        if preds:
-            parent_idx[label2idx[node]] = label2idx[preds[0]]
+    ensure_traversal_cache(G)
 
     if taxonomy_text_transform is not None:
         texts = [taxonomy_text_transform(n) for n in names]
@@ -289,9 +285,10 @@ def build_taxonomy_embeddings_composed(
     out = np.zeros((len(names), D), dtype=np.float32)
     for node in topo:
         idx = label2idx[node]
-        pidx = parent_idx[idx]
-        if pidx >= 0:
-            out[idx] = composed_base[idx] + gamma * out[pidx]
+        parents = [label2idx[p] for p in G.predecessors(node) if p in label2idx]
+        if parents:
+            parent_vec = out[parents].mean(axis=0)
+            out[idx] = composed_base[idx] + gamma * parent_vec
         else:
             out[idx] = composed_base[idx]
 
