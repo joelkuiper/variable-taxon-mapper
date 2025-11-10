@@ -31,7 +31,7 @@ def prepare_keywords_dataframe(
     keywords: pd.DataFrame,
     taxonomy_fields: TaxonomyFieldMappingConfig,
 ) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
-    """Return canonical keywords and optional summary frames based on config."""
+    """Return canonical keywords and optional definition frames based on config."""
 
     if not isinstance(keywords, pd.DataFrame):
         raise TypeError("keywords must be a pandas DataFrame")
@@ -39,7 +39,6 @@ def prepare_keywords_dataframe(
     name_col = taxonomy_fields.require_column("name")
     parent_col = taxonomy_fields.require_column("parent")
     order_col = taxonomy_fields.resolve_column("order")
-    summary_col = taxonomy_fields.resolve_column("definition_summary")
     definition_col = taxonomy_fields.resolve_column("definition")
     label_col = taxonomy_fields.resolve_column("label")
 
@@ -53,8 +52,6 @@ def prepare_keywords_dataframe(
             raise KeyError(f"Keywords data missing required column: '{order_col}'")
         if order_col != "order":
             rename_map[order_col] = "order"
-    if summary_col and summary_col in keywords.columns and summary_col != "definition_summary":
-        rename_map[summary_col] = "definition_summary"
     if definition_col and definition_col in keywords.columns and definition_col != "definition":
         rename_map[definition_col] = "definition"
     if label_col and label_col in keywords.columns and label_col != "label":
@@ -140,23 +137,26 @@ def prepare_keywords_dataframe(
     elif order_col is not None and "order" not in canonical.columns:
         raise KeyError("Keywords data missing required column: 'order'")
 
-    summaries: Optional[pd.DataFrame] = None
-    resolved_summary_col = "definition_summary"
-    if summary_col and summary_col in keywords.columns:
-        if resolved_summary_col not in canonical.columns and summary_col != "definition_summary":
-            # summary column was only present in the original frame; rename and copy over
-            canonical[resolved_summary_col] = keywords[summary_col]
-        if resolved_summary_col in canonical.columns:
-            summaries = canonical[["name", resolved_summary_col]].copy()
-            summaries.fillna("", inplace=True)
+    definitions: Optional[pd.DataFrame] = None
+    resolved_definition_col = "definition"
+    if definition_col and definition_col in keywords.columns:
+        if (
+            resolved_definition_col not in canonical.columns
+            and definition_col != "definition"
+        ):
+            # definition column was only present in the original frame; rename and copy
+            canonical[resolved_definition_col] = keywords[definition_col]
+    if resolved_definition_col in canonical.columns:
+        definitions = canonical[["name", resolved_definition_col]].copy()
+        definitions.fillna("", inplace=True)
 
-    return canonical, summaries
+    return canonical, definitions
 
 
 @dataclass(slots=True)
 class _KeywordArtifacts:
     keywords: pd.DataFrame
-    summaries: Optional[pd.DataFrame]
+    definitions: Optional[pd.DataFrame]
 
 
 class VariableTaxonMapper:
@@ -193,8 +193,8 @@ class VariableTaxonMapper:
     def _prepare_keywords(
         keywords: pd.DataFrame, taxonomy_fields: TaxonomyFieldMappingConfig
     ) -> _KeywordArtifacts:
-        canonical, summaries = prepare_keywords_dataframe(keywords, taxonomy_fields)
-        return _KeywordArtifacts(keywords=canonical, summaries=summaries)
+        canonical, definitions = prepare_keywords_dataframe(keywords, taxonomy_fields)
+        return _KeywordArtifacts(keywords=canonical, definitions=definitions)
 
     @staticmethod
     def _resolve_input(
@@ -246,8 +246,8 @@ class VariableTaxonMapper:
 
         artifacts = cls._prepare_keywords(keywords.copy(), config.taxonomy_fields)
         logger.debug(
-            "Prepared keywords dataframe; summaries_present=%s",
-            artifacts.summaries is not None,
+            "Prepared keywords dataframe; definitions_present=%s",
+            artifacts.definitions is not None,
         )
 
         graph = build_taxonomy_graph(
@@ -271,11 +271,11 @@ class VariableTaxonMapper:
             )
 
         taxonomy_kwargs = config.taxonomy_embeddings.to_kwargs()
-        summaries = artifacts.summaries if artifacts.summaries is not None else None
+        definitions = artifacts.definitions if artifacts.definitions is not None else None
         taxonomy_names, taxonomy_embeddings = build_taxonomy_embeddings_composed(
             graph,
             mapper_embedder,
-            summaries=summaries,
+            definitions=definitions,
             **taxonomy_kwargs,
         )
         logger.info(
@@ -289,7 +289,7 @@ class VariableTaxonMapper:
             "Constructed HNSW index for %d-dimensional embeddings",
             taxonomy_embeddings.shape[1] if taxonomy_embeddings.size else 0,
         )
-        gloss_map = build_gloss_map(summaries)
+        gloss_map = build_gloss_map(definitions)
         logger.debug("Constructed gloss map with %d entries", len(gloss_map))
 
         prompt_renderer = create_prompt_renderer(
