@@ -47,6 +47,22 @@ respect this mapping. Settings such as `evaluation.dedupe_on` can reference the
 logical names (`dataset`, `label`, `name`, `description`) or raw column names;
 the mapper resolves them through this section before touching your data.
 
+When working with taxonomy CSVs that expose multiple parents per node, map the
+column containing the delimited parent identifiers through the
+`[taxonomy_fields]` section. The mapper renames the configured column to
+`parents` and normalizes each entry using the resolved identifier lookup:
+
+```toml
+[taxonomy_fields]
+name = "concept_name"
+parent = "primary_parent"
+parents = "all_parents"  # e.g., "PARENT_A|PARENT_B"
+```
+
+If the column is omitted, the pipeline continues to operate on single-parent
+hierarchies. When supplied, the delimited values are normalized using the same
+identifier mapping as the `parent` column before downstream processing.
+
 
 ## Dependencies
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/)

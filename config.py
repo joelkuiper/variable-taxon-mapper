@@ -72,6 +72,7 @@ class TaxonomyFieldMappingConfig:
 
     name: str = "name"
     parent: str = "parent"
+    parents: Optional[str] = None
     order: Optional[str] = "order"
     definition: Optional[str] = "definition_summary"
     label: Optional[str] = "label"
@@ -90,6 +91,19 @@ class TaxonomyFieldMappingConfig:
         value = self.resolve_column(key)
         if not value:
             raise KeyError(f"Taxonomy field '{key}' is not configured")
+        return value
+
+    def resolve_parents_column(self) -> Optional[str]:
+        """Return the configured multi-parent column, if available."""
+
+        return self.resolve_column("parents")
+
+    def require_parents_column(self) -> str:
+        """Return the multi-parent column name or raise if missing."""
+
+        value = self.resolve_parents_column()
+        if not value:
+            raise KeyError("Taxonomy field 'parents' is not configured")
         return value
 
 

@@ -20,6 +20,7 @@ keywords_csv = "data/Keywords_summarized_new.csv"
 # Set a field to "" or omit it if the column is unavailable.
 # name = "name"
 # parent = "parent"
+# parents = "parents" # optional: pipe-delimited multi-parent relationships
 # order = "order"
 # definition = "definition"
 definition = "definition_summary" # use this when working with summarized definitions

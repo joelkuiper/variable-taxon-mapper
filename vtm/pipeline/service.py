@@ -53,6 +53,7 @@ def _rename_taxonomy_columns(
     *,
     name_col: str,
     parent_col: str,
+    parents_col: str | None,
     order_col: str | None,
     label_col: str | None,
 ) -> pd.DataFrame:
@@ -63,6 +64,13 @@ def _rename_taxonomy_columns(
         rename_map[name_col] = "name"
     if parent_col != "parent":
         rename_map[parent_col] = "parent"
+    if parents_col:
+        if parents_col not in keywords.columns:
+            raise KeyError(
+                f"Keywords data missing required column for multi-parent mapping: '{parents_col}'"
+            )
+        if parents_col != "parents":
+            rename_map[parents_col] = "parents"
     if order_col:
         if order_col not in keywords.columns:
             raise KeyError(f"Keywords data missing required column: '{order_col}'")
@@ -123,7 +131,10 @@ def _build_identifier_map(
 
 
 def _normalize_parent_fields(
-    canonical: pd.DataFrame, identifier_to_name: dict[str, str]
+    canonical: pd.DataFrame,
+    identifier_to_name: dict[str, str],
+    *,
+    parents_col: str | None = None,
 ) -> pd.DataFrame:
     """Normalize parent fields using the identifier lookup."""
 
@@ -152,8 +163,11 @@ def _normalize_parent_fields(
             return pd.NA
         return "|".join(normalized_parts)
 
-    if "parents" in normalized.columns:
-        normalized["parents"] = normalized["parents"].map(_normalize_multi_parent)
+    resolved_parents_col = parents_col or ("parents" if "parents" in normalized.columns else None)
+    if resolved_parents_col and resolved_parents_col in normalized.columns:
+        normalized[resolved_parents_col] = normalized[resolved_parents_col].map(
+            _normalize_multi_parent
+        )
 
     return normalized
 
@@ -205,6 +219,7 @@ def prepare_keywords_dataframe(
 
     name_col = taxonomy_fields.require_column("name")
     parent_col = taxonomy_fields.require_column("parent")
+    parents_col = taxonomy_fields.resolve_parents_column()
     order_col = taxonomy_fields.resolve_column("order")
     definition_col = taxonomy_fields.resolve_column("definition")
     label_col = taxonomy_fields.resolve_column("label")
@@ -213,6 +228,7 @@ def prepare_keywords_dataframe(
         keywords,
         name_col=name_col,
         parent_col=parent_col,
+        parents_col=parents_col,
         order_col=order_col,
         label_col=label_col,
     )
@@ -223,7 +239,15 @@ def prepare_keywords_dataframe(
         label_col=label_col,
     )
 
-    canonical = _normalize_parent_fields(canonical, identifier_to_name)
+    resolved_parents_col = None
+    if parents_col or "parents" in canonical.columns:
+        resolved_parents_col = "parents"
+
+    canonical = _normalize_parent_fields(
+        canonical,
+        identifier_to_name,
+        parents_col=resolved_parents_col,
+    )
     canonical, definitions = _extract_definitions(
         keywords,
         canonical,
