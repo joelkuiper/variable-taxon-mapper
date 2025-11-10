@@ -201,13 +201,45 @@ def path_to_root(G: nx.DiGraph, node: str) -> List[str]:
 
 def build_name_maps_from_graph(G: nx.DiGraph) -> Tuple[Dict, Dict]:
     """Return name -> id (hex8) and name -> full path string."""
+
+    cache = ensure_traversal_cache(G)
+    canonical_paths = cache.get("canonical_path", {})
+
+    nodes = list(G.nodes)
+    node_count = len(nodes)
+    log_progress = node_count >= 1000
+    start_ts = time.perf_counter()
+
+    if log_progress:
+        logger.info(
+            "Generating taxonomy name maps for %d nodes", node_count
+        )
+
     name_to_id: Dict[str, str] = {}
     name_to_path: Dict[str, str] = {}
-    for n in G.nodes:
-        path = path_to_root(G, n)
-        nid = _path_id_hex8(path)
-        name_to_id[n] = nid
-        name_to_path[n] = " | ".join(path)
+
+    for idx, node in enumerate(nodes, start=1):
+        path_tuple = canonical_paths.get(node)
+        if not path_tuple:
+            path_tuple = (node,)
+
+        path = list(path_tuple)
+        name_to_id[node] = _path_id_hex8(path)
+        name_to_path[node] = " | ".join(path)
+
+        if log_progress and idx % 5000 == 0:
+            logger.info(
+                "Generated taxonomy name maps for %d/%d nodes",
+                idx,
+                node_count,
+            )
+
+    if log_progress:
+        duration = time.perf_counter() - start_ts
+        logger.info(
+            "Finished generating taxonomy name maps in %.2fs", duration
+        )
+
     return name_to_id, name_to_path
 
 
