@@ -16,7 +16,7 @@ from config import ParallelismConfig
 from ..embedding import Embedder
 from ..matching import MatchRequest, match_items_to_tree
 from ..prompts import PromptRenderer
-from ..pruning import AsyncTreePruner, PrunedTreeResult, prune_single
+from ..pruning import AsyncTreePruner, PrunedTreeResult
 from .metrics import build_result_row
 from .types import PredictionJob, ProgressHook
 
@@ -186,19 +186,10 @@ class PredictionPipeline:
             "Worker %s flushing prune batch of %d items", worker_id, len(batch)
         )
 
-        loop = asyncio.get_running_loop()
-        tasks = [
-            loop.run_in_executor(
-                self.pruner.executor,
-                prune_single,
-                idx,
-                job.item,
-            )
-            for idx, job in batch
-        ]
-
         try:
-            results = await asyncio.gather(*tasks)
+            results = await self.pruner.prune_many(
+                [(idx, job.item) for idx, job in batch]
+            )
         except Exception:
             for _ in batch:
                 self.prune_queue.task_done()
