@@ -66,10 +66,12 @@ class Embedder:
         fp16: bool = True,
         mean_pool: bool = False,  # False = [CLS]
     ):
+        self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.tok = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name)
-        if fp16 and self.device.startswith("cuda"):
+        self.fp16 = bool(fp16)
+        if self.fp16 and self.device.startswith("cuda"):
             self.model.half()
         self.model.to(self.device).eval()
         self.max_length = max_length
@@ -142,6 +144,18 @@ class Embedder:
                 total_tokens / duration if duration > 0 else float("inf"),
             )
         return l2_normalize(out)
+
+    def export_init_kwargs(self) -> Dict[str, Any]:
+        """Return keyword arguments that can rebuild this embedder."""
+
+        return {
+            "model_name": self.model_name,
+            "device": self.device,
+            "max_length": self.max_length,
+            "batch_size": self.batch_size,
+            "fp16": self.fp16,
+            "mean_pool": self.mean_pool,
+        }
 
 
 def _resolve_default_fields(

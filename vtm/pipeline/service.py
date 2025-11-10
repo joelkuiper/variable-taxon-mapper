@@ -333,6 +333,7 @@ class VariableTaxonMapper:
             tax_names=self.taxonomy_names,
             tax_embs_unit=self.taxonomy_embeddings,
             hnsw_index=self.hnsw_index,
+            hnsw_config=self.config.hnsw,
             name_to_id=self.name_to_id,
             name_to_path=self.name_to_path,
             gloss_map=self.gloss_map,

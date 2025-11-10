@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
-from config import ParallelismConfig
+from config import HNSWConfig, ParallelismConfig
 
 from ..embedding import Embedder
 from ..matching import MatchRequest, match_items_to_tree
 from ..prompts import PromptRenderer
-from ..pruning import AsyncTreePruner, PrunedTreeResult
+from ..pruning import AsyncTreePruner, PrunedTreeResult, prune_single
 from .metrics import build_result_row
 from .types import PredictionJob, ProgressHook
 
@@ -47,6 +46,7 @@ class PredictionPipeline:
         name_to_id: Dict[str, str],
         name_to_path: Dict[str, str],
         gloss_map: Dict[str, str],
+        hnsw_config: HNSWConfig,
         progress_hook: ProgressHook | None,
         prompt_renderer: PromptRenderer,
     ) -> None:
@@ -71,6 +71,7 @@ class PredictionPipeline:
         self.name_to_id = name_to_id
         self.name_to_path = name_to_path
         self.gloss_map = gloss_map
+        self.hnsw_config = hnsw_config
         self.progress_hook = progress_hook
         self.prompt_renderer = prompt_renderer
 
@@ -81,8 +82,14 @@ class PredictionPipeline:
         self.completed = 0
         self.gold_progress_seen = False
 
-        self.encode_lock = threading.Lock()
-        self.index_lock = threading.Lock()
+        prune_start_method = getattr(parallel_cfg, "pruning_start_method", None)
+        worker_devices = getattr(parallel_cfg, "pruning_worker_devices", None)
+        embed_on_workers = bool(
+            getattr(parallel_cfg, "pruning_embed_on_workers", False)
+        )
+        embedder_init_kwargs = None
+        if embed_on_workers:
+            embedder_init_kwargs = self.embedder.export_init_kwargs()
 
         self.pruner = AsyncTreePruner(
             graph=self.graph,
@@ -96,8 +103,10 @@ class PredictionPipeline:
             order_col="order",
             gloss_map=self.gloss_map,
             max_workers=self._prune_workers,
-            encode_lock=self.encode_lock,
-            index_lock=self.index_lock,
+            hnsw_build_kwargs=self.hnsw_config.to_kwargs(),
+            embedder_init_kwargs=embedder_init_kwargs,
+            start_method=prune_start_method,
+            worker_devices=worker_devices,
         )
 
         self.prune_queue: asyncio.Queue[Any] = asyncio.Queue(
@@ -188,14 +197,13 @@ class PredictionPipeline:
 
         try:
             results = await self.pruner.prune_many(
-                [(idx, job.item) for idx, job in batch]
+                (idx, job.item) for idx, job in batch
             )
         except Exception:
             for _ in batch:
                 self.prune_queue.task_done()
             raise
 
-        results = list(results)
         if len(results) != len(batch):
             for _ in batch:
                 self.prune_queue.task_done()
@@ -288,7 +296,6 @@ class PredictionPipeline:
                 hnsw_index=self.hnsw_index,
                 llm_config=self.llm_cfg,
                 prompt_renderer=self.prompt_renderer,
-                encode_lock=self.encode_lock,
             )
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception(

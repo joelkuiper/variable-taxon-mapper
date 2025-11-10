@@ -8,7 +8,6 @@ import logging
 import math
 import os
 import random
-import threading
 import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -90,8 +89,6 @@ class EvaluationContext:
     gloss_map: Dict[str, str]
     rows: Sequence[EvaluationRow]
     total_nodes: int
-    encode_lock: threading.Lock
-    index_lock: threading.Lock
     ancestor_cache: Dict[str, set[str]]
     taxonomy_cache: Dict[Tuple[float, float], Tuple[np.ndarray, object]]
     summary_frame: Optional[pd.DataFrame]
@@ -357,8 +354,6 @@ def prepare_context(
         gloss_map=gloss_map,
         rows=rows,
         total_nodes=int(graph.number_of_nodes()),
-        encode_lock=threading.Lock(),
-        index_lock=threading.Lock(),
         ancestor_cache={},
         taxonomy_cache={
             (
@@ -472,8 +467,6 @@ def evaluate_pruning(
         name_col="name",
         order_col="order",
         gloss_map=context.gloss_map,
-        encode_lock=context.encode_lock,
-        index_lock=context.index_lock,
     )
 
     total_nodes = max(context.total_nodes, 1)

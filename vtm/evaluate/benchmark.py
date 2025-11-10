@@ -14,6 +14,7 @@ from tqdm.auto import tqdm
 from config import (
     EvaluationConfig,
     FieldMappingConfig,
+    HNSWConfig,
     HttpConfig,
     LLMConfig,
     PromptTemplateConfig,
@@ -158,6 +159,7 @@ def run_label_benchmark(
     tax_names: Sequence[str],
     tax_embs_unit: np.ndarray,
     hnsw_index,
+    hnsw_config: HNSWConfig | Dict[str, Any] | None = None,
     name_to_id: Dict[str, str],
     name_to_path: Dict[str, str],
     gloss_map: Dict[str, str],
@@ -183,6 +185,7 @@ def run_label_benchmark(
     llm_cfg = coerce_config(llm_config, LLMConfig, "llm_config")
     parallel_cfg = coerce_config(parallel_config, ParallelismConfig, "parallel_config")
     http_cfg = coerce_config(http_config, HttpConfig, "http_config")
+    hnsw_cfg = coerce_config(hnsw_config, HNSWConfig, "hnsw_config")
     field_cfg = coerce_config(field_mapping, FieldMappingConfig, "field_mapping")
     prompt_cfg = coerce_config(prompt_config, PromptTemplateConfig, "prompt_config")
     renderer = prompt_renderer or create_prompt_renderer(
@@ -288,6 +291,7 @@ def run_label_benchmark(
         gloss_map=gloss_map,
         progress_hook=progress_hook or default_progress_hook,
         prompt_renderer=renderer,
+        hnsw_config=hnsw_cfg,
     )
 
     if progress_bar is not None:

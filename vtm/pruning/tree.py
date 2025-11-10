@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -77,7 +76,7 @@ class TreePruner:
         *,
         graph: nx.DiGraph,
         frame: pd.DataFrame,
-        embedder: Embedder,
+        embedder: Optional[Embedder],
         tax_names: Sequence[str],
         tax_embs_unit: np.ndarray,
         hnsw_index,
@@ -85,8 +84,6 @@ class TreePruner:
         name_col: str = "name",
         order_col: str = "order",
         gloss_map: Optional[Dict[str, str]] = None,
-        encode_lock: Optional[threading.Lock] = None,
-        index_lock: Optional[threading.Lock] = None,
         snake_case_to_title: bool = True,
     ) -> None:
         self._graph = graph
@@ -110,8 +107,6 @@ class TreePruner:
         self._name_col = name_col
         self._order_col = order_col
         self._gloss_map = dict(gloss_map or {})
-        self._encode_lock = encode_lock or threading.Lock()
-        self._index_lock = index_lock or threading.Lock()
 
         if name_col not in frame or order_col not in frame:
             raise ValueError("Pruning frame must contain name and order columns")
@@ -128,6 +123,20 @@ class TreePruner:
 
         try:
             return self._prune_internal(item)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise PrunedTreeComputationError(str(exc)) from exc
+
+    def prune_with_embeddings(
+        self,
+        *,
+        item: Dict[str, Optional[str]],
+        item_texts: Sequence[str],
+        item_embs: np.ndarray,
+    ) -> PrunedTreeResult:
+        """Prune ``item`` using precomputed texts and embeddings."""
+
+        try:
+            return self._prune_internal(item, precomputed=(item_texts, item_embs))
         except Exception as exc:  # pragma: no cover - defensive
             raise PrunedTreeComputationError(str(exc)) from exc
 
@@ -185,11 +194,20 @@ class TreePruner:
             surrogate_root_label=cfg.surrogate_root_label,
         )
 
-    def _prune_internal(self, item: Dict[str, Optional[str]]) -> PrunedTreeResult:
+    def _prune_internal(
+        self,
+        item: Dict[str, Optional[str]],
+        *,
+        precomputed: Optional[Tuple[Sequence[str], np.ndarray]] = None,
+    ) -> PrunedTreeResult:
         context = self._build_pruning_context()
-        item_texts, item_embs, similarity_map = self._compute_similarity_maps(
-            context, item
-        )
+        if precomputed is None:
+            item_texts, item_embs, similarity_map = self._compute_similarity_maps(
+                context, item
+            )
+        else:
+            item_texts, item_embs = self._normalise_precomputed_inputs(precomputed)
+            similarity_map = self._build_similarity_map(item_embs)
         anchors, distance_map, pagerank_map, pagerank_data = self._prepare_anchors(
             context,
             item_embs=item_embs,
@@ -220,13 +238,37 @@ class TreePruner:
         _ = context  # context currently unused but kept for interface parity
         item_texts = collect_item_texts(item)
 
-        with self._encode_lock:
-            item_embs = encode_item_texts(
-                item,
-                self._embedder,
-                texts=item_texts,
+        embedder = self._embedder
+        if embedder is None:
+            raise RuntimeError(
+                "TreePruner was constructed without an embedder; "
+                "precomputed embeddings are required."
             )
 
+        item_embs = encode_item_texts(
+            item,
+            embedder,
+            texts=item_texts,
+        )
+
+        similarity_map = self._build_similarity_map(item_embs)
+
+        return item_texts, item_embs, similarity_map
+
+    def _normalise_precomputed_inputs(
+        self, precomputed: Tuple[Sequence[str], np.ndarray]
+    ) -> Tuple[Sequence[str], np.ndarray]:
+        item_texts, item_embs = precomputed
+        if not isinstance(item_texts, Sequence):
+            item_texts = tuple(item_texts)  # type: ignore[assignment]
+        item_embs = np.asarray(item_embs, dtype=np.float32)
+        if item_embs.ndim != 2:
+            raise ValueError(
+                "Precomputed embeddings must be a 2D array of shape (n_texts, dim)."
+            )
+        return item_texts, item_embs
+
+    def _build_similarity_map(self, item_embs: np.ndarray) -> Dict[str, float]:
         similarity_scores = taxonomy_similarity_scores(item_embs, self._tax_embs_unit)
         similarity_map: Dict[str, float] = {
             name: float(score)
@@ -237,7 +279,7 @@ class TreePruner:
             for name in self._tax_names[len(similarity_map) :]:
                 similarity_map.setdefault(name, float("-inf"))
 
-        return item_texts, item_embs, similarity_map
+        return similarity_map
 
     def _prepare_anchors(
         self,
@@ -414,15 +456,14 @@ class TreePruner:
         if item_embs.size == 0:
             anchor_idxs = list(range(min(context.anchor_top_k, len(self._tax_names))))
         else:
-            with self._index_lock:
-                anchor_idxs = hnsw_anchor_indices(
-                    item_embs,
-                    self._hnsw_index,
-                    N=len(self._tax_names),
-                    anchor_top_k=context.anchor_top_k,
-                    overfetch_mult=context.anchor_overfetch_multiplier,
-                    min_overfetch=context.anchor_min_overfetch,
-                )
+            anchor_idxs = hnsw_anchor_indices(
+                item_embs,
+                self._hnsw_index,
+                N=len(self._tax_names),
+                anchor_top_k=context.anchor_top_k,
+                overfetch_mult=context.anchor_overfetch_multiplier,
+                min_overfetch=context.anchor_min_overfetch,
+            )
 
         lexical_idxs = lexical_anchor_indices(
             item_texts,
@@ -540,8 +581,6 @@ def pruned_tree_markdown_for_item(
     name_col: str = "name",
     order_col: str = "order",
     gloss_map: Optional[Dict[str, str]] = None,
-    encode_lock: Optional[threading.Lock] = None,
-    index_lock: Optional[threading.Lock] = None,
     snake_case_to_title: bool = False,
 ) -> Tuple[str, List[str]]:
     """Prune ``item`` and return the rendered markdown and allowed labels."""
@@ -557,8 +596,6 @@ def pruned_tree_markdown_for_item(
         name_col=name_col,
         order_col=order_col,
         gloss_map=gloss_map,
-        encode_lock=encode_lock,
-        index_lock=index_lock,
         snake_case_to_title=snake_case_to_title,
     )
     result = pruner.prune(item)

@@ -260,6 +260,14 @@ class ParallelismConfig:
     pruning_workers: int = 2
     pruning_batch_size: int = 4
     pruning_queue_size: int = 16
+    pruning_start_method: str | None = None
+    pruning_embed_on_workers: bool = False
+    pruning_worker_devices: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.pruning_worker_devices is not None:
+            devices = tuple(self.pruning_worker_devices)
+            self.pruning_worker_devices = tuple(str(device) for device in devices)
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)

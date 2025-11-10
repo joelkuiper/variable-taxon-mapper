@@ -113,6 +113,14 @@ pool_maxsize = 8
 pruning_workers = 8
 pruning_batch_size = 8
 pruning_queue_size = 16
+# Pruning precomputes embeddings on the coordinator and fans out work through a
+# thread pool by default. Enable ``pruning_embed_on_workers`` to spin up a
+# process pool that clones the embedder inside each worker.
+pruning_embed_on_workers = false
+# When cloning the embedder provide explicit device mappings if GPUs are
+# available.
+# pruning_worker_devices = ["cuda:0", "cuda:1"]
+# pruning_start_method = "auto"  # or "fork"/"spawn" to override process startup
 
 [http]
 sock_connect = 10.0
