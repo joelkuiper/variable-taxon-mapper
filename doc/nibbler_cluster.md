@@ -8,7 +8,7 @@ Most steps are portable to other SLURM-based clusters with similar configuration
 ## Prerequisites
 
 * You must be able to log in to the **jumphost** (`ssh tunnel+nibbler`).
-* Configure **GitHub SSH access** (add your cluster SSH public key to GitHub). See [the Nibbler documentation](https://docs.gcc.rug.nl/nibbler/generate-key-pair-openssh/) for generating the key if none exists yet. 
+* Configure **GitHub SSH access** (add your cluster SSH public key to GitHub). See [the Nibbler documentation](https://docs.gcc.rug.nl/nibbler/generate-key-pair-openssh/) for generating the key if none exists yet.
 * Create a personal workspace on `tmp02` (change the group and username to reflect your own):
 
   ```bash
@@ -77,13 +77,11 @@ Append to your `~/.bashrc`:
 export UV_CACHE_DIR="$WORKDIR/.cache/uv"
 export HF_HOME="$WORKDIR/.cache/huggingface"
 export HF_HUB_DISABLE_XET=True
-export TERM=xterm-256color
 ```
 
 Notes:
 
 * `HF_HUB_DISABLE_XET=True` avoids HTTP 500 errors when Hugging Face tries to use Xet for large model downloads.
-* `TERM` is set for compatibility with text-based tools and job shells.
 
 After editing `.bashrc`, re-source it (`source ~/.bashrc`) or log out and back in. Then install the Python dependencies with:
 
@@ -278,4 +276,3 @@ sbatch --chdir="$WORKDIR/Repositories/variable-taxon-mapper" \
 ```
 
 Logs from `llama.cpp`, the load balancer, and the main Python process all land under `$WORKDIR/logs/`, while SLURM captures combined stdout/stderr in its usual `vtm-<jobid>.out` file.
-
