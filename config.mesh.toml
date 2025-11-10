@@ -20,7 +20,8 @@ keywords_csv = "data/MeSH.csv"
 name = "label"
 # parent = "parent"
 order = "" # MeSH doesn't have it, and I didn't compute it
-# definition = "definition" # use "definition_summary" for the abbreviated column
+# definition = "definition"
+# definition_summary = "definition"
 # label = "label"
 
 [embedder]

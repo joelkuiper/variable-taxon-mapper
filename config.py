@@ -73,7 +73,8 @@ class TaxonomyFieldMappingConfig:
     name: str = "name"
     parent: str = "parent"
     order: Optional[str] = "order"
-    definition: Optional[str] = "definition_summary"
+    definition: Optional[str] = "definition"
+    definition_summary: Optional[str] = "definition_summary"
     label: Optional[str] = "label"
 
     def resolve_column(self, key: str) -> Optional[str]:

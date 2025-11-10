@@ -91,7 +91,7 @@ class EvaluationContext:
     total_nodes: int
     ancestor_cache: Dict[str, set[str]]
     taxonomy_cache: Dict[Tuple[float, float], Tuple[np.ndarray, object]]
-    definition_frame: Optional[pd.DataFrame]
+    summary_frame: Optional[pd.DataFrame]
     hnsw_config: HNSWConfig
 
 
@@ -287,7 +287,7 @@ def prepare_context(
 
     variables_df = pd.read_csv(variables_path, low_memory=False)
     keywords_raw = pd.read_csv(keywords_path)
-    keywords_df, definition_df = prepare_keywords_dataframe(
+    keywords_df, summary_df = prepare_keywords_dataframe(
         keywords_raw, config.taxonomy_fields
     )
 
@@ -303,15 +303,15 @@ def prepare_context(
 
     taxonomy_kwargs = config.taxonomy_embeddings.to_kwargs()
     hnsw_kwargs = config.hnsw.to_kwargs()
-    definition_source = definition_df if definition_df is not None else None
+    summary_source = summary_df if summary_df is not None else None
     tax_names, tax_embs = build_taxonomy_embeddings_composed(
         graph,
         embedder,
-        definitions=definition_source,
+        summaries=summary_source,
         **taxonomy_kwargs,
     )
     hnsw_index = build_hnsw_index(tax_embs, **hnsw_kwargs)
-    gloss_map = build_gloss_map(definition_source)
+    gloss_map = build_gloss_map(summary_source)
 
     field_cfg = config.fields
     dataset_col = field_cfg.resolve_column("dataset")
@@ -361,7 +361,7 @@ def prepare_context(
                 round(float(taxonomy_kwargs["summary_weight"]), 6),
             ): (tax_embs, hnsw_index)
         },
-        definition_frame=definition_source,
+        summary_frame=summary_source,
         hnsw_config=config.hnsw,
     )
 
@@ -442,7 +442,7 @@ def resolve_taxonomy_artifacts(
     _, tax_embs = build_taxonomy_embeddings_composed(
         context.graph,
         context.embedder,
-        definitions=context.definition_frame,
+        summaries=context.summary_frame,
         **taxonomy_cfg.to_kwargs(),
     )
     hnsw_index = build_hnsw_index(tax_embs, **context.hnsw_config.to_kwargs())

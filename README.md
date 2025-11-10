@@ -106,8 +106,8 @@ python -m vtm.error_review_cli --predictions path/to/predictions.csv \
 ```
 
 The tool displays one error at a time, showing the variable context, the gold
-labels with their configured definition values (using the column mapped as
-`definition`, defaulting to `definition_summary`) from `Keywords.csv`, and the model
+labels with their configured summary values (default `definition_summary`) from
+`Keywords.csv`, and the model
 prediction with its definition and resolved path. Record your judgment using the
 keyboard:
 

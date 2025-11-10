@@ -56,9 +56,9 @@ class ErrorRecord:
             "name": self.name,
             "description": self.description,
             "gold_labels": " | ".join(self.gold_labels),
-            "gold_definitions": "\n".join(self.gold_definitions),
+            "gold_definition_summaries": "\n".join(self.gold_definitions),
             "resolved_label": self.resolved_label,
-            "resolved_definition": self.resolved_definition,
+            "resolved_definition_summary": self.resolved_definition,
             "resolved_path": self.resolved_path,
             "decision": decision,
         }
@@ -104,17 +104,17 @@ def load_keywords_metadata(
     keywords_path: Path,
     taxonomy_fields: TaxonomyFieldMappingConfig,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Return keyword definitions and taxonomy paths keyed by keyword name."""
+    """Return definition summaries and taxonomy paths keyed by keyword name."""
 
     raw_df = pd.read_csv(keywords_path, low_memory=False)
-    canonical_df, definition_df = prepare_keywords_dataframe(raw_df, taxonomy_fields)
+    canonical_df, summary_df = prepare_keywords_dataframe(raw_df, taxonomy_fields)
 
-    # In case of duplicate names, keep the first non-empty definition.
+    # In case of duplicate names, keep the first non-empty definition summary.
     definitions: dict[str, str] = {}
-    if definition_df is not None:
-        for row in definition_df.fillna("").itertuples(index=False):
+    if summary_df is not None:
+        for row in summary_df.fillna("").itertuples(index=False):
             name = str(row.name).strip()
-            summary = str(row.definition).strip()
+            summary = str(row.definition_summary).strip()
             if not name:
                 continue
             if name not in definitions or not definitions[name]:

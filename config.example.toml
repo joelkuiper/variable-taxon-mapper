@@ -22,7 +22,7 @@ keywords_csv = "data/Keywords_summarized_new.csv"
 # parent = "parent"
 # order = "order"
 # definition = "definition"
-# definition = "definition_summary" # use this when working with summarized definitions
+# definition_summary = "definition_summary"
 # label = "label"
 
 [embedder]

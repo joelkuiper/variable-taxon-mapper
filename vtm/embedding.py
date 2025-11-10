@@ -286,24 +286,24 @@ def build_hnsw_index(
     return index
 
 
-def _extract_definition_map(
-    definitions: Optional[object],
+def _extract_summary_map(
+    summaries: Optional[object],
 ) -> Dict[str, str]:
-    if definitions is None:
+    if summaries is None:
         return {}
 
-    definition_map: Dict[str, str] = {}
+    summary_map: Dict[str, str] = {}
 
-    if isinstance(definitions, Mapping):
-        items: Iterable[Tuple[object, object]] = definitions.items()
-    elif isinstance(definitions, pd.Series):
-        items = definitions.items()
-    elif isinstance(definitions, pd.DataFrame):
-        items = definitions[["name", "definition"]].itertuples(
+    if isinstance(summaries, Mapping):
+        items: Iterable[Tuple[object, object]] = summaries.items()
+    elif isinstance(summaries, pd.Series):
+        items = summaries.items()
+    elif isinstance(summaries, pd.DataFrame):
+        items = summaries[["name", "definition_summary"]].itertuples(
             index=False, name=None
         )
     else:
-        raise TypeError("definitions must be a mapping, pandas Series/DataFrame, or None")
+        raise TypeError("summaries must be a mapping, pandas Series/DataFrame, or None")
 
     for entry in items:
         if isinstance(entry, tuple):
@@ -314,18 +314,18 @@ def _extract_definition_map(
         elif isinstance(entry, Mapping):
             # Some pandas iterators yield dict-like rows instead of tuples.
             key = entry.get("name")
-            value = entry.get("definition")
+            value = entry.get("definition_summary")
         else:
             continue
 
         if not isinstance(key, str) or not isinstance(value, str):
             continue
         name = key.strip()
-        definition = value.strip()
-        if name and definition and name not in definition_map:
-            definition_map[name] = definition
+        summary = value.strip()
+        if name and summary and name not in summary_map:
+            summary_map[name] = summary
 
-    return definition_map
+    return summary_map
 
 
 def build_taxonomy_embeddings_composed(
@@ -333,7 +333,7 @@ def build_taxonomy_embeddings_composed(
     embedder: Embedder,
     gamma: float = 0.3,
     *,
-    definitions: Optional[object] = None,
+    summaries: Optional[object] = None,
     summary_weight: float = 1.0,
     taxonomy_text_transform: Optional[Callable[[str], str]] = None,
 ) -> Tuple[List[str], np.ndarray]:
@@ -378,14 +378,14 @@ def build_taxonomy_embeddings_composed(
         time.perf_counter() - encode_start,
     )
 
-    definition_map = _extract_definition_map(definitions)
+    summary_map = _extract_summary_map(summaries)
     summary_vecs = np.zeros_like(name_vecs)
-    if definition_map:
-        definition_start = time.perf_counter()
+    if summary_map:
+        summary_start = time.perf_counter()
         texts: List[str] = []
         idxs: List[int] = []
         for i, n in enumerate(names):
-            s = definition_map.get(n)
+            s = summary_map.get(n)
             if s:
                 texts.append(s)
                 idxs.append(i)
@@ -394,9 +394,9 @@ def build_taxonomy_embeddings_composed(
             for j, idx in enumerate(idxs):
                 summary_vecs[idx] = encoded[j]
         logger.info(
-            "Encoded %d taxonomy definitions in %.2fs",
+            "Encoded %d taxonomy summaries in %.2fs",
             len(texts),
-            time.perf_counter() - definition_start,
+            time.perf_counter() - summary_start,
         )
 
     composed_base = l2_normalize(name_vecs + summary_weight * summary_vecs)

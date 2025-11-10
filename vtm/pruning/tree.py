@@ -394,7 +394,7 @@ class TreePruner:
             top_k = min(top_k, suggestion_limit)
 
         suggestion_lines = [
-            f"- {make_label_display(label, self._gloss_map, use_definition=False)}"
+            f"- {make_label_display(label, self._gloss_map, use_summary=False)}"
             for label in allowed_ranked[:top_k]
         ]
 

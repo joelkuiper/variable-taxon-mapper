@@ -939,7 +939,7 @@ def render_tree_markdown(
     depth_offset = 0
     if surrogate_label:
         root_display = make_label_display(
-            surrogate_label, gloss_map or {}, use_definition=False
+            surrogate_label, gloss_map or {}, use_summary=False
         )
         lines.append(f"- {root_display}")
         depth_offset = 1
