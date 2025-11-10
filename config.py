@@ -67,6 +67,34 @@ class FieldMappingConfig:
 
 
 @dataclass
+class TaxonomyFieldMappingConfig:
+    """Column mapping for taxonomy keyword metadata."""
+
+    name: str = "name"
+    parent: str = "parent"
+    order: Optional[str] = "order"
+    definition: Optional[str] = "definition"
+    definition_summary: Optional[str] = "definition_summary"
+    label: Optional[str] = "label"
+
+    def resolve_column(self, key: str) -> Optional[str]:
+        value = getattr(self, key, None)
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        return str(value)
+
+    def require_column(self, key: str) -> str:
+        value = self.resolve_column(key)
+        if not value:
+            raise KeyError(f"Taxonomy field '{key}' is not configured")
+        return value
+
+
+@dataclass
 class EmbedderConfig:
     """Model and batching configuration for the embedding model."""
 
@@ -255,6 +283,9 @@ class AppConfig:
     seed: int = 37
     data: DataConfig = field(default_factory=DataConfig)
     fields: FieldMappingConfig = field(default_factory=FieldMappingConfig)
+    taxonomy_fields: TaxonomyFieldMappingConfig = field(
+        default_factory=TaxonomyFieldMappingConfig
+    )
     embedder: EmbedderConfig = field(default_factory=EmbedderConfig)
     taxonomy_embeddings: TaxonomyEmbeddingConfig = field(
         default_factory=TaxonomyEmbeddingConfig
@@ -302,6 +333,7 @@ def load_config(path: str | Path) -> AppConfig:
 
     data_section = raw.get("data")
     fields_section = raw.get("fields")
+    taxonomy_fields_section = raw.get("taxonomy_fields")
     embedder_section = raw.get("embedder")
     taxonomy_section = raw.get("taxonomy_embeddings")
     hnsw_section = raw.get("hnsw")
@@ -320,6 +352,9 @@ def load_config(path: str | Path) -> AppConfig:
         seed=seed_value,
         data=_coerce_section(data_section, DataConfig),
         fields=_coerce_section(fields_section, FieldMappingConfig),
+        taxonomy_fields=_coerce_section(
+            taxonomy_fields_section, TaxonomyFieldMappingConfig
+        ),
         embedder=_coerce_section(embedder_section, EmbedderConfig),
         taxonomy_embeddings=_coerce_section(taxonomy_section, TaxonomyEmbeddingConfig),
         hnsw=_coerce_section(hnsw_section, HNSWConfig),
@@ -373,6 +408,7 @@ __all__ = [
     "AppConfig",
     "DataConfig",
     "FieldMappingConfig",
+    "TaxonomyFieldMappingConfig",
     "EmbedderConfig",
     "EvaluationConfig",
     "HttpConfig",

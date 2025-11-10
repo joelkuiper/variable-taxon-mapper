@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import pandas as pd
 
-from config import AppConfig
+from config import AppConfig, TaxonomyFieldMappingConfig
 from src.embedding import (
     Embedder,
     build_hnsw_index,
@@ -24,6 +24,63 @@ from src.utils import ensure_file_exists
 
 
 logger = logging.getLogger(__name__)
+
+
+def prepare_keywords_dataframe(
+    keywords: pd.DataFrame,
+    taxonomy_fields: TaxonomyFieldMappingConfig,
+) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+    """Return canonical keywords and optional summary frames based on config."""
+
+    if not isinstance(keywords, pd.DataFrame):
+        raise TypeError("keywords must be a pandas DataFrame")
+
+    name_col = taxonomy_fields.require_column("name")
+    parent_col = taxonomy_fields.require_column("parent")
+    order_col = taxonomy_fields.resolve_column("order")
+    summary_col = taxonomy_fields.resolve_column("definition_summary")
+    definition_col = taxonomy_fields.resolve_column("definition")
+    label_col = taxonomy_fields.resolve_column("label")
+
+    rename_map: dict[str, str] = {}
+    if name_col != "name":
+        rename_map[name_col] = "name"
+    if parent_col != "parent":
+        rename_map[parent_col] = "parent"
+    if order_col:
+        if order_col not in keywords.columns:
+            raise KeyError(f"Keywords data missing required column: '{order_col}'")
+        if order_col != "order":
+            rename_map[order_col] = "order"
+    if summary_col and summary_col in keywords.columns and summary_col != "definition_summary":
+        rename_map[summary_col] = "definition_summary"
+    if definition_col and definition_col in keywords.columns and definition_col != "definition":
+        rename_map[definition_col] = "definition"
+    if label_col and label_col in keywords.columns and label_col != "label":
+        rename_map[label_col] = "label"
+
+    canonical = keywords.rename(columns=rename_map).copy()
+
+    missing = sorted({"name", "parent"} - set(canonical.columns))
+    if missing:
+        raise KeyError(f"Keywords data missing required columns: {missing}")
+
+    if order_col is None and "order" not in canonical.columns:
+        canonical["order"] = pd.NA
+    elif order_col is not None and "order" not in canonical.columns:
+        raise KeyError("Keywords data missing required column: 'order'")
+
+    summaries: Optional[pd.DataFrame] = None
+    resolved_summary_col = "definition_summary"
+    if summary_col and summary_col in keywords.columns:
+        if resolved_summary_col not in canonical.columns and summary_col != "definition_summary":
+            # summary column was only present in the original frame; rename and copy over
+            canonical[resolved_summary_col] = keywords[summary_col]
+        if resolved_summary_col in canonical.columns:
+            summaries = canonical[["name", resolved_summary_col]].copy()
+            summaries.fillna("", inplace=True)
+
+    return canonical, summaries
 
 
 @dataclass(slots=True)
@@ -63,14 +120,11 @@ class VariableTaxonMapper:
         self.prompt_renderer = prompt_renderer
 
     @staticmethod
-    def _prepare_keywords(keywords: pd.DataFrame) -> _KeywordArtifacts:
-        required_columns = {"name", "parent", "order"}
-        missing = sorted(required_columns - set(keywords.columns))
-        if missing:
-            raise KeyError(f"Keywords data missing required columns: {missing}")
-
-        summaries = keywords if "definition_summary" in keywords.columns else None
-        return _KeywordArtifacts(keywords=keywords, summaries=summaries)
+    def _prepare_keywords(
+        keywords: pd.DataFrame, taxonomy_fields: TaxonomyFieldMappingConfig
+    ) -> _KeywordArtifacts:
+        canonical, summaries = prepare_keywords_dataframe(keywords, taxonomy_fields)
+        return _KeywordArtifacts(keywords=canonical, summaries=summaries)
 
     @staticmethod
     def _resolve_input(
@@ -120,7 +174,7 @@ class VariableTaxonMapper:
         if base_path is not None:
             config.prompts.set_config_root(base_path)
 
-        artifacts = cls._prepare_keywords(keywords.copy())
+        artifacts = cls._prepare_keywords(keywords.copy(), config.taxonomy_fields)
         logger.debug(
             "Prepared keywords dataframe; summaries_present=%s",
             artifacts.summaries is not None,

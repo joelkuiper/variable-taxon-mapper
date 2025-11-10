@@ -21,7 +21,7 @@ import pandas as pd
 
 from check_pruned_tree import _compute_effective_subset
 from config import AppConfig, PruningConfig, TaxonomyEmbeddingConfig, load_config
-from main import _prepare_keywords
+from src.pipeline.service import prepare_keywords_dataframe
 from src.embedding import (
     Embedder,
     build_hnsw_index,
@@ -280,7 +280,9 @@ def prepare_context(
 
     variables_df = pd.read_csv(variables_path, low_memory=False)
     keywords_raw = pd.read_csv(keywords_path)
-    keywords_df, summary_df = _prepare_keywords(keywords_raw)
+    keywords_df, summary_df = prepare_keywords_dataframe(
+        keywords_raw, config.taxonomy_fields
+    )
 
     graph = build_taxonomy_graph(
         keywords_df,

@@ -12,7 +12,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from config import AppConfig, FieldMappingConfig, coerce_config, load_config
-from main import _prepare_keywords
+from src.pipeline.service import prepare_keywords_dataframe
 from src.embedding import Embedder, build_hnsw_index, build_taxonomy_embeddings_composed
 from src.taxonomy import (
     build_gloss_map,
@@ -240,7 +240,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         len(variables),
         len(keywords_raw),
     )
-    keywords, summary_df = _prepare_keywords(keywords_raw)
+    keywords, summary_df = prepare_keywords_dataframe(
+        keywords_raw, config.taxonomy_fields
+    )
 
     G = build_taxonomy_graph(
         keywords,

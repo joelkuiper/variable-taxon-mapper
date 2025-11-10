@@ -102,10 +102,12 @@ judgments about whether they are acceptable mistakes.
 python -m src.error_review_cli --predictions path/to/predictions.csv \
     --keywords path/to/Keywords.csv \
     --output data/error_review_decisions.csv
+# Add --config config.toml to reuse taxonomy column mappings from your pipeline.
 ```
 
 The tool displays one error at a time, showing the variable context, the gold
-labels with their `definition_summary` values from `Keywords.csv`, and the model
+labels with their configured summary values (default `definition_summary`) from
+`Keywords.csv`, and the model
 prediction with its definition and resolved path. Record your judgment using the
 keyboard:
 

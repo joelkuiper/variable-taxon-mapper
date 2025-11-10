@@ -15,6 +15,16 @@ keywords_csv = "data/Keywords_summarized_new.csv"
 # description = "description"
 # gold_labels = "keywords"
 
+[taxonomy_fields]
+# Map logical taxonomy fields to the column names used in your keywords CSV.
+# Set a field to "" or omit it if the column is unavailable.
+# name = "name"
+# parent = "parent"
+# order = "order"
+# definition = "definition"
+# definition_summary = "definition_summary"
+# label = "label"
+
 [embedder]
 model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
 # model_name = "BAAI/bge-large-en-v1.5"

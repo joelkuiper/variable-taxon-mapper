@@ -19,6 +19,8 @@ from typing import Iterator, List, Sequence
 
 import pandas as pd
 
+from config import TaxonomyFieldMappingConfig, load_config
+from src.pipeline.service import prepare_keywords_dataframe
 from .taxonomy import build_name_maps_from_graph, build_taxonomy_graph
 
 
@@ -82,6 +84,14 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Path to the Keywords.csv file providing definitions.",
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        help=(
+            "Optional path to a TOML config file; column mappings will be "
+            "read from its [taxonomy_fields] section."
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("error_review_decisions.csv"),
@@ -90,28 +100,40 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def load_keywords_metadata(keywords_path: Path) -> tuple[dict[str, str], dict[str, str]]:
+def load_keywords_metadata(
+    keywords_path: Path,
+    taxonomy_fields: TaxonomyFieldMappingConfig,
+) -> tuple[dict[str, str], dict[str, str]]:
     """Return definition summaries and taxonomy paths keyed by keyword name."""
 
-    df = pd.read_csv(keywords_path, dtype=str).fillna("")
+    raw_df = pd.read_csv(keywords_path, low_memory=False)
+    canonical_df, summary_df = prepare_keywords_dataframe(raw_df, taxonomy_fields)
 
     # In case of duplicate names, keep the first non-empty definition summary.
     definitions: dict[str, str] = {}
-    for row in df.itertuples():
-        name = str(row.name)
-        definition = str(getattr(row, "definition_summary", ""))
-        if name not in definitions or not definitions[name]:
-            definitions[name] = definition
+    if summary_df is not None:
+        for row in summary_df.fillna("").itertuples(index=False):
+            name = str(row.name).strip()
+            summary = str(row.definition_summary).strip()
+            if not name:
+                continue
+            if name not in definitions or not definitions[name]:
+                definitions[name] = summary
+    elif "definition" in canonical_df.columns:
+        for _, row in canonical_df.iterrows():
+            name = str(row.get("name", "")).strip()
+            definition = str(row.get("definition", "")).strip()
+            if not name:
+                continue
+            if name not in definitions or not definitions[name]:
+                definitions[name] = definition
 
     taxonomy_paths: dict[str, str] = {}
-    if {"name", "parent"}.issubset(df.columns):
-        # Reconstruct the taxonomy graph using the original (non-filled) parent column.
-        taxonomy_df = pd.read_csv(keywords_path)
+    if {"name", "parent"}.issubset(canonical_df.columns):
+        taxonomy_df = canonical_df.copy()
         if "parent" in taxonomy_df.columns:
             taxonomy_df["parent"] = taxonomy_df["parent"].apply(
-                lambda value: value
-                if pd.notna(value) and str(value).strip()
-                else pd.NA
+                lambda value: value if pd.notna(value) and str(value).strip() else pd.NA
             )
         try:
             graph = build_taxonomy_graph(taxonomy_df)
@@ -349,7 +371,21 @@ def review_records(
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_arguments(argv)
 
-    definitions, taxonomy_paths = load_keywords_metadata(args.keywords)
+    taxonomy_fields = TaxonomyFieldMappingConfig()
+    if args.config is not None:
+        config_path = args.config.resolve()
+        config = load_config(config_path)
+        taxonomy_fields = config.taxonomy_fields
+
+    keywords_path = args.keywords
+    if args.config is not None and not keywords_path.is_absolute():
+        keywords_path = (args.config.parent / keywords_path).resolve()
+    else:
+        keywords_path = keywords_path.resolve()
+
+    definitions, taxonomy_paths = load_keywords_metadata(
+        keywords_path, taxonomy_fields
+    )
     errors = load_prediction_errors(args.predictions)
     records = enrich_records(errors, definitions, taxonomy_paths)
     existing_decisions = load_existing_decisions(args.output)
