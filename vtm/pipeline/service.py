@@ -27,20 +27,36 @@ from vtm.utils import ensure_file_exists
 logger = logging.getLogger(__name__)
 
 
-def prepare_keywords_dataframe(
+def _is_na(value: Any) -> bool:
+    """Return True when a value should be treated as missing."""
+
+    try:
+        return bool(pd.isna(value))
+    except TypeError:
+        return False
+
+
+def _clean_str(value: Any) -> str | NAType:
+    """Normalize arbitrary values into stripped strings or pandas.NA."""
+
+    if _is_na(value):
+        return pd.NA
+    text = value if isinstance(value, str) else str(value)
+    text = text.strip()
+    if not text:
+        return pd.NA
+    return text
+
+
+def _rename_taxonomy_columns(
     keywords: pd.DataFrame,
-    taxonomy_fields: TaxonomyFieldMappingConfig,
-) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
-    """Return canonical keywords and optional definition frames based on config."""
-
-    if not isinstance(keywords, pd.DataFrame):
-        raise TypeError("keywords must be a pandas DataFrame")
-
-    name_col = taxonomy_fields.require_column("name")
-    parent_col = taxonomy_fields.require_column("parent")
-    order_col = taxonomy_fields.resolve_column("order")
-    definition_col = taxonomy_fields.resolve_column("definition")
-    label_col = taxonomy_fields.resolve_column("label")
+    *,
+    name_col: str,
+    parent_col: str,
+    order_col: str | None,
+    label_col: str | None,
+) -> pd.DataFrame:
+    """Return a canonical keyword frame with taxonomy-aligned column names."""
 
     rename_map: dict[str, str] = {}
     if name_col != "name":
@@ -56,24 +72,28 @@ def prepare_keywords_dataframe(
         rename_map[label_col] = "label"
 
     canonical = keywords.rename(columns=rename_map).copy()
-
-    def _is_na(value: Any) -> bool:
-        try:
-            return bool(pd.isna(value))
-        except TypeError:
-            return False
-
-    def _clean_str(value: Any) -> str | NAType:
-        if _is_na(value):
-            return pd.NA
-        text = value if isinstance(value, str) else str(value)
-        text = text.strip()
-        if not text:
-            return pd.NA
-        return text
-
     if "name" in canonical.columns:
         canonical["name"] = canonical["name"].map(_clean_str)
+
+    missing = sorted({"name", "parent"} - set(canonical.columns))
+    if missing:
+        raise KeyError(f"Keywords data missing required columns: {missing}")
+
+    if order_col is None and "order" not in canonical.columns:
+        canonical["order"] = pd.NA
+    elif order_col is not None and "order" not in canonical.columns:
+        raise KeyError("Keywords data missing required column: 'order'")
+
+    return canonical
+
+
+def _build_identifier_map(
+    canonical: pd.DataFrame,
+    *,
+    name_col: str,
+    label_col: str | None,
+) -> dict[str, str]:
+    """Construct a lookup from identifiers to canonical keyword names."""
 
     lookup_columns: list[str] = []
     if "identifier" in canonical.columns:
@@ -99,43 +119,53 @@ def prepare_keywords_dataframe(
                     continue
                 identifier_to_name[str(cleaned_identifier)] = str(canonical_name)
 
+    return identifier_to_name
+
+
+def _normalize_parent_fields(
+    canonical: pd.DataFrame, identifier_to_name: dict[str, str]
+) -> pd.DataFrame:
+    """Normalize parent fields using the identifier lookup."""
+
+    normalized = canonical.copy()
+
     def _normalize_parent(value: Any) -> Any:
         cleaned = _clean_str(value)
         if _is_na(cleaned):
             return pd.NA
         return identifier_to_name.get(str(cleaned), cleaned)
 
-    if "parent" in canonical.columns:
-        canonical["parent"] = canonical["parent"].map(_normalize_parent)
+    if "parent" in normalized.columns:
+        normalized["parent"] = normalized["parent"].map(_normalize_parent)
 
     def _normalize_multi_parent(value: Any) -> Any:
         if _is_na(value):
             return pd.NA
         text = str(value) if not isinstance(value, str) else value
         parts = [part.strip() for part in text.split("|")]
-        normalized: list[str] = []
+        normalized_parts: list[str] = []
         for part in parts:
             if not part:
                 continue
-            normalized_part = identifier_to_name.get(part, part)
-            normalized.append(normalized_part)
-        if not normalized:
+            normalized_parts.append(identifier_to_name.get(part, part))
+        if not normalized_parts:
             return pd.NA
-        return "|".join(normalized)
+        return "|".join(normalized_parts)
 
-    if "parents" in canonical.columns:
-        canonical["parents"] = canonical["parents"].map(_normalize_multi_parent)
+    if "parents" in normalized.columns:
+        normalized["parents"] = normalized["parents"].map(_normalize_multi_parent)
 
-    missing = sorted({"name", "parent"} - set(canonical.columns))
-    if missing:
-        raise KeyError(f"Keywords data missing required columns: {missing}")
+    return normalized
 
-    if order_col is None and "order" not in canonical.columns:
-        canonical["order"] = pd.NA
-    elif order_col is not None and "order" not in canonical.columns:
-        raise KeyError("Keywords data missing required column: 'order'")
 
-    definitions: Optional[pd.DataFrame] = None
+def _extract_definitions(
+    keywords: pd.DataFrame,
+    canonical: pd.DataFrame,
+    *,
+    definition_col: str | None,
+) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+    """Attach definition metadata and return optional definition frame."""
+
     resolved_definition_col = "definition"
     definition_source: Optional[pd.Series] = None
     if definition_col and definition_col in keywords.columns:
@@ -148,19 +178,57 @@ def prepare_keywords_dataframe(
     if definition_source is None and resolved_definition_col in canonical.columns:
         definition_source = canonical[resolved_definition_col]
 
+    canonical_with_definitions = canonical.copy()
+    definitions: Optional[pd.DataFrame] = None
     if definition_source is not None:
-        canonical[resolved_definition_col] = definition_source.map(
+        canonical_with_definitions[resolved_definition_col] = definition_source.map(
             lambda value: ""
             if _is_na(value)
             else str(value).strip()
         )
-        definitions = canonical[["name", resolved_definition_col]].copy()
+        definitions = canonical_with_definitions[["name", resolved_definition_col]].copy()
         definitions.fillna("", inplace=True)
-    elif resolved_definition_col in canonical.columns:
-        # No usable definition data was found; drop the empty canonical column to avoid
-        # downstream confusion about available metadata.
-        canonical.drop(columns=[resolved_definition_col], inplace=True)
-        resolved_definition_col = ""
+    elif resolved_definition_col in canonical_with_definitions.columns:
+        canonical_with_definitions.drop(columns=[resolved_definition_col], inplace=True)
+
+    return canonical_with_definitions, definitions
+
+
+def prepare_keywords_dataframe(
+    keywords: pd.DataFrame,
+    taxonomy_fields: TaxonomyFieldMappingConfig,
+) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+    """Return canonical keywords and optional definition frames based on config."""
+
+    if not isinstance(keywords, pd.DataFrame):
+        raise TypeError("keywords must be a pandas DataFrame")
+
+    name_col = taxonomy_fields.require_column("name")
+    parent_col = taxonomy_fields.require_column("parent")
+    order_col = taxonomy_fields.resolve_column("order")
+    definition_col = taxonomy_fields.resolve_column("definition")
+    label_col = taxonomy_fields.resolve_column("label")
+
+    canonical = _rename_taxonomy_columns(
+        keywords,
+        name_col=name_col,
+        parent_col=parent_col,
+        order_col=order_col,
+        label_col=label_col,
+    )
+
+    identifier_to_name = _build_identifier_map(
+        canonical,
+        name_col=name_col,
+        label_col=label_col,
+    )
+
+    canonical = _normalize_parent_fields(canonical, identifier_to_name)
+    canonical, definitions = _extract_definitions(
+        keywords,
+        canonical,
+        definition_col=definition_col,
+    )
 
     return canonical, definitions
 
