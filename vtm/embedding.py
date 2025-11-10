@@ -264,7 +264,19 @@ def _extract_summary_map(
     else:
         raise TypeError("summaries must be a mapping, pandas Series/DataFrame, or None")
 
-    for key, value in items:
+    for entry in items:
+        if isinstance(entry, tuple):
+            if not entry:
+                continue
+            key = entry[0]
+            value = entry[1] if len(entry) > 1 else None
+        elif isinstance(entry, Mapping):
+            # Some pandas iterators yield dict-like rows instead of tuples.
+            key = entry.get("name")
+            value = entry.get("definition_summary")
+        else:
+            continue
+
         if not isinstance(key, str) or not isinstance(value, str):
             continue
         name = key.strip()
