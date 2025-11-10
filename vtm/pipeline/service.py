@@ -61,6 +61,68 @@ def prepare_keywords_dataframe(
 
     canonical = keywords.rename(columns=rename_map).copy()
 
+    def _clean_str(value: object):
+        if pd.isna(value):
+            return pd.NA
+        text = str(value) if not isinstance(value, str) else value
+        text = text.strip()
+        if not text:
+            return pd.NA
+        return text
+
+    if "name" in canonical.columns:
+        canonical["name"] = canonical["name"].map(_clean_str)
+
+    lookup_columns: list[str] = []
+    if "identifier" in canonical.columns:
+        lookup_columns.append("identifier")
+    if name_col != "name" and name_col in canonical.columns:
+        lookup_columns.append(name_col)
+    if label_col and label_col in canonical.columns and label_col not in {"label", "name"}:
+        lookup_columns.append(label_col)
+
+    if lookup_columns:
+        lookup_columns = list(dict.fromkeys(lookup_columns))
+
+    identifier_to_name: dict[str, str] = {}
+    if lookup_columns and "name" in canonical.columns:
+        for idx, canonical_name in canonical["name"].items():
+            if pd.isna(canonical_name):
+                continue
+            for column in lookup_columns:
+                raw_identifier = canonical.at[idx, column]
+                cleaned_identifier = _clean_str(raw_identifier)
+                if pd.isna(cleaned_identifier):
+                    continue
+                identifier_to_name[str(cleaned_identifier)] = str(canonical_name)
+
+    def _normalize_parent(value: object) -> object:
+        cleaned = _clean_str(value)
+        if pd.isna(cleaned):
+            return pd.NA
+        return identifier_to_name.get(str(cleaned), cleaned)
+
+    if "parent" in canonical.columns:
+        canonical["parent"] = canonical["parent"].map(_normalize_parent)
+
+    def _normalize_multi_parent(value: object) -> object:
+        if pd.isna(value):
+            return pd.NA
+        text = str(value) if not isinstance(value, str) else value
+        parts = [part.strip() for part in text.split("|")]
+        normalized: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            normalized_part = identifier_to_name.get(part, part)
+            normalized.append(normalized_part)
+        if not normalized:
+            return pd.NA
+        return "|".join(normalized)
+
+    if "parents" in canonical.columns:
+        canonical["parents"] = canonical["parents"].map(_normalize_multi_parent)
+
     missing = sorted({"name", "parent"} - set(canonical.columns))
     if missing:
         raise KeyError(f"Keywords data missing required columns: {missing}")

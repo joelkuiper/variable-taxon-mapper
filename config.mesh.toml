@@ -21,7 +21,7 @@ name = "label"
 # parent = "parent"
 order = "" # MeSH doesn't have it, and I didn't compute it
 # definition = "definition"
-definition_summary = "definition"
+# definition_summary = "definition"
 # label = "label"
 
 [embedder]
