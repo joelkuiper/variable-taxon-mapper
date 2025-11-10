@@ -56,6 +56,7 @@ def _split_request_kwargs(kwargs: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[
         "max_tokens",
         "presence_penalty",
         "response_format",
+        "json_schema",
         "stop",
         "temperature",
         "top_p",

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import os
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -14,19 +15,33 @@ from openai.types.chat import ChatCompletionMessageParam
 logger = logging.getLogger(__name__)
 
 
-GRAMMAR_RESPONSE = r"""
-root      ::= obj
-quote     ::= "\""
+MATCH_RESPONSE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "concept_label": {"type": "string"},
+    },
+    "required": ["concept_label"],
+    "additionalProperties": False,
+}
 
-string ::=
-  quote (
-    [^"\\\x7F\x00-\x1F] |
-    "\\" (["\\bfnrt] | "u" [0-9a-fA-F]{4}) # escapes
-  )* quote
+
+def json_schema_response_format(
+    name: str, schema: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """Construct a ``response_format`` payload for JSON schema constrained output."""
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "schema": copy.deepcopy(schema),
+        },
+    }
 
 
-obj ::= ("{" quote "concept_label" quote ": " string "}")
-"""
+DEFAULT_MATCH_RESPONSE_FORMAT = json_schema_response_format(
+    "match_response", MATCH_RESPONSE_SCHEMA
+)
 
 
 _SYNC_CLIENTS: Dict[Tuple[str, str], OpenAI] = {}
@@ -85,6 +100,7 @@ def _split_request_kwargs(kwargs: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[
         "max_tokens",
         "presence_penalty",
         "response_format",
+        "json_schema",
         "stop",
         "temperature",
         "top_p",

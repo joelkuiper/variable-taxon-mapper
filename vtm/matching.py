@@ -6,6 +6,7 @@ import json
 import re
 import logging
 import threading
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -15,7 +16,8 @@ from openai.types.chat import ChatCompletionMessageParam
 from .embedding import Embedder, collect_item_texts
 from .snap import maybe_snap_to_child
 from .llm_chat import (
-    GRAMMAR_RESPONSE,
+    DEFAULT_MATCH_RESPONSE_FORMAT,
+    json_schema_response_format,
     llama_completion_many,
 )
 from .prompts import PromptRenderer, create_prompt_renderer
@@ -191,10 +193,17 @@ def _llm_kwargs_for_config(cfg: LLMConfig, *, slot_id: int) -> Dict[str, Any]:
         "top_k": cfg.top_k,
         "top_p": cfg.top_p,
         "min_p": cfg.min_p,
-        "grammar": cfg.grammar if cfg.grammar is not None else GRAMMAR_RESPONSE,
         "cache_prompt": cfg.cache_prompt,
         "n_keep": cfg.n_keep,
     }
+    if cfg.response_format is not None:
+        kwargs["response_format"] = cfg.response_format
+    elif cfg.json_schema is not None:
+        kwargs["response_format"] = json_schema_response_format(
+            "match_response", cfg.json_schema
+        )
+    else:
+        kwargs["response_format"] = deepcopy(DEFAULT_MATCH_RESPONSE_FORMAT)
     if use_explicit_slots:
         kwargs["slot_id"] = slot_id
     else:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Optional, Type, TypeVar
+from typing import Any, Dict, Mapping, MutableMapping, Optional, Type, TypeVar
 
 import tomllib
 
@@ -222,7 +222,8 @@ class LLMConfig:
     min_p: float = 0.0
     cache_prompt: bool = True
     n_keep: int = -1
-    grammar: Optional[str] = None
+    response_format: Optional[Dict[str, Any]] = None
+    json_schema: Optional[Dict[str, Any]] = None
     embedding_remap_threshold: float = 0.45
     alias_similarity_threshold: float = 0.9
     snap_to_child: bool = False
