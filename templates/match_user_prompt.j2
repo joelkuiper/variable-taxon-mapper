@@ -1,0 +1,23 @@
+{{ tree | trim }}
+
+# ITEM:
+{% set label = item_fields.get("label") or item_clean.get("label") %}
+{% set name = item_fields.get("name") or item_clean.get("name") %}
+{% set dataset = item_fields.get("dataset") or item_clean.get("dataset") %}
+{% set description = item_fields.get("description") or item_clean.get("description") %}
+{% if label or name %}**{{ label }}**{% if name %} ({{ name }}){% endif %}{% endif %}
+
+{% if dataset %}dataset: {{ dataset }}{% endif %}
+
+{% if item_fields.get("unit") %}unit: {{ item_fields.get("unit") }}{% endif %}
+
+{% if description %}description: {{ description }}{% endif %}
+
+{# For future reference
+{% if item_fields %}
+# ITEM FIELDS:
+{% for key, value in item_fields|dictsort %}
+{% if key not in ["label", "name", "dataset", "description"] %}- {{ key }}: {{ value }}
+{% endif %}
+{% endfor %}
+{% endif %} #}

@@ -14,6 +14,7 @@ from src.embedding import (
     build_taxonomy_embeddings_composed,
 )
 from src.evaluate import ProgressHook, run_label_benchmark
+from src.prompts import PromptRenderer, create_prompt_renderer
 from src.taxonomy import (
     build_gloss_map,
     build_name_maps_from_graph,
@@ -47,6 +48,7 @@ class VariableTaxonMapper:
         name_to_id,
         name_to_path,
         gloss_map,
+        prompt_renderer: PromptRenderer,
     ) -> None:
         self.config = config
         self.keywords = keywords
@@ -58,6 +60,7 @@ class VariableTaxonMapper:
         self.name_to_id = name_to_id
         self.name_to_path = name_to_path
         self.gloss_map = gloss_map
+        self.prompt_renderer = prompt_renderer
 
     @staticmethod
     def _prepare_keywords(keywords: pd.DataFrame) -> _KeywordArtifacts:
@@ -114,6 +117,9 @@ class VariableTaxonMapper:
         else:
             logger.debug("Using in-memory keywords dataframe with %d rows", len(keywords))
 
+        if base_path is not None:
+            config.prompts.set_config_root(base_path)
+
         artifacts = cls._prepare_keywords(keywords.copy())
         logger.debug(
             "Prepared keywords dataframe; summaries_present=%s",
@@ -162,6 +168,11 @@ class VariableTaxonMapper:
         gloss_map = build_gloss_map(summaries)
         logger.debug("Constructed gloss map with %d entries", len(gloss_map))
 
+        prompt_renderer = create_prompt_renderer(
+            config.prompts, base_dir=base_path
+        )
+        logger.debug("Initialized prompt renderer for taxonomy matching")
+
         return cls(
             config,
             keywords=artifacts.keywords,
@@ -173,6 +184,7 @@ class VariableTaxonMapper:
             name_to_id=name_to_id,
             name_to_path=name_to_path,
             gloss_map=gloss_map,
+            prompt_renderer=prompt_renderer,
         )
 
     def predict(
@@ -208,6 +220,9 @@ class VariableTaxonMapper:
             evaluate=evaluate,
             progress_hook=progress_hook,
             field_mapping=self.config.fields,
+            prompt_config=self.config.prompts,
+            prompt_renderer=self.prompt_renderer,
+            prompt_base_path=self.config.prompts.get_config_root(),
         )
         logger.info("Completed label benchmark evaluation")
         return df, metrics

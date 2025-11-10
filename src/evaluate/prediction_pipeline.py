@@ -15,6 +15,7 @@ from config import ParallelismConfig
 
 from ..embedding import Embedder
 from ..matching import MatchRequest, match_items_to_tree
+from ..prompts import PromptRenderer
 from ..pruning import AsyncTreePruner, PrunedTreeResult
 from .metrics import build_result_row
 from .types import PredictionJob, ProgressHook
@@ -47,6 +48,7 @@ class PredictionPipeline:
         name_to_path: Dict[str, str],
         gloss_map: Dict[str, str],
         progress_hook: ProgressHook | None,
+        prompt_renderer: PromptRenderer,
     ) -> None:
         self.jobs = list(jobs)
         self.pruning_cfg = pruning_cfg
@@ -70,6 +72,7 @@ class PredictionPipeline:
         self.name_to_path = name_to_path
         self.gloss_map = gloss_map
         self.progress_hook = progress_hook
+        self.prompt_renderer = prompt_renderer
 
         self.total = len(self.jobs)
         self.rows: List[Optional[Dict[str, Any]]] = [None] * self.total
@@ -263,6 +266,7 @@ class PredictionPipeline:
             allowed_labels=tuple(pruned.allowed_labels),
             allowed_children=pruned.allowed_children,
             slot_id=job.slot_id,
+            item_columns=job.item_columns,
         )
 
     async def _fetch_predictions(
@@ -283,6 +287,7 @@ class PredictionPipeline:
                 embedder=self.embedder,
                 hnsw_index=self.hnsw_index,
                 llm_config=self.llm_cfg,
+                prompt_renderer=self.prompt_renderer,
                 encode_lock=self.encode_lock,
             )
         except Exception as exc:  # pragma: no cover - defensive logging

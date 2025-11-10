@@ -17,8 +17,8 @@ from .snap import maybe_snap_to_child
 from .llm_chat import (
     GRAMMAR_RESPONSE,
     llama_completion_many,
-    make_tree_match_messages,
 )
+from .prompts import PromptRenderer, create_prompt_renderer
 
 _PROMPT_DEBUG_SHOWN = False
 
@@ -40,7 +40,7 @@ def _print_prompt_once(messages: Sequence[Dict[str, Any]]) -> None:
     global _PROMPT_DEBUG_SHOWN
     if not _PROMPT_DEBUG_SHOWN:
         _PROMPT_DEBUG_SHOWN = True
-        logger.debug(
+        logger.info(
             "\n====== LLM PROMPT (one-time) ======\n%s\n====== END PROMPT ======\n",
             _format_prompt(messages),
         )
@@ -161,6 +161,7 @@ class MatchRequest:
         None
     )
     slot_id: int = 0
+    item_columns: Mapping[str, Any] | None = None
 
 
 def _llm_kwargs_for_config(cfg: LLMConfig, *, slot_id: int) -> Dict[str, Any]:
@@ -193,6 +194,7 @@ async def match_items_to_tree(
     embedder: Embedder,
     hnsw_index,
     llm_config: LLMConfig,
+    prompt_renderer: PromptRenderer | None = None,
     encode_lock: Optional[threading.Lock] = None,
 ) -> List[Dict[str, Any]]:
     """Resolve ``requests`` to taxonomy nodes via the LLM and embedding remap."""
@@ -200,9 +202,13 @@ async def match_items_to_tree(
     if not requests:
         return []
 
+    renderer = prompt_renderer or create_prompt_renderer()
+
     message_payloads: List[Tuple[Sequence[Dict[str, Any]], Dict[str, Any]]] = []
     for req in requests:
-        messages = make_tree_match_messages(req.tree_markdown, req.item)
+        messages = renderer.render_messages(
+            req.tree_markdown, req.item, item_columns=req.item_columns
+        )
         _print_prompt_once(messages)
         message_payloads.append(
             (messages, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id))
@@ -357,6 +363,8 @@ async def match_item_to_tree(
     hnsw_index,
     llm_config: LLMConfig,
     slot_id: int = 0,
+    item_columns: Mapping[str, Any] | None = None,
+    prompt_renderer: PromptRenderer | None = None,
     encode_lock: Optional[threading.Lock] = None,
 ) -> Dict[str, Any]:
     """Compatibility wrapper for single-item matching."""
@@ -369,6 +377,7 @@ async def match_item_to_tree(
                 allowed_labels=tuple(allowed_labels),
                 allowed_children=allowed_children,
                 slot_id=slot_id,
+                item_columns=item_columns,
             )
         ],
         name_to_id=name_to_id,
@@ -378,6 +387,7 @@ async def match_item_to_tree(
         embedder=embedder,
         hnsw_index=hnsw_index,
         llm_config=llm_config,
+        prompt_renderer=prompt_renderer,
         encode_lock=encode_lock,
     )
     return result[0]

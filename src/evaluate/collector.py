@@ -13,6 +13,7 @@ from config import HttpConfig, LLMConfig, ParallelismConfig, PruningConfig
 
 from ..embedding import Embedder
 from ..graph_utils import compute_node_depths, get_undirected_taxonomy
+from ..prompts import PromptRenderer
 from .prediction_pipeline import PredictionPipeline
 from .types import PredictionJob, ProgressHook
 
@@ -37,6 +38,7 @@ def collect_predictions(
     name_to_path: Dict[str, str],
     gloss_map: Dict[str, str],
     progress_hook: ProgressHook | None,
+    prompt_renderer: PromptRenderer,
 ) -> List[Dict[str, Any]]:
     logger.info("Collecting predictions for %d jobs", len(jobs))
     undirected_graph = get_undirected_taxonomy(graph) if graph is not None else None
@@ -60,6 +62,7 @@ def collect_predictions(
             name_to_path=name_to_path,
             gloss_map=gloss_map,
             progress_hook=progress_hook,
+            prompt_renderer=prompt_renderer,
         )
 
         pipeline.run_prune_workers()

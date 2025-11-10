@@ -5,12 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from textwrap import dedent
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from openai import AsyncOpenAI, OpenAI
-
-from .utils import clean_text
 
 
 logger = logging.getLogger(__name__)
@@ -201,70 +198,3 @@ def llama_completion(
         raise RuntimeError("Chat completion response missing message content")
     return message.content
 
-
-def _format_chat_messages(messages: Sequence[Dict[str, Any]]) -> str:
-    parts = []
-    for message in messages:
-        role = str(message.get("role", "?")).upper()
-        content = str(message.get("content", ""))
-        parts.append(f"{role}:\n{content}")
-    return "\n\n".join(parts)
-
-
-def _print_prompt_once(messages: Sequence[Dict[str, Any]]) -> None:
-    """Print the first LLM prompt for debugging."""
-
-    global _PROMPT_DEBUG_SHOWN
-    if not _PROMPT_DEBUG_SHOWN:
-        _PROMPT_DEBUG_SHOWN = True
-        formatted = _format_chat_messages(messages)
-        logger.debug(
-            "\n====== LLM PROMPT (one-time) ======\n%s\n====== END PROMPT ======\n",
-            formatted,
-        )
-
-
-def make_tree_match_messages(
-    tree_markdown_labels_only: str,
-    item: Dict[str, Optional[str]],
-) -> List[Dict[str, str]]:
-    tree_md = (tree_markdown_labels_only or "").strip()
-    lab = clean_text(item.get("label"))
-    nam = clean_text(item.get("name"))
-    dat = clean_text(item.get("dataset"))
-    desc = clean_text(item.get("description"))
-
-    system_content = dedent(
-        """\
-        # TASK
-        • From the TREE (or SUGGESTIONS), choose **exactly one** concept that best matches the ITEM.
-        • Prefer the most specific matching child, if present; only choose the parent if no child fits.
-        • The TREE is a nested (indented) Markdown list where each bullet is: `- <concept label> [<optional short description>]`.
-        • Concepts may include a short description in square brackets.
-          Those descriptions are guidance only; **output must be the exact concept label (no description)**.
-        • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive.
-        • Output a single-line JSON, for example `{"concept_label":"..."}`.
-        """
-    ).strip()
-
-    user_content = dedent(
-        """\
-        {tree}
-
-        # ITEM:
-        **{item_label}** ({item_name})
-        dataset: {item_dataset}
-        description: {item_desc}
-        """
-    ).format(
-        tree=tree_md,
-        item_label=lab,
-        item_name=nam,
-        item_dataset=dat,
-        item_desc=desc,
-    ).strip()
-
-    return [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": user_content},
-    ]

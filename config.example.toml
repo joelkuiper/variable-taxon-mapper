@@ -92,6 +92,10 @@ snap_similarity = "token_set"
 # Maximum descendant depth to consider when snapping (1 = direct children only).
 snap_descendant_depth = 3
 
+[prompts]
+system_template_path = "templates/match_system_prompt.j2"
+user_template_path = "templates/match_user_prompt.j2"
+
 [parallelism]
 num_slots = 4
 pool_maxsize = 8

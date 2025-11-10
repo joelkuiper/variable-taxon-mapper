@@ -17,3 +17,4 @@ class PredictionJob:
     slot_id: int
     metadata: Dict[str, Any]
     gold_labels: Optional[Sequence[str]] = None
+    item_columns: Optional[Dict[str, Any]] = None

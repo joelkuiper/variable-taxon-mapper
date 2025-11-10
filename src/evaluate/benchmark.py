@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 import numpy as np
@@ -15,6 +16,7 @@ from config import (
     FieldMappingConfig,
     HttpConfig,
     LLMConfig,
+    PromptTemplateConfig,
     ParallelismConfig,
     PruningConfig,
     coerce_config,
@@ -22,6 +24,7 @@ from config import (
 )
 
 from ..embedding import Embedder
+from ..prompts import PromptRenderer, create_prompt_renderer
 from ..utils import clean_str_or_none, split_keywords_comma
 from .collector import collect_predictions
 from .metrics import summarise_dataframe
@@ -79,11 +82,12 @@ def _iter_prediction_jobs(
 
     for j, idx in enumerate(idxs):
         row = df.loc[idx]
+        row_dict = row.to_dict()
         item = {
-            "dataset": row.get(dataset_col) if dataset_col else None,
-            "label": row.get(label_col) if label_col else None,
-            "name": row.get(name_col) if name_col else None,
-            "description": row.get(desc_col) if desc_col else None,
+            "dataset": row_dict.get(dataset_col) if dataset_col else None,
+            "label": row_dict.get(label_col) if label_col else None,
+            "name": row_dict.get(name_col) if name_col else None,
+            "description": row_dict.get(desc_col) if desc_col else None,
         }
         if text_keys:
             item["_text_fields"] = tuple(text_keys)
@@ -111,6 +115,7 @@ def _iter_prediction_jobs(
                 slot_id=slot_id,
                 metadata=metadata,
                 gold_labels=gold_labels,
+                item_columns=row_dict,
             )
         )
 
@@ -163,6 +168,9 @@ def run_label_benchmark(
     evaluate: bool = True,
     progress_hook: ProgressHook | None = None,
     field_mapping: FieldMappingConfig | Dict[str, Any] | None = None,
+    prompt_config: PromptTemplateConfig | Dict[str, Any] | None = None,
+    prompt_renderer: PromptRenderer | None = None,
+    prompt_base_path: Path | None = None,
 ) -> tuple[pd.DataFrame, Dict[str, Any]]:
     logger.info(
         "Preparing benchmark: total_rows=%d, evaluate=%s",
@@ -175,6 +183,10 @@ def run_label_benchmark(
     parallel_cfg = coerce_config(parallel_config, ParallelismConfig, "parallel_config")
     http_cfg = coerce_config(http_config, HttpConfig, "http_config")
     field_cfg = coerce_config(field_mapping, FieldMappingConfig, "field_mapping")
+    prompt_cfg = coerce_config(prompt_config, PromptTemplateConfig, "prompt_config")
+    renderer = prompt_renderer or create_prompt_renderer(
+        prompt_cfg, base_dir=prompt_base_path
+    )
 
     dedupe_columns: list[str] = []
     for column in cfg.dedupe_on or []:
@@ -274,6 +286,7 @@ def run_label_benchmark(
         name_to_path=name_to_path,
         gloss_map=gloss_map,
         progress_hook=progress_hook or default_progress_hook,
+        prompt_renderer=renderer,
     )
 
     if progress_bar is not None:

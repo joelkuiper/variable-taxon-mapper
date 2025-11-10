@@ -193,6 +193,36 @@ class LLMConfig:
 
 
 @dataclass
+class PromptTemplateConfig:
+    """Configuration for rendering LLM prompt templates."""
+
+    system_template_path: Optional[str] = "templates/match_system_prompt.j2"
+    user_template_path: Optional[str] = "templates/match_user_prompt.j2"
+    system_template: Optional[str] = None
+    user_template: Optional[str] = None
+    encoding: str = "utf-8"
+    _config_root: Optional[Path] = field(default=None, repr=False, compare=False)
+
+    def set_config_root(self, root: Optional[Path]) -> None:
+        """Record the directory used to resolve relative template paths."""
+
+        self._config_root = root
+
+    def get_config_root(self) -> Optional[Path]:
+        return self._config_root
+
+    def resolve_path(self, template_path: str, *, base_dir: Optional[Path] = None) -> Path:
+        """Resolve ``template_path`` relative to ``base_dir`` or the config root."""
+
+        candidate = Path(template_path)
+        if candidate.is_absolute():
+            return candidate
+
+        root = base_dir or self._config_root or Path.cwd()
+        return (root / candidate).resolve()
+
+
+@dataclass
 class ParallelismConfig:
     """Client-side concurrency controls for pruning and prompting."""
 
@@ -232,6 +262,7 @@ class AppConfig:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     pruning: PruningConfig = field(default_factory=PruningConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    prompts: PromptTemplateConfig = field(default_factory=PromptTemplateConfig)
     parallelism: ParallelismConfig = field(default_factory=ParallelismConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
 
@@ -276,6 +307,7 @@ def load_config(path: str | Path) -> AppConfig:
     evaluation_section = raw.get("evaluation")
     pruning_section = raw.get("pruning")
     llm_section = raw.get("llm")
+    prompts_section = raw.get("prompts")
     parallel_section = raw.get("parallelism")
     http_section = raw.get("http")
 
@@ -293,9 +325,12 @@ def load_config(path: str | Path) -> AppConfig:
         evaluation=evaluation_cfg,
         pruning=_coerce_section(pruning_section, PruningConfig),
         llm=_coerce_section(llm_section, LLMConfig),
+        prompts=_coerce_section(prompts_section, PromptTemplateConfig),
         parallelism=_coerce_section(parallel_section, ParallelismConfig),
         http=_coerce_section(http_section, HttpConfig),
     )
+
+    app_config.prompts.set_config_root(config_path.parent)
 
     return app_config
 
@@ -342,6 +377,7 @@ __all__ = [
     "HttpConfig",
     "HNSWConfig",
     "LLMConfig",
+    "PromptTemplateConfig",
     "ParallelismConfig",
     "PruningConfig",
     "TaxonomyEmbeddingConfig",
