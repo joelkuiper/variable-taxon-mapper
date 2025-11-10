@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
-from typing import Dict, List, Optional, Set, Tuple
+import time
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
+
 import networkx as nx
 import pandas as pd
+
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_taxonomy_label(
@@ -73,13 +79,105 @@ def build_taxonomy_graph(
         raise ValueError(
             "Taxonomy graph contains a cycle; expected a DAG (forest of trees)."
         )
-    bad = [n for n in G.nodes if G.in_degree(n) > 1]
-    if bad:
-        raise ValueError(
-            f"Nodes with multiple parents found (≤1 expected): {', '.join(sorted(bad)[:8])}"
-        )
+    ensure_traversal_cache(G)
 
     return G
+
+
+def ensure_traversal_cache(G: nx.DiGraph) -> Dict[str, Any]:
+    """Ensure canonical traversal metadata is cached on ``G``."""
+
+    signature = (G.number_of_nodes(), G.number_of_edges())
+    cache = G.graph.get("_taxonomy_traversal_cache")
+    if cache and cache.get("signature") == signature:
+        return cache
+
+    try:
+        topo_nodes = list(nx.topological_sort(G))
+    except nx.NetworkXUnfeasible:
+        topo_nodes = list(G.nodes())
+
+    parent_map: Dict[str, Optional[str]] = {}
+    path_map: Dict[str, Tuple[str, ...]] = {}
+    depth_map: Dict[str, Optional[int]] = {}
+    ancestor_sets: Dict[str, FrozenSet[str]] = {}
+    all_parents: Dict[str, Tuple[str, ...]] = {}
+
+    node_count = len(topo_nodes)
+    log_progress = node_count >= 1000
+    start_ts = time.perf_counter()
+    if log_progress:
+        logger.info(
+            "Building taxonomy traversal cache for %d nodes / %d edges",
+            signature[0],
+            signature[1],
+        )
+
+    for idx, node in enumerate(topo_nodes, start=1):
+        preds = tuple(G.predecessors(node))
+        all_parents[node] = preds
+        if not preds:
+            parent_map[node] = None
+            path_map[node] = (node,)
+            depth_map[node] = 0
+            ancestor_sets[node] = frozenset()
+            continue
+
+        best_parent: Optional[str] = None
+        best_path: Tuple[str, ...] | None = None
+        best_key: Tuple[int, Tuple[str, ...], Tuple[str, ...]] | None = None
+        for parent in preds:
+            parent_path = path_map.get(parent)
+            if parent_path is None:
+                continue
+            candidate_path = parent_path + (node,)
+            candidate_key = (
+                len(candidate_path),
+                tuple(part.lower() for part in candidate_path),
+                candidate_path,
+            )
+            if best_key is None or candidate_key < best_key:
+                best_key = candidate_key
+                best_parent = parent
+                best_path = candidate_path
+
+        if best_key is None or best_path is None:
+            parent_map[node] = None
+            path_map[node] = (node,)
+            depth_map[node] = 0
+            continue
+
+        parent_map[node] = best_parent
+        path_map[node] = best_path
+        depth_map[node] = len(best_path) - 1
+
+        if log_progress and idx % 5000 == 0:
+            logger.info(
+                "Processed %d/%d nodes while caching traversal metadata",
+                idx,
+                node_count,
+            )
+
+    cache = {
+        "signature": signature,
+        "primary_parent": parent_map,
+        "canonical_path": path_map,
+        "depth_map": depth_map,
+        "ancestor_sets": ancestor_sets,
+        "all_parents": all_parents,
+    }
+    G.graph["_taxonomy_traversal_cache"] = cache
+
+    if log_progress:
+        duration = time.perf_counter() - start_ts
+        logger.info(
+            "Finished caching taxonomy traversal metadata in %.2fs", duration
+        )
+
+    # Clear any cached ancestor lookup helper; it will be rebuilt lazily.
+    G.graph.pop("_taxonomy_lazy_ancestors", None)
+
+    return cache
 
 
 def roots_in_order(G: nx.DiGraph, sort_key) -> List[str]:
@@ -89,17 +187,16 @@ def roots_in_order(G: nx.DiGraph, sort_key) -> List[str]:
 
 
 def path_to_root(G: nx.DiGraph, node: str) -> List[str]:
-    """Unique path from root to ``node`` (since ≤1 parent per node)."""
-    path = [node]
-    cur = node
-    while True:
-        preds = list(G.predecessors(cur))
-        if not preds:
-            break
-        cur = preds[0]
-        path.append(cur)
-    path.reverse()
-    return path
+    """Return a canonical path from a root to ``node``."""
+
+    if node not in G:
+        return []
+
+    cache = ensure_traversal_cache(G)
+    path = cache.get("canonical_path", {}).get(node)
+    if not path:
+        return [node]
+    return list(path)
 
 
 def build_name_maps_from_graph(G: nx.DiGraph) -> Tuple[Dict, Dict]:
@@ -120,16 +217,33 @@ def taxonomy_node_texts(G: nx.DiGraph) -> List[str]:
 
 
 def ancestors_to_root(G: nx.DiGraph, node: str) -> List[str]:
-    path = []
-    cur = node
-    while True:
-        path.append(cur)
-        preds = list(G.predecessors(cur))
-        if not preds:
-            break
-        cur = preds[0]
-    path.reverse()
-    return path
+    if node not in G:
+        return []
+
+    cache = ensure_traversal_cache(G)
+    canonical_path = cache.get("canonical_path", {})
+    depth_map = cache.get("depth_map", {})
+    all_parents = cache.get("all_parents", {})
+
+    parents = all_parents.get(node, tuple())
+    if len(parents) <= 1:
+        path = canonical_path.get(node)
+        if path:
+            return list(path)
+        return [node]
+
+    ancestor_lookup = _get_ancestor_lookup(G, cache)
+    ancestors = set(ancestor_lookup(node))
+    ancestors.update(canonical_path.get(node, (node,)))
+    ancestors.add(node)
+
+    def _sort_key(label: str) -> Tuple[int, str]:
+        depth = depth_map.get(label)
+        if depth is None:
+            return (math.inf, label.lower())
+        return (depth, label.lower())
+
+    return sorted(ancestors, key=_sort_key)
 
 
 def collect_descendants(G: nx.DiGraph, node: str, max_depth: int) -> Set[str]:
@@ -178,24 +292,58 @@ def make_label_display(
 
 
 def ancestors_inclusive(G: nx.DiGraph, node: str) -> List[str]:
-    out, cur, seen = [], node, set()
-    while True:
-        if cur in seen:
-            break
-        seen.add(cur)
-        out.append(cur)
-        preds = list(G.predecessors(cur))
-        if not preds:
-            break
-        cur = preds[0]
-    return out[::-1]
+    return ancestors_to_root(G, node)
 
 
 def is_ancestor_of(G: nx.DiGraph, maybe_ancestor: str, node: str) -> bool:
     if maybe_ancestor == node:
         return True
-    return (
-        maybe_ancestor in ancestors_inclusive(G, node)
-        if (maybe_ancestor in G and node in G)
-        else False
-    )
+    if maybe_ancestor not in G or node not in G:
+        return False
+
+    cache = ensure_traversal_cache(G)
+    canonical_path = cache.get("canonical_path", {})
+    path = canonical_path.get(node)
+    if path and maybe_ancestor in path:
+        return True
+
+    ancestor_lookup = _get_ancestor_lookup(G, cache)
+    ancestors = ancestor_lookup(node)
+    return maybe_ancestor in ancestors
+
+
+def _get_ancestor_lookup(
+    G: nx.DiGraph, cache: Dict[str, Any]
+) -> Callable[[str], FrozenSet[str]]:
+    """Return a memoized lookup that resolves transitive ancestors lazily."""
+
+    signature = cache.get("signature")
+    lazy_cache = G.graph.get("_taxonomy_lazy_ancestors")
+    if lazy_cache and lazy_cache.get("signature") == signature:
+        return lazy_cache["lookup"]
+
+    ancestor_sets: Dict[str, FrozenSet[str]] = cache.setdefault("ancestor_sets", {})
+    all_parents: Dict[str, Tuple[str, ...]] = cache.get("all_parents", {})
+
+    def lookup(node: str) -> FrozenSet[str]:
+        cached = ancestor_sets.get(node)
+        if cached is not None:
+            return cached
+
+        parents = all_parents.get(node, tuple())
+        if not parents:
+            ancestor_sets[node] = frozenset()
+            return ancestor_sets[node]
+
+        result = set()
+        for parent in parents:
+            result.add(parent)
+            result.update(lookup(parent))
+
+        resolved = frozenset(result)
+        ancestor_sets[node] = resolved
+        return resolved
+
+    lazy_cache = {"signature": signature, "lookup": lookup}
+    G.graph["_taxonomy_lazy_ancestors"] = lazy_cache
+    return lookup

@@ -14,19 +14,32 @@ def compute_node_depths(graph: nx.DiGraph | None) -> Dict[str, Optional[int]]:
     if graph is None:
         return depth_map
 
-    try:
-        topo_nodes = list(nx.topological_sort(graph))
-    except nx.NetworkXUnfeasible:
-        topo_nodes = list(graph.nodes())
+    cache = graph.graph.get("_taxonomy_traversal_cache")
+    signature = (graph.number_of_nodes(), graph.number_of_edges())
+    if not cache or cache.get("signature") != signature:
+        try:
+            from .taxonomy import ensure_traversal_cache
+        except ImportError:  # pragma: no cover - defensive fallback
+            ensure_traversal_cache = None
+        if ensure_traversal_cache is not None:
+            cache = ensure_traversal_cache(graph)
 
-    for node in topo_nodes:
-        preds = list(graph.predecessors(node))
-        if not preds:
-            depth_map[node] = 0
-            continue
-        parent = preds[0]
-        parent_depth = depth_map.get(parent)
-        depth_map[node] = parent_depth + 1 if parent_depth is not None else None
+    if cache and cache.get("depth_map"):
+        depth_map.update(cache["depth_map"])  # type: ignore[index]
+    else:
+        try:
+            topo_nodes = list(nx.topological_sort(graph))
+        except nx.NetworkXUnfeasible:
+            topo_nodes = list(graph.nodes())
+
+        for node in topo_nodes:
+            preds = list(graph.predecessors(node))
+            if not preds:
+                depth_map[node] = 0
+                continue
+            parent_depths = [depth_map.get(parent) for parent in preds]
+            valid_depths = [d for d in parent_depths if d is not None]
+            depth_map[node] = (min(valid_depths) + 1) if valid_depths else None
 
     for node in graph.nodes():
         depth_map.setdefault(node, 0)
@@ -44,8 +57,30 @@ def lookup_direct_parent(
     if not graph.has_node(label):
         return None
 
-    parents = graph.predecessors(label)
-    return next(parents, None)
+    parents = list(graph.predecessors(label))
+    if not parents:
+        return None
+    if len(parents) == 1:
+        return parents[0]
+
+    cache = graph.graph.get("_taxonomy_traversal_cache")
+    signature = (graph.number_of_nodes(), graph.number_of_edges())
+    if not cache or cache.get("signature") != signature:
+        try:
+            from .taxonomy import ensure_traversal_cache
+        except ImportError:  # pragma: no cover - defensive fallback
+            ensure_traversal_cache = None
+        if ensure_traversal_cache is not None:
+            cache = ensure_traversal_cache(graph)
+
+    if cache and cache.get("primary_parent"):
+        parent_map = cache["primary_parent"]  # type: ignore[index]
+        parent = parent_map.get(label)
+        if parent is not None:
+            return parent
+
+    parents.sort(key=lambda n: (str(n).lower(), str(n)))
+    return parents[0]
 
 
 def _cached_undirected_graph(G: nx.DiGraph) -> nx.Graph:

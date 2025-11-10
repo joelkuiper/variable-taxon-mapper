@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
@@ -12,9 +14,12 @@ from transformers import AutoModel, AutoTokenizer
 
 import pandas as pd
 
-from .taxonomy import taxonomy_node_texts
+from .taxonomy import ensure_traversal_cache, taxonomy_node_texts
 from .utils import clean_text
 from config import FieldMappingConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 def l2_normalize(a: np.ndarray, eps: float = 1e-9) -> np.ndarray:
@@ -70,6 +75,17 @@ class Embedder:
         bs = self.batch_size
         total_tokens = 0
         offset = 0
+        log_progress = n_texts >= 1000
+        progress_interval = max(bs * 10, 1000)
+        next_progress = progress_interval
+        start_ts = time.perf_counter()
+        if log_progress:
+            logger.info(
+                "Encoding %d texts with batch size %d on %s",
+                n_texts,
+                bs,
+                self.device,
+            )
 
         for i in range(0, n_texts, bs):
             batch = texts[i : i + bs]
@@ -95,6 +111,23 @@ class Embedder:
             out[offset : offset + batch_size] = rep.float().cpu().numpy()
             offset += batch_size
 
+            if log_progress and offset >= next_progress:
+                logger.info(
+                    "Encoded %d/%d texts (%.0f%%)",
+                    offset,
+                    n_texts,
+                    100 * offset / n_texts,
+                )
+                next_progress += progress_interval
+
+        if log_progress:
+            duration = time.perf_counter() - start_ts
+            logger.info(
+                "Finished encoding %d texts in %.2fs (%.1f tokens/s)",
+                n_texts,
+                duration,
+                total_tokens / duration if duration > 0 else float("inf"),
+            )
         return l2_normalize(out)
 
 
@@ -251,26 +284,51 @@ def build_taxonomy_embeddings_composed(
     summary_weight: float = 1.0,
     taxonomy_text_transform: Optional[Callable[[str], str]] = None,
 ) -> Tuple[List[str], np.ndarray]:
+    start_ts = time.perf_counter()
     names = taxonomy_node_texts(G)
     label2idx = {n: i for i, n in enumerate(names)}
 
     topo = _topological_order(G)
-    parent_idx = np.full(len(names), -1, dtype=np.int32)
-    for node in topo:
-        preds = list(G.predecessors(node))
-        if preds:
-            parent_idx[label2idx[node]] = label2idx[preds[0]]
+    cache = ensure_traversal_cache(G)
+    all_parents = cache.get("all_parents", {}) if cache is not None else {}
+    parent_indices: List[Tuple[int, ...]] = [tuple() for _ in names]
+    if all_parents:
+        for node, parents in all_parents.items():
+            idx = label2idx.get(node)
+            if idx is None or not parents:
+                continue
+            parent_indices[idx] = tuple(
+                label2idx[p] for p in parents if p in label2idx
+            )
+    else:
+        for node in names:
+            idx = label2idx[node]
+            preds = tuple(G.predecessors(node))
+            if preds:
+                parent_indices[idx] = tuple(
+                    label2idx[p] for p in preds if p in label2idx
+                )
+
+    logger.info(
+        "Composing taxonomy embeddings for %d nodes (gamma=%.2f)", len(names), gamma
+    )
 
     if taxonomy_text_transform is not None:
         texts = [taxonomy_text_transform(n) for n in names]
     else:
         texts = names
 
+    encode_start = time.perf_counter()
     name_vecs = embedder.encode(texts)
+    logger.info(
+        "Encoded taxonomy label texts in %.2fs",
+        time.perf_counter() - encode_start,
+    )
 
     summary_map = _extract_summary_map(summaries)
     summary_vecs = np.zeros_like(name_vecs)
     if summary_map:
+        summary_start = time.perf_counter()
         texts: List[str] = []
         idxs: List[int] = []
         for i, n in enumerate(names):
@@ -282,18 +340,41 @@ def build_taxonomy_embeddings_composed(
             encoded = embedder.encode(texts)
             for j, idx in enumerate(idxs):
                 summary_vecs[idx] = encoded[j]
+        logger.info(
+            "Encoded %d taxonomy summaries in %.2fs",
+            len(texts),
+            time.perf_counter() - summary_start,
+        )
 
     composed_base = l2_normalize(name_vecs + summary_weight * summary_vecs)
 
     D = composed_base.shape[1] if composed_base.size else 0
     out = np.zeros((len(names), D), dtype=np.float32)
-    for node in topo:
+    compose_start = time.perf_counter()
+    total_nodes = len(topo)
+    for processed, node in enumerate(topo, start=1):
         idx = label2idx[node]
-        pidx = parent_idx[idx]
-        if pidx >= 0:
-            out[idx] = composed_base[idx] + gamma * out[pidx]
-        else:
+        parents = parent_indices[idx]
+        if not parents:
             out[idx] = composed_base[idx]
+        elif len(parents) == 1:
+            out[idx] = composed_base[idx] + gamma * out[parents[0]]
+        else:
+            parent_vec = out[list(parents)].mean(axis=0, dtype=np.float32)
+            out[idx] = composed_base[idx] + gamma * parent_vec
+
+        if processed % 5000 == 0 or processed == total_nodes:
+            logger.info(
+                "Composed embeddings for %d/%d taxonomy nodes", processed, total_nodes
+            )
 
     out = out / np.clip(np.linalg.norm(out, axis=1, keepdims=True), 1e-9, None)
+    logger.info(
+        "Finished composing taxonomy embeddings in %.2fs",
+        time.perf_counter() - compose_start,
+    )
+    logger.info(
+        "Completed taxonomy embedding pipeline in %.2fs",
+        time.perf_counter() - start_ts,
+    )
     return names, out
