@@ -288,20 +288,52 @@ async def match_items_to_tree(
         if normalized_text:
             allowed_idx_map = _build_allowed_index_map(req.allowed_labels, name_to_idx)
             if allowed_idx_map:
-                allowed_items = list(allowed_idx_map.items())
-                allowed_indices = [idx for idx, _ in allowed_items]
-                allowed_embs = tax_embs[allowed_indices]
+                allowed_indices = list(allowed_idx_map.keys())
 
                 with encode_guard:
                     query_vecs = embedder.encode([normalized_text])
                 if query_vecs.size:
                     query_vec = query_vecs[0]
-                    sims = allowed_embs @ query_vec
-                    best_local_idx = int(np.argmax(sims))
-                    best_similarity = float(sims[best_local_idx])
+                    best_idx: Optional[int] = None
+                    best_similarity: float = float("-inf")
 
-                    if best_similarity >= embedding_remap_threshold:
-                        _, resolved_label = allowed_items[best_local_idx]
+                    if hnsw_index is not None:
+                        allowed_idx_set = set(allowed_indices)
+                        query = query_vec.astype(np.float32, copy=False)
+                        query = query[np.newaxis, :]
+                        k = max(1, min(len(allowed_idx_set), 32))
+                        labels = None
+                        try:
+                            labels, _ = hnsw_index.knn_query(
+                                query,
+                                k=k,
+                                filter=lambda idx: idx in allowed_idx_set,
+                            )
+                        except TypeError:
+                            labels, _ = hnsw_index.knn_query(query, k=k)
+
+                        if labels is not None and len(labels):
+                            for idx_val in labels[0]:
+                                idx_int = int(idx_val)
+                                if idx_int < 0 or idx_int not in allowed_idx_set:
+                                    continue
+                                best_idx = idx_int
+                                best_similarity = float(tax_embs[idx_int] @ query_vec)
+                                break
+
+                    if best_idx is None:
+                        allowed_items = list(allowed_idx_map.items())
+                        allowed_embs = tax_embs[allowed_indices]
+                        sims = allowed_embs @ query_vec
+                        best_local_idx = int(np.argmax(sims))
+                        best_similarity = float(sims[best_local_idx])
+                        best_idx = allowed_items[best_local_idx][0]
+
+                    if (
+                        best_idx is not None
+                        and best_similarity >= embedding_remap_threshold
+                    ):
+                        resolved_label = allowed_idx_map[best_idx]
                         snapped_label = maybe_snap_to_child(
                             resolved_label,
                             item_text=item_text,
