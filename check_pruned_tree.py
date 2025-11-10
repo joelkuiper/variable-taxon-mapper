@@ -240,7 +240,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         len(variables),
         len(keywords_raw),
     )
-    keywords, summary_df = prepare_keywords_dataframe(
+    keywords, definition_df = prepare_keywords_dataframe(
         keywords_raw, config.taxonomy_fields
     )
 
@@ -254,15 +254,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     embedder = Embedder(**config.embedder.to_kwargs())
     taxonomy_kwargs = config.taxonomy_embeddings.to_kwargs()
-    summary_source = summary_df if summary_df is not None else None
+    definition_source = definition_df if definition_df is not None else None
     tax_names, tax_embs = build_taxonomy_embeddings_composed(
         G,
         embedder,
-        summaries=summary_source,
+        definitions=definition_source,
         **taxonomy_kwargs,
     )
     hnsw_index = build_hnsw_index(tax_embs, **config.hnsw.to_kwargs())
-    gloss_map = build_gloss_map(summary_source)
+    gloss_map = build_gloss_map(definition_source)
     logger.debug("Constructed resources for %d taxonomy labels", len(tax_names))
 
     field_cfg = config.fields

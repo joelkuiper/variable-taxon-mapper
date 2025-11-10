@@ -293,15 +293,13 @@ def collect_descendants(G: nx.DiGraph, node: str, max_depth: int) -> Set[str]:
 
 
 def build_gloss_map(keywords_df: Optional[pd.DataFrame]) -> Dict[str, str]:
-    """Build gloss."""
+    """Build a lookup of canonical definitions keyed by keyword name."""
     gloss: Dict[str, str] = {}
-    if keywords_df is None or not {"name", "definition_summary"}.issubset(
-        keywords_df.columns
-    ):
+    if keywords_df is None or not {"name", "definition"}.issubset(keywords_df.columns):
         return gloss
-    for _, row in keywords_df[["name", "definition_summary"]].iterrows():
+    for _, row in keywords_df[["name", "definition"]].iterrows():
         n = row["name"]
-        s = row["definition_summary"]
+        s = row["definition"]
         if isinstance(n, str) and n and isinstance(s, str):
             s = s.strip()
             if s and n not in gloss:
@@ -310,12 +308,12 @@ def build_gloss_map(keywords_df: Optional[pd.DataFrame]) -> Dict[str, str]:
 
 
 def make_label_display(
-    name: str, gloss_map: Dict[str, str], use_summary: bool = True
+    name: str, gloss_map: Dict[str, str], use_definition: bool = True
 ) -> str:
-    """Render 'Label [summary]' for display; fall back to plain label."""
+    """Render 'Label [definition]' for display; fall back to plain label."""
     if not isinstance(name, str) or not name:
         return str(name)
-    if not use_summary:
+    if not use_definition:
         return str(name)
     else:
         g = gloss_map.get(name, "")
