@@ -219,38 +219,23 @@ class PredictionPipeline:
     async def _process_prompt_batch(
         self, prompt_batch: List[Tuple[int, PredictionJob, PrunedTreeResult]]
     ) -> None:
+        requests: List[MatchRequest] = []
+        metadata: List[Tuple[int, PredictionJob, PrunedTreeResult]] = []
+
         for idx, job, pruned in prompt_batch:
             logger.debug(
-                "Processing prediction %d (slot=%s, allowed=%d)",
+                "Preparing prediction %d (slot=%s, allowed=%d)",
                 idx,
                 job.slot_id,
                 len(pruned.allowed_labels),
             )
-            await self._handle_single_prediction(idx, job, pruned)
+            requests.append(self._build_request(job, pruned))
+            metadata.append((idx, job, pruned))
 
-    async def _handle_single_prediction(
-        self, idx: int, job: PredictionJob, pruned: PrunedTreeResult
-    ) -> None:
-        request = self._build_request(job, pruned)
-        logger.debug("Fetching predictions for index %d (slot=%s)", idx, job.slot_id)
-        predictions = await self._fetch_predictions(request, idx, job)
-        if not predictions:
-            raise RuntimeError(
-                "LLM matching returned no predictions for request "
-                f"at index {idx} (slot_id={job.slot_id})."
-            )
+        predictions = await self._fetch_predictions_batch(requests, metadata)
 
-        result, correct_increment, has_gold = build_result_row(
-            job,
-            pruned,
-            predictions[0],
-            graph=self.graph,
-            undirected_graph=self.undirected_graph,
-            depth_map=self.depth_map,
-        )
-        self.rows[idx] = result
-        self.completed += 1
-        self._update_progress(correct_increment, has_gold)
+        for (idx, job, pruned), prediction_set in zip(metadata, predictions):
+            self._handle_completed_prediction(idx, job, pruned, prediction_set)
 
     def _build_request(
         self, job: PredictionJob, pruned: PrunedTreeResult
@@ -269,17 +254,26 @@ class PredictionPipeline:
             item_columns=job.item_columns,
         )
 
-    async def _fetch_predictions(
-        self, request: MatchRequest, idx: int, job: PredictionJob
-    ) -> Sequence[Mapping[str, Any]]:
+    async def _fetch_predictions_batch(
+        self,
+        requests: Sequence[MatchRequest],
+        metadata: Sequence[Tuple[int, PredictionJob, PrunedTreeResult]],
+    ) -> Sequence[Sequence[Mapping[str, Any]]]:
+        if not requests:
+            return []
+
+        slot_preview = ", ".join(str(job.slot_id) for _, job, _ in metadata[:5])
+        if len(metadata) > 5:
+            slot_preview += ", ..."
+
         try:
             logger.debug(
-                "Submitting match request for index %d (slot=%s)",
-                idx,
-                job.slot_id,
+                "Submitting batch of %d match requests (slots=%s)",
+                len(requests),
+                slot_preview,
             )
-            return await match_items_to_tree(
-                [request],
+            responses = await match_items_to_tree(
+                requests,
                 name_to_id=self.name_to_id,
                 name_to_path=self.name_to_path,
                 tax_names=self.tax_names,
@@ -292,12 +286,44 @@ class PredictionPipeline:
             )
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception(
-                "LLM matching failed for index %d (slot=%s)", idx, job.slot_id
+                "LLM matching failed for batch of %d prompts", len(requests)
             )
             raise RuntimeError(
-                "LLM matching failed for prompt request at "
-                f"index {idx} (slot_id={job.slot_id})."
+                "LLM matching failed for a batch of prompt requests."
             ) from exc
+
+        if len(responses) != len(requests):
+            raise RuntimeError(
+                "Received %d responses for %d requests from match_items_to_tree"
+                % (len(responses), len(requests))
+            )
+
+        return [[response] for response in responses]
+
+    def _handle_completed_prediction(
+        self,
+        idx: int,
+        job: PredictionJob,
+        pruned: PrunedTreeResult,
+        predictions: Sequence[Mapping[str, Any]],
+    ) -> None:
+        if not predictions:
+            raise RuntimeError(
+                "LLM matching returned no predictions for request "
+                f"at index {idx} (slot_id={job.slot_id})."
+            )
+
+        result, correct_increment, has_gold = build_result_row(
+            job,
+            pruned,
+            predictions[0],
+            graph=self.graph,
+            undirected_graph=self.undirected_graph,
+            depth_map=self.depth_map,
+        )
+        self.rows[idx] = result
+        self.completed += 1
+        self._update_progress(correct_increment, has_gold)
 
     def _update_progress(self, correct_increment: int, has_gold: bool) -> None:
         if has_gold:
