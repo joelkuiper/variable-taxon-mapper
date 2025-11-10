@@ -12,7 +12,12 @@ import pandas as pd
 from config import AppConfig, load_config
 from vtm.evaluate import ProgressHook
 from vtm.pipeline import VariableTaxonMapper
-from vtm.utils import configure_logging, ensure_file_exists, set_global_seed
+from vtm.utils import (
+    configure_logging,
+    ensure_file_exists,
+    resolve_path,
+    set_global_seed,
+)
 from vtm.reporting import report_results
 
 
@@ -33,17 +38,8 @@ def run_pipeline(
 
     variables_default, keywords_default = config.data.to_paths(base_path)
 
-    def _resolve_input(default: Path, override: Path | None) -> Path:
-        if override is None:
-            return default.resolve()
-        if override.is_absolute():
-            return override.resolve()
-        if base_path is not None:
-            return (base_path / override).resolve()
-        return override.resolve()
-
-    variables_path = _resolve_input(variables_default, variables_csv)
-    keywords_path = _resolve_input(keywords_default, None)
+    variables_path = resolve_path(base_path, variables_default, variables_csv)
+    keywords_path = resolve_path(base_path, keywords_default, None)
 
     ensure_file_exists(variables_path, "variables CSV")
 

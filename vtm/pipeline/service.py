@@ -21,7 +21,7 @@ from vtm.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from vtm.utils import ensure_file_exists
+from vtm.utils import ensure_file_exists, resolve_path
 
 
 logger = logging.getLogger(__name__)
@@ -276,21 +276,6 @@ class VariableTaxonMapper:
         canonical, definitions = prepare_keywords_dataframe(keywords, taxonomy_fields)
         return _KeywordArtifacts(keywords=canonical, definitions=definitions)
 
-    @staticmethod
-    def _resolve_input(
-        default: Path,
-        override: Path | None,
-        *,
-        base_path: Path | None,
-    ) -> Path:
-        if override is None:
-            return default.resolve()
-        if override.is_absolute():
-            return override.resolve()
-        if base_path is not None:
-            return (base_path / override).resolve()
-        return override.resolve()
-
     @classmethod
     def from_config(
         cls,
@@ -305,11 +290,7 @@ class VariableTaxonMapper:
 
         if keywords is None:
             variables_default, keywords_default = config.data.to_paths(base_path)
-            resolved_path = cls._resolve_input(
-                keywords_default,
-                keywords_path,
-                base_path=base_path,
-            )
+            resolved_path = resolve_path(base_path, keywords_default, keywords_path)
             logger.debug("Resolved keywords path: %s", resolved_path)
             ensure_file_exists(resolved_path, "keywords CSV")
             keywords = pd.read_csv(resolved_path)

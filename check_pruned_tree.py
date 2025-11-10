@@ -24,6 +24,7 @@ from vtm.utils import (
     clean_str_or_none,
     configure_logging,
     ensure_file_exists,
+    resolve_path,
     split_keywords_comma,
 )
 
@@ -189,18 +190,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         except ValueError as exc:
             parser.error(str(exc))
     return args
-
-
-def _resolve_path(base_path: Path, override: Optional[Path], default: Path) -> Path:
-    if override is None:
-        return default
-    return (
-        override.resolve()
-        if override.is_absolute()
-        else (base_path / override).resolve()
-    )
-
-
 def _prepare_outputs(
     base_path: Path, *paths: Optional[Path]
 ) -> Tuple[Optional[Path], ...]:
@@ -227,8 +216,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     logger.info("Loaded configuration from %s", config_path)
 
     variables_default, keywords_default = config.data.to_paths(base_path)
-    variables_path = _resolve_path(base_path, args.variables, variables_default).resolve()
-    keywords_path = _resolve_path(base_path, args.keywords, keywords_default).resolve()
+    variables_path = resolve_path(base_path, variables_default, args.variables)
+    keywords_path = resolve_path(base_path, keywords_default, args.keywords)
 
     ensure_file_exists(variables_path, "variables CSV")
     ensure_file_exists(keywords_path, "keywords CSV")

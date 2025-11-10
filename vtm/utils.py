@@ -95,3 +95,39 @@ def ensure_file_exists(path: Path, description: Optional[str] = None) -> Path:
         desc = description or "file"
         raise FileNotFoundError(f"Required {desc} not found at {path}")
     return path
+
+
+def resolve_path(
+    base_path: Path | None,
+    default: Path,
+    override: Path | None,
+) -> Path:
+    """Resolve an override path against an optional ``base_path``.
+
+    Parameters
+    ----------
+    base_path:
+        The directory from which relative overrides should be resolved. When
+        ``None`` relative overrides are resolved relative to the current working
+        directory.
+    default:
+        The fallback path used when ``override`` is ``None``.
+    override:
+        An optional path provided by the caller.
+
+    Returns
+    -------
+    Path
+        The resolved absolute path chosen using the override (when provided)
+        or the default.
+    """
+
+    if override is None:
+        candidate = default
+    elif override.is_absolute():
+        candidate = override
+    elif base_path is not None:
+        candidate = base_path / override
+    else:
+        candidate = override
+    return candidate.resolve()

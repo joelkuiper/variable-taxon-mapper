@@ -38,7 +38,7 @@ from vtm.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from vtm.utils import configure_logging, ensure_file_exists
+from vtm.utils import configure_logging, ensure_file_exists, resolve_path
 
 
 logger = logging.getLogger(__name__)
@@ -262,14 +262,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 # ======================================================================================
 # Setup helpers
 # ======================================================================================
-
-
-def _resolve_path(base_path: Path, override: Optional[Path], default: Path) -> Path:
-    if override is None:
-        return default
-    return override if override.is_absolute() else (base_path / override)
-
-
 def prepare_context(
     config: AppConfig,
     base_path: Path,
@@ -279,8 +271,8 @@ def prepare_context(
     row_limit: Optional[int],
 ) -> EvaluationContext:
     variables_default, keywords_default = config.data.to_paths(base_path)
-    variables_path = _resolve_path(base_path, variables, variables_default).resolve()
-    keywords_path = _resolve_path(base_path, keywords, keywords_default).resolve()
+    variables_path = resolve_path(base_path, variables_default, variables)
+    keywords_path = resolve_path(base_path, keywords_default, keywords)
 
     ensure_file_exists(variables_path, "variables CSV")
     ensure_file_exists(keywords_path, "keywords CSV")
