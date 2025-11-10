@@ -56,6 +56,16 @@ uv sync
 source .venv/bin/activate
 ipython
 ```
+
+## LLM endpoint authentication
+
+If you point the mapper at an OpenAI-compatible endpoint that requires an API
+key, provide it via the `[llm]` section of your `config.toml` or the
+`OPENAI_API_KEY` environment variable. The loader reads `llm.api_key` first and
+falls back to the environment when that field is blank, so keep sensitive keys
+in a private config (e.g., a non-checked-in `config.toml`) or manage them via an
+environment secret store such as `direnv`, `uv run --env`, or your CI system.
+
 Download and install [llama.cpp](https://github.com/ggml-org/llama.cpp) (or run via Docker). The system has been tested with [Qwen3-4B-Instruct-2507-GUFF](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF), you can either download a GUFF and pass it via the `--model` parameter, or let the server download and cache it (as below).
 
 ``` shell

@@ -75,6 +75,7 @@ node_budget = 200 # hard cap on nodes retained in the final allowed set
 [llm]
 endpoint = "http://127.0.0.1:8080/v1"
 model = ""
+api_key = "" # optional; leave blank to use OPENAI_API_KEY or the default local key
 n_predict = 32
 temperature = 0.0
 top_k = 20

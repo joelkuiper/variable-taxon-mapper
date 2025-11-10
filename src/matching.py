@@ -219,6 +219,7 @@ async def match_items_to_tree(
         llm_config.endpoint,
         model=llm_config.model,
         timeout=max(float(llm_config.n_predict), 64.0),
+        api_key=llm_config.api_key,
     )
 
     encode_guard = encode_lock or threading.Lock()

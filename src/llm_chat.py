@@ -28,8 +28,8 @@ obj ::= ("{" quote "concept_label" quote ": " string "}")
 """
 
 
-_SYNC_CLIENTS: Dict[str, OpenAI] = {}
-_ASYNC_CLIENTS: Dict[str, AsyncOpenAI] = {}
+_SYNC_CLIENTS: Dict[Tuple[str, str], OpenAI] = {}
+_ASYNC_CLIENTS: Dict[Tuple[str, str], AsyncOpenAI] = {}
 _PROMPT_DEBUG_SHOWN = False
 
 
@@ -45,25 +45,36 @@ def _normalize_api_base(endpoint: str) -> str:
     return base
 
 
-def _api_key() -> str:
-    return os.getenv("OPENAI_API_KEY", "sk-no-key-required")
+def _resolve_api_key(explicit: Optional[str]) -> str:
+    if explicit is not None:
+        candidate = explicit.strip()
+        if candidate:
+            return candidate
+    env_key = os.getenv("OPENAI_API_KEY")
+    if env_key:
+        return env_key
+    return "sk-no-key-required"
 
 
-def _get_sync_client(endpoint: str) -> OpenAI:
+def _get_sync_client(endpoint: str, *, api_key: Optional[str] = None) -> OpenAI:
     base = _normalize_api_base(endpoint)
-    client = _SYNC_CLIENTS.get(base)
+    resolved_key = _resolve_api_key(api_key)
+    cache_key = (base, resolved_key)
+    client = _SYNC_CLIENTS.get(cache_key)
     if client is None:
-        client = OpenAI(base_url=base, api_key=_api_key())
-        _SYNC_CLIENTS[base] = client
+        client = OpenAI(base_url=base, api_key=resolved_key)
+        _SYNC_CLIENTS[cache_key] = client
     return client
 
 
-def _get_async_client(endpoint: str) -> AsyncOpenAI:
+def _get_async_client(endpoint: str, *, api_key: Optional[str] = None) -> AsyncOpenAI:
     base = _normalize_api_base(endpoint)
-    client = _ASYNC_CLIENTS.get(base)
+    resolved_key = _resolve_api_key(api_key)
+    cache_key = (base, resolved_key)
+    client = _ASYNC_CLIENTS.get(cache_key)
     if client is None:
-        client = AsyncOpenAI(base_url=base, api_key=_api_key())
-        _ASYNC_CLIENTS[base] = client
+        client = AsyncOpenAI(base_url=base, api_key=resolved_key)
+        _ASYNC_CLIENTS[cache_key] = client
     return client
 
 
@@ -95,9 +106,10 @@ async def llama_completion_async(
     *,
     model: str,
     timeout: float = 120.0,
+    api_key: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
-    client = _get_async_client(endpoint)
+    client = _get_async_client(endpoint, api_key=api_key)
     standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
     response = await client.chat.completions.create(
         model=model,
@@ -120,13 +132,14 @@ async def llama_completion_many(
     *,
     model: str,
     timeout: float = 120.0,
+    api_key: Optional[str] = None,
 ) -> List[str]:
     """Resolve multiple chat prompts concurrently."""
 
     if not requests:
         return []
 
-    client = _get_async_client(endpoint)
+    client = _get_async_client(endpoint, api_key=api_key)
 
     async def _run_single(
         messages: Sequence[Dict[str, Any]], kwargs: Dict[str, Any]
@@ -180,9 +193,10 @@ def llama_completion(
     *,
     model: str,
     timeout: float = 120.0,
+    api_key: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
-    client = _get_sync_client(endpoint)
+    client = _get_sync_client(endpoint, api_key=api_key)
     standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
     response = client.chat.completions.create(
         model=model,
