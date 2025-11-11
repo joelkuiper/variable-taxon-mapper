@@ -75,9 +75,9 @@ command -v python >/dev/null 2>&1 || { echo "ERROR: python not found after venv 
 if [[ $USE_DEFAULT -eq 1 ]] && ! command -v "${DEFAULT_CMD[0]}" >/dev/null 2>&1; then
   UV_BIN=${UV_BIN:-uv}
   if command -v "$UV_BIN" >/dev/null 2>&1; then
-    DEFAULT_CMD=("$UV_BIN" run python -m vtm.cli run "$VTM_CFG")
+    DEFAULT_CMD=("$UV_BIN" run python -m "$VTM_CFG")
   else
-    DEFAULT_CMD=(python -m vtm.cli run "$VTM_CFG")
+    DEFAULT_CMD=(python -m "$VTM_CFG")
   fi
   RUN_CMD=("${DEFAULT_CMD[@]}")
 fi
