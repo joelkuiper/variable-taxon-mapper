@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,6 +12,7 @@ from vtm.utils import ensure_file_exists, load_table, resolve_path, set_global_s
 
 from .app import app, logger
 from .common import ConfigArgument, RowLimitOption, load_app_config
+from ._metadata import build_run_metadata
 
 
 def _make_tqdm_progress() -> ProgressHook:
@@ -83,7 +82,7 @@ def predict_command(
         config_obj.evaluation.n = row_limit
         logger.info("Row limit overridden to %s", row_limit)
 
-    variables_default, _ = config_obj.data.to_paths(base_path)
+    variables_default, keywords_path = config_obj.data.to_paths(base_path)
     variables_path = resolve_path(base_path, variables_default, variables)
 
     ensure_file_exists(variables_path, "variables data file")
@@ -124,31 +123,21 @@ def predict_command(
     df.to_csv(output_path, index=False)
     logger.info("Saved %d predictions to %s", len(df), output_path)
 
-    manifest_path = Path(f"{output_path}.manifest.json")
+    manifest_path = output_path.with_name(f"{output_path.stem}_manifest.json")
     manifest = {
-        "config_path": str(config_path),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "_run_metadata": build_run_metadata(
+            config=config_obj,
+            config_path=config_path,
+            base_path=base_path,
+            variables_path=variables_path,
+            keywords_path=keywords_path,
+        ),
         "column_schema": [
             {"name": column, "dtype": str(dtype)}
             for column, dtype in zip(df.columns, df.dtypes)
         ],
     }
 
-    git_commit: Optional[str]
-    try:
-        git_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=base_path,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        git_commit = None
-    else:
-        git_commit = git_result.stdout.strip() or None
-
-    manifest["git_commit"] = git_commit
-
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
     logger.info("Saved manifest to %s", manifest_path)

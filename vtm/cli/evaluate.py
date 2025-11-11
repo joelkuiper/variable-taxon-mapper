@@ -12,7 +12,6 @@ from vtm.utils import ensure_file_exists, load_table, set_global_seed
 from .app import app, logger
 from .common import ConfigArgument, load_app_config
 
-
 @app.command("evaluate")
 def run_command(
     config: Path = ConfigArgument,
@@ -74,10 +73,33 @@ def run_command(
     df.to_csv(results_path, index=False)
     logger.info("Results saved to %s", results_path)
 
+    run_metadata = build_run_metadata(
+        config=config_obj,
+        config_path=config_path,
+        base_path=base_path,
+        variables_path=variables_path,
+        keywords_path=keywords_path,
+    )
+
+    # Metrics + metadata
     metrics_path = results_path.with_name(f"{results_path.stem}_metrics.json")
+    metrics_payload = dict(metrics)
+    metrics_payload["_run_metadata"] = run_metadata
     with metrics_path.open("w", encoding="utf-8") as handle:
-        json.dump(metrics, handle, indent=2, sort_keys=True)
+        json.dump(metrics_payload, handle, indent=2, sort_keys=True)
     logger.info("Metrics saved to %s", metrics_path)
+
+    manifest_path = results_path.with_name(f"{results_path.stem}_manifest.json")
+    manifest = {
+        "_run_metadata": run_metadata,
+        "column_schema": [
+            {"name": column, "dtype": str(dtype)}
+            for column, dtype in zip(df.columns, df.dtypes)
+        ],
+    }
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+    logger.info("Manifest saved to %s", manifest_path)
 
     summary_md = summary_md.resolve() if summary_md else None
     summary_text = summary_text.resolve() if summary_text else None
