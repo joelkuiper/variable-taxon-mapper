@@ -103,6 +103,7 @@ def _build_identifier_map(
     *,
     name_col: str,
     label_col: str | None,
+    alias_columns: tuple[str, ...] | None = None,
 ) -> dict[str, str]:
     """Construct a lookup from identifiers to canonical keyword names."""
 
@@ -113,6 +114,10 @@ def _build_identifier_map(
         lookup_columns.append(name_col)
     if label_col and label_col in canonical.columns and label_col not in {"label", "name"}:
         lookup_columns.append(label_col)
+    if alias_columns:
+        for column in alias_columns:
+            if column in canonical.columns:
+                lookup_columns.append(column)
 
     if lookup_columns:
         lookup_columns = list(dict.fromkeys(lookup_columns))
@@ -240,6 +245,7 @@ def prepare_keywords_dataframe(
         canonical,
         name_col=name_col,
         label_col=label_col,
+        alias_columns=taxonomy_fields.identifier_alias_columns(),
     )
 
     resolved_parents_col = None
