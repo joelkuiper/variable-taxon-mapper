@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from optimize_pruning import run_optimization
+from vtm.optimize_pruning import run_optimization
 from vtm.utils import set_global_seed
 
 from .app import app, logger
