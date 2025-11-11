@@ -3,25 +3,23 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 import pandas as pd
 from pandas._libs.missing import NAType
 
 from vtm.config import AppConfig, TaxonomyFieldMappingConfig
-from vtm.embedding import (
-    Embedder,
-    build_hnsw_index,
-    build_taxonomy_embeddings_composed,
-)
-from vtm.evaluate import ProgressHook, run_label_benchmark
-from vtm.prompts import PromptRenderer, create_prompt_renderer
 from vtm.taxonomy import (
     build_gloss_map,
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
 from vtm.utils import ensure_file_exists, resolve_path
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from vtm.evaluate import ProgressHook
+    from vtm.embedding import Embedder
+    from vtm.prompts import PromptRenderer
 
 
 logger = logging.getLogger(__name__)
@@ -76,7 +74,12 @@ def _rename_taxonomy_columns(
             raise KeyError(f"Keywords data missing required column: '{order_col}'")
         if order_col != "order":
             rename_map[order_col] = "order"
-    if label_col and label_col in keywords.columns and label_col != "label":
+    if (
+        label_col
+        and label_col in keywords.columns
+        and label_col != "label"
+        and label_col != name_col
+    ):
         rename_map[label_col] = "label"
 
     canonical = keywords.rename(columns=rename_map).copy()
@@ -211,8 +214,8 @@ def _extract_definitions(
 def prepare_keywords_dataframe(
     keywords: pd.DataFrame,
     taxonomy_fields: TaxonomyFieldMappingConfig,
-) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
-    """Return canonical keywords and optional definition frames based on config."""
+) -> Tuple[pd.DataFrame, Optional[pd.DataFrame], dict[str, Tuple[str, ...]]]:
+    """Return canonical keywords, definitions, and multi-parent mappings."""
 
     if not isinstance(keywords, pd.DataFrame):
         raise TypeError("keywords must be a pandas DataFrame")
@@ -248,19 +251,44 @@ def prepare_keywords_dataframe(
         identifier_to_name,
         parents_col=resolved_parents_col,
     )
+    multi_parent_map: dict[str, Tuple[str, ...]] = {}
+    if (
+        resolved_parents_col
+        and resolved_parents_col in canonical.columns
+        and "name" in canonical.columns
+    ):
+        for row in canonical[["name", resolved_parents_col]].itertuples(index=False):
+            raw_name, raw_parents = row
+            cleaned_name = _clean_str(raw_name)
+            if _is_na(cleaned_name):
+                continue
+            parents: list[str] = []
+            if not _is_na(raw_parents):
+                text = raw_parents if isinstance(raw_parents, str) else str(raw_parents)
+                parts = text.split("|")
+                for part in parts:
+                    cleaned_parent = _clean_str(part)
+                    if _is_na(cleaned_parent):
+                        continue
+                    parent_str = str(cleaned_parent)
+                    if parent_str not in parents:
+                        parents.append(parent_str)
+            if parents:
+                multi_parent_map[str(cleaned_name)] = tuple(parents)
     canonical, definitions = _extract_definitions(
         keywords,
         canonical,
         definition_col=definition_col,
     )
 
-    return canonical, definitions
+    return canonical, definitions, multi_parent_map
 
 
 @dataclass(slots=True)
 class _KeywordArtifacts:
     keywords: pd.DataFrame
     definitions: Optional[pd.DataFrame]
+    multi_parents: dict[str, Tuple[str, ...]]
 
 
 class VariableTaxonMapper:
@@ -297,8 +325,12 @@ class VariableTaxonMapper:
     def _prepare_keywords(
         keywords: pd.DataFrame, taxonomy_fields: TaxonomyFieldMappingConfig
     ) -> _KeywordArtifacts:
-        canonical, definitions = prepare_keywords_dataframe(keywords, taxonomy_fields)
-        return _KeywordArtifacts(keywords=canonical, definitions=definitions)
+        canonical, definitions, multi_parents = prepare_keywords_dataframe(
+            keywords, taxonomy_fields
+        )
+        return _KeywordArtifacts(
+            keywords=canonical, definitions=definitions, multi_parents=multi_parents
+        )
 
     @classmethod
     def from_config(
@@ -340,6 +372,7 @@ class VariableTaxonMapper:
             name_col="name",
             parent_col="parent",
             order_col="order",
+            multi_parents=artifacts.multi_parents,
         )
         logger.info("Constructed taxonomy graph with %d nodes", len(graph))
         name_to_id, name_to_path = build_name_maps_from_graph(graph)
@@ -347,7 +380,13 @@ class VariableTaxonMapper:
             "Generated taxonomy name mappings: %d entries", len(name_to_id)
         )
 
-        mapper_embedder = embedder or Embedder(**config.embedder.to_kwargs())
+        from vtm.embedding import (
+            Embedder as EmbedderImpl,
+            build_hnsw_index as build_hnsw_index_impl,
+            build_taxonomy_embeddings_composed as build_taxonomy_embeddings_composed_impl,
+        )
+
+        mapper_embedder = embedder or EmbedderImpl(**config.embedder.to_kwargs())
         if embedder is None:
             logger.info("Initialized embedder %s", mapper_embedder.__class__.__name__)
         else:
@@ -357,7 +396,7 @@ class VariableTaxonMapper:
 
         taxonomy_kwargs = config.taxonomy_embeddings.to_kwargs()
         definitions = artifacts.definitions if artifacts.definitions is not None else None
-        taxonomy_names, taxonomy_embeddings = build_taxonomy_embeddings_composed(
+        taxonomy_names, taxonomy_embeddings = build_taxonomy_embeddings_composed_impl(
             graph,
             mapper_embedder,
             definitions=definitions,
@@ -367,7 +406,7 @@ class VariableTaxonMapper:
             "Built taxonomy embeddings for %d labels", len(taxonomy_names)
         )
 
-        hnsw_index = build_hnsw_index(
+        hnsw_index = build_hnsw_index_impl(
             taxonomy_embeddings, **config.hnsw.to_kwargs()
         )
         logger.debug(
@@ -376,6 +415,8 @@ class VariableTaxonMapper:
         )
         gloss_map = build_gloss_map(definitions)
         logger.debug("Constructed gloss map with %d entries", len(gloss_map))
+
+        from vtm.prompts import create_prompt_renderer
 
         prompt_renderer = create_prompt_renderer(
             config.prompts, base_dir=base_path
@@ -404,6 +445,8 @@ class VariableTaxonMapper:
         progress_hook: ProgressHook | None = None,
     ) -> tuple[pd.DataFrame, dict[str, object]]:
         """Generate predictions (and optionally metrics) for ``variables``."""
+
+        from vtm.evaluate import run_label_benchmark
 
         logger.info(
             "Starting label benchmark evaluation; evaluate=%s, total_variables=%d",

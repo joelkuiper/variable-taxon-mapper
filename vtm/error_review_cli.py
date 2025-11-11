@@ -107,7 +107,9 @@ def load_keywords_metadata(
     """Return keyword definitions and taxonomy paths keyed by keyword name."""
 
     raw_df = pd.read_csv(keywords_path, low_memory=False)
-    canonical_df, definition_df = prepare_keywords_dataframe(raw_df, taxonomy_fields)
+    canonical_df, definition_df, multi_parents = prepare_keywords_dataframe(
+        raw_df, taxonomy_fields
+    )
 
     # In case of duplicate names, keep the first non-empty definition.
     definitions: dict[str, str] = {}
@@ -136,7 +138,9 @@ def load_keywords_metadata(
                 lambda value: value if pd.notna(value) and str(value).strip() else pd.NA
             )
         try:
-            graph = build_taxonomy_graph(taxonomy_df)
+            graph = build_taxonomy_graph(
+                taxonomy_df, multi_parents=multi_parents
+            )
         except Exception:
             graph = None
         if graph is not None:

@@ -182,7 +182,7 @@ def prune_check_command(
         len(variables_df),
         len(keywords_raw),
     )
-    keywords_df, definition_df = prepare_keywords_dataframe(
+    keywords_df, definition_df, multi_parents = prepare_keywords_dataframe(
         keywords_raw, config_obj.taxonomy_fields
     )
 
@@ -191,6 +191,7 @@ def prune_check_command(
         name_col="name",
         parent_col="parent",
         order_col="order",
+        multi_parents=multi_parents,
     )
     _name_to_id, name_to_path = build_name_maps_from_graph(graph)
 

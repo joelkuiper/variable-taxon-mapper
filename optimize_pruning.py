@@ -279,7 +279,7 @@ def prepare_context(
 
     variables_df = pd.read_csv(variables_path, low_memory=False)
     keywords_raw = pd.read_csv(keywords_path)
-    keywords_df, definition_df = prepare_keywords_dataframe(
+    keywords_df, definition_df, multi_parents = prepare_keywords_dataframe(
         keywords_raw, config.taxonomy_fields
     )
 
@@ -288,6 +288,7 @@ def prepare_context(
         name_col="name",
         parent_col="parent",
         order_col="order",
+        multi_parents=multi_parents,
     )
     build_name_maps_from_graph(graph)  # validation side-effect
 

@@ -55,9 +55,13 @@ def build_taxonomy_graph(
     name_col: str = "name",
     parent_col: str = "parent",
     order_col: str = "order",
+    *,
+    multi_parents: dict[str, Tuple[str, ...]] | None = None,
 ) -> nx.DiGraph:
-    """Build a directed acyclic graph (forest of trees) with edges (parent -> child)."""
+    """Build a DAG (forest of trees) adding edges for canonical and extra parents."""
     G = nx.DiGraph()
+
+    multi_parents = multi_parents or {}
 
     for n in df[name_col].dropna().astype(str):
         G.add_node(n, label=n)
@@ -65,6 +69,14 @@ def build_taxonomy_graph(
     for p in df[parent_col].dropna().astype(str):
         if not G.has_node(p):
             G.add_node(p, label=p, placeholder_root=True)
+
+    for parents in multi_parents.values():
+        for parent in parents:
+            if parent is None:
+                continue
+            parent_str = str(parent)
+            if not G.has_node(parent_str):
+                G.add_node(parent_str, label=parent_str, placeholder_root=True)
 
     for _, row in df.iterrows():
         child = row[name_col]
@@ -74,6 +86,18 @@ def build_taxonomy_graph(
         parent = row[parent_col]
         if not pd.isna(parent):
             G.add_edge(str(parent), c)
+
+        extra_parents = multi_parents.get(c)
+        if extra_parents:
+            for maybe_parent in extra_parents:
+                if maybe_parent is None:
+                    continue
+                parent_label = str(maybe_parent)
+                if pd.isna(parent_label) or not parent_label:
+                    continue
+                if not pd.isna(parent) and str(parent) == parent_label:
+                    continue
+                G.add_edge(parent_label, c)
 
     if not nx.is_directed_acyclic_graph(G):
         raise ValueError(

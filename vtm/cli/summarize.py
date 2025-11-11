@@ -179,12 +179,32 @@ def _iter_row_contexts(df: pd.DataFrame) -> Iterable[Tuple[int, SummaryContext]]
         if "order" not in work_df.columns:
             work_df = work_df.copy()
             work_df["order"] = pd.NA
+        multi_parents: Dict[str, Tuple[str, ...]] = {}
+        if {"name", "parents"}.issubset(work_df.columns):
+            for row in work_df[["name", "parents"]].itertuples(index=False):
+                raw_name, raw_parents = row
+                if not isinstance(raw_name, str):
+                    continue
+                name = raw_name.strip()
+                if not name:
+                    continue
+                if pd.isna(raw_parents):
+                    continue
+                parents: list[str] = []
+                for part in str(raw_parents).split("|"):
+                    cleaned = part.strip()
+                    if not cleaned or cleaned in parents:
+                        continue
+                    parents.append(cleaned)
+                if parents:
+                    multi_parents[name] = tuple(parents)
         try:
             graph = build_taxonomy_graph(
                 work_df,
                 name_col="name",
                 parent_col="parent",
                 order_col="order",
+                multi_parents=multi_parents,
             )
             _, raw_name_to_path = build_name_maps_from_graph(graph)
 
