@@ -11,6 +11,7 @@ from vtm.utils import ensure_file_exists, load_table, set_global_seed
 
 from .app import app, logger
 from .common import ConfigArgument, load_app_config
+from ._metadata import build_run_metadata
 
 @app.command("evaluate")
 def run_command(
