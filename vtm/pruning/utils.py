@@ -78,7 +78,6 @@ def lexical_anchor_indices(
     tax_names_normalized: Optional[Sequence[str]] = None,
     existing: Sequence[int],
     max_anchors: int = 3,
-    extractor: Optional[process.Extractor] = None,
 ) -> List[int]:
     """Return indices of lexically similar taxonomy names using token sorting."""
 
@@ -93,43 +92,28 @@ def lexical_anchor_indices(
     if tax_names_normalized is not None and len(tax_names_normalized) != len(tax_names):
         raise ValueError("tax_names_normalized must align with tax_names")
 
+    normalized_tax_names = (
+        list(tax_names_normalized)
+        if tax_names_normalized is not None
+        else [normalize_similarity_text(name) for name in tax_names]
+    )
+
     scored: Dict[int, float] = {}
-    candidate_count = len(tax_names)
-    if candidate_count == 0:
+    if not normalized_tax_names:
         return []
 
-    if extractor is None:
-        normalized_tax_names = (
-            list(tax_names_normalized)
-            if tax_names_normalized is not None
-            else [normalize_similarity_text(name) for name in tax_names]
-        )
-        if not normalized_tax_names:
-            return []
-        limit = min(len(normalized_tax_names), max(max_anchors * 5, max_anchors))
-
-        def fetch_matches(text: str):
-            return process.extract(
-                text,
-                normalized_tax_names,
-                processor=None,
-                scorer=fuzz.token_sort_ratio,
-                limit=limit,
-                score_cutoff=0.0,
-            )
-
-    else:
-        limit = min(candidate_count, max(max_anchors * 5, max_anchors))
-        extractor_local = extractor
-        assert extractor_local is not None
-
-        def fetch_matches(text: str):
-            return extractor_local.extract(text, limit=limit, score_cutoff=0.0)
-
+    limit = min(len(normalized_tax_names), max(max_anchors * 5, max_anchors))
     for text in normalized_item_texts:
         if not text:
             continue
-        matches = fetch_matches(text)
+        matches = process.extract(
+            text,
+            normalized_tax_names,
+            processor=None,
+            scorer=fuzz.token_sort_ratio,
+            limit=limit,
+            score_cutoff=0.0,
+        )
         for _, score, idx in matches:
             if idx in existing_set:
                 continue
