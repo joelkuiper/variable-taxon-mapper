@@ -86,11 +86,21 @@ def predict_command(
 
     mapper = VariableTaxonMapper.from_config(config_obj, base_path=base_path)
     progress_hook = _make_tqdm_progress()
-    df, _ = mapper.predict(
-        variables_df,
-        evaluate=False,
-        progress_hook=progress_hook,
-    )
+    try:
+        df, _ = mapper.predict(
+            variables_df,
+            evaluate=False,
+            progress_hook=progress_hook,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        if "collect_predictions detected an active event loop" in message:
+            logger.error(
+                "Detected an active asyncio event loop. Run the CLI from a synchronous "
+                "context or await vtm.evaluate.async_collect_predictions in your own service."
+            )
+            raise typer.Exit(code=1) from exc
+        raise
 
     if output is not None:
         output_path = output if output.is_absolute() else (base_path / output).resolve()

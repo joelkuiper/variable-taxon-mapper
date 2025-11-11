@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import typer
 import pandas as pd
 
 from vtm.pipeline import VariableTaxonMapper
@@ -40,7 +41,17 @@ def run_command(config: Path = ConfigArgument) -> None:
         len(variables.columns),
     )
 
-    df, metrics = mapper.predict(variables)
+    try:
+        df, metrics = mapper.predict(variables)
+    except RuntimeError as exc:
+        message = str(exc)
+        if "collect_predictions detected an active event loop" in message:
+            logger.error(
+                "Detected an active asyncio event loop. Run the mapper from a synchronous "
+                "context or await vtm.evaluate.async_collect_predictions inside your service."
+            )
+            raise typer.Exit(code=1) from exc
+        raise
 
     results_path = config_obj.evaluation.resolve_results_path(
         base_path=base_path,

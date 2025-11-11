@@ -109,6 +109,42 @@ uv run vtm predict config.example.toml
 uv run vtm summarize config.example.toml
 ```
 
+### Programmatic usage (sync vs async)
+
+The Typer CLI commands call into the synchronous helper exposed by
+`vtm.evaluate.collector.collect_predictions`. Service integrations that already
+run inside an event loop should instead await the coroutine version to avoid the
+`asyncio.run` guard:
+
+```python
+from vtm.evaluate import async_collect_predictions
+
+rows = await async_collect_predictions(
+    jobs,
+    pruning_cfg=config.pruning,
+    llm_cfg=config.llm,
+    parallel_cfg=config.parallelism,
+    http_cfg=config.http,
+    keywords=keywords_df,
+    graph=taxonomy_graph,
+    embedder=embedder,
+    tax_names=taxonomy_names,
+    tax_embs_unit=taxonomy_embeddings,
+    hnsw_index=hnsw_index,
+    name_to_id=name_to_id,
+    name_to_path=name_to_path,
+    gloss_map=gloss_map,
+    hnsw_config=config.hnsw,
+    progress_hook=None,
+    prompt_renderer=prompt_renderer,
+)
+```
+
+When no loop is running, reuse the synchronous
+`vtm.evaluate.collector.collect_predictions` helper (which simply wraps the
+coroutine in `asyncio.run`). This mirrors the behaviour of the CLI commands and
+other high-level entry points such as `VariableTaxonMapper.predict`.
+
 `vtm optimize-pruning` wraps the Optuna-based tuner from `optimize_pruning.py`,
 loading configuration through the shared CLI utilities so logging and seed
 control match the other commands. Use `--help` to review all available
