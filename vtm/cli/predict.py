@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -56,13 +59,18 @@ def predict_command(
         "--output",
         "-o",
         help=(
-            "Optional output CSV path. Defaults to evaluation.results_csv in the configuration."
+            "Optional output CSV path. Defaults to evaluation.results_csv in the configuration. "
+            "A JSON manifest is stored alongside the CSV."
         ),
         path_type=Path,
     ),
     row_limit: Optional[int] = RowLimitOption,
 ) -> None:
-    """Generate predictions for a variables-like table without evaluation."""
+    """Generate predictions for a variables-like table without evaluation.
+
+    In addition to the CSV, the command now records a JSON run manifest that
+    captures configuration, git metadata, and the output schema for FAIR reuse.
+    """
 
     config_path = config.resolve()
     base_path = config_path.parent
@@ -115,3 +123,32 @@ def predict_command(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
     logger.info("Saved %d predictions to %s", len(df), output_path)
+
+    manifest_path = Path(f"{output_path}.manifest.json")
+    manifest = {
+        "config_path": str(config_path),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "column_schema": [
+            {"name": column, "dtype": str(dtype)}
+            for column, dtype in zip(df.columns, df.dtypes)
+        ],
+    }
+
+    git_commit: Optional[str]
+    try:
+        git_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=base_path,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        git_commit = None
+    else:
+        git_commit = git_result.stdout.strip() or None
+
+    manifest["git_commit"] = git_commit
+
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    logger.info("Saved manifest to %s", manifest_path)
