@@ -16,6 +16,7 @@ from vtm.taxonomy import build_gloss_map, build_name_maps_from_graph, build_taxo
 from vtm.utils import (
     clean_str_or_none,
     ensure_file_exists,
+    load_table,
     resolve_path,
     split_keywords_comma,
 )
@@ -172,11 +173,11 @@ def prune_check_command(
     variables_path = resolve_path(base_path, variables_default, variables)
     keywords_path = resolve_path(base_path, keywords_default, keywords)
 
-    ensure_file_exists(variables_path, "variables CSV")
-    ensure_file_exists(keywords_path, "keywords CSV")
+    ensure_file_exists(variables_path, "variables data file")
+    ensure_file_exists(keywords_path, "keywords data file")
 
-    variables_df = pd.read_csv(variables_path, low_memory=False)
-    keywords_raw = pd.read_csv(keywords_path)
+    variables_df = load_table(variables_path, low_memory=False)
+    keywords_raw = load_table(keywords_path)
     logger.info(
         "Loaded %d variables rows and %d keyword rows",
         len(variables_df),

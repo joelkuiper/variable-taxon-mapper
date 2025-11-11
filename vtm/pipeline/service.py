@@ -14,7 +14,7 @@ from vtm.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from vtm.utils import ensure_file_exists, resolve_path
+from vtm.utils import ensure_file_exists, load_table, resolve_path
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from vtm.evaluate import ProgressHook
@@ -348,8 +348,8 @@ class VariableTaxonMapper:
             variables_default, keywords_default = config.data.to_paths(base_path)
             resolved_path = resolve_path(base_path, keywords_default, keywords_path)
             logger.debug("Resolved keywords path: %s", resolved_path)
-            ensure_file_exists(resolved_path, "keywords CSV")
-            keywords = pd.read_csv(resolved_path)
+            ensure_file_exists(resolved_path, "keywords data file")
+            keywords = load_table(resolved_path)
             logger.info(
                 "Loaded keywords frame with %d rows and %d columns",
                 len(keywords),

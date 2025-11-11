@@ -2,7 +2,7 @@
 
 This is a tool designed to map free-text variable metadata (from datasets) to a curated biomedical taxonomy. It achieves this by combining embedding-based similarity search with a Large Language Model (LLM) for final label selection. At a high level, the pipeline works as follows:
 
--   **Input Data**: The tool expects two CSV files as input: one containing the variables (with fields like dataset name, variable label, variable name, description, etc.), and another containing the taxonomy (a list of *keywords* or terms with their parent relationships). The taxonomy is treated as a directed acyclic graph (essentially a hierarchy/forest) where each node has at most one parent.
+-   **Input Data**: The tool expects two tabular files (CSV, Parquet, or Feather) as input: one containing the variables (with fields like dataset name, variable label, variable name, description, etc.), and another containing the taxonomy (a list of *keywords* or terms with their parent relationships). The taxonomy is treated as a directed acyclic graph (essentially a hierarchy/forest) where each node has at most one parent. At minimum, the taxonomy table must expose columns for the keyword `name` and its `parent`; optional fields such as `parents` (multi-parent delimited list), `order`, `label`, and `definition` are honoured when present.
 
 -   **Taxonomy Construction**: The taxonomy CSV is read and transformed into a directed acyclic graph (DAG) using `networkx`. Each term becomes a node, and parent-child relationships become directed edges. The code enforces that the graph remains acyclic and that no term has multiple parents, throwing an error if a cycle or multi-parent is detected. This ensures a tree (or forest) structure, which is important for defining ancestor/descendant relationships in evaluation.
 
@@ -62,6 +62,12 @@ parents = "all_parents"  # e.g., "PARENT_A|PARENT_B"
 If the column is omitted, the pipeline continues to operate on single-parent
 hierarchies. When supplied, the delimited values are normalized using the same
 identifier mapping as the `parent` column before downstream processing.
+
+The `[data]` configuration accepts CSV, Parquet, or Feather sources for both
+`variables_csv` and `keywords_csv`. Files are loaded through
+`vtm.utils.load_table`, which automatically selects the appropriate pandas or
+pyarrow-backed reader and falls back to the default CSV engine when pyarrow is
+unavailable.
 
 ## LLM endpoint authentication
 

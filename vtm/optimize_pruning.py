@@ -29,7 +29,7 @@ from vtm.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from vtm.utils import ensure_file_exists, resolve_path
+from vtm.utils import ensure_file_exists, load_table, resolve_path
 
 try:
     from typer import Exit as _TyperExit
@@ -147,11 +147,11 @@ def prepare_context(
     variables_path = resolve_path(base_path, variables_default, variables)
     keywords_path = resolve_path(base_path, keywords_default, keywords)
 
-    ensure_file_exists(variables_path, "variables CSV")
-    ensure_file_exists(keywords_path, "keywords CSV")
+    ensure_file_exists(variables_path, "variables data file")
+    ensure_file_exists(keywords_path, "keywords data file")
 
-    variables_df = pd.read_csv(variables_path, low_memory=False)
-    keywords_raw = pd.read_csv(keywords_path)
+    variables_df = load_table(variables_path, low_memory=False)
+    keywords_raw = load_table(keywords_path)
     keywords_df, definition_df, multi_parents = prepare_keywords_dataframe(
         keywords_raw, config.taxonomy_fields
     )

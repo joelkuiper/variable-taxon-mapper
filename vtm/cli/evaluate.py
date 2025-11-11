@@ -4,11 +4,10 @@ import json
 from pathlib import Path
 
 import typer
-import pandas as pd
 
 from vtm.pipeline import VariableTaxonMapper
 from vtm.reporting import report_results
-from vtm.utils import ensure_file_exists, set_global_seed
+from vtm.utils import ensure_file_exists, load_table, set_global_seed
 
 from .app import app, logger
 from .common import ConfigArgument, load_app_config
@@ -26,7 +25,7 @@ def run_command(config: Path = ConfigArgument) -> None:
     set_global_seed(config_obj.seed)
 
     variables_path, keywords_path = config_obj.data.to_paths(base_path)
-    ensure_file_exists(variables_path, "variables CSV")
+    ensure_file_exists(variables_path, "variables data file")
 
     mapper = VariableTaxonMapper.from_config(
         config_obj,
@@ -34,7 +33,7 @@ def run_command(config: Path = ConfigArgument) -> None:
         keywords_path=keywords_path,
     )
 
-    variables = pd.read_csv(variables_path, low_memory=False)
+    variables = load_table(variables_path, low_memory=False)
     logger.info(
         "Loaded variables frame with %d rows and %d columns",
         len(variables),

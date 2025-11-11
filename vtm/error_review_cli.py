@@ -21,6 +21,7 @@ import pandas as pd
 
 from vtm.config import TaxonomyFieldMappingConfig, load_config
 from vtm.pipeline.service import prepare_keywords_dataframe
+from vtm.utils import load_table
 from .taxonomy import build_name_maps_from_graph, build_taxonomy_graph
 
 
@@ -106,7 +107,7 @@ def load_keywords_metadata(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Return keyword definitions and taxonomy paths keyed by keyword name."""
 
-    raw_df = pd.read_csv(keywords_path, low_memory=False)
+    raw_df = load_table(keywords_path, low_memory=False)
     canonical_df, definition_df, multi_parents = prepare_keywords_dataframe(
         raw_df, taxonomy_fields
     )
@@ -152,7 +153,7 @@ def load_keywords_metadata(
 def load_prediction_errors(predictions_path: Path) -> pd.DataFrame:
     """Return a DataFrame containing only misclassified rows."""
 
-    df = pd.read_csv(predictions_path, dtype=str).fillna("")
+    df = load_table(predictions_path, dtype=str).fillna("")
     # Normalize the `correct` column into booleans.
     normalized = df["correct"].astype(str).str.lower()
     mask = normalized.isin({"false", "0", "no"})
@@ -222,7 +223,7 @@ def enrich_records(
 def load_existing_decisions(path: Path) -> dict[int, str]:
     if not path.exists():
         return {}
-    df = pd.read_csv(path, dtype=str).fillna("")
+    df = load_table(path, dtype=str).fillna("")
     decisions: dict[int, str] = {}
     for row in df.itertuples():
         try:

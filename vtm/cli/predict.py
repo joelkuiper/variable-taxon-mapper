@@ -3,12 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-import pandas as pd
 import typer
 
 from vtm.evaluate import ProgressHook
 from vtm.pipeline import VariableTaxonMapper
-from vtm.utils import ensure_file_exists, resolve_path, set_global_seed
+from vtm.utils import ensure_file_exists, load_table, resolve_path, set_global_seed
 
 from .app import app, logger
 from .common import ConfigArgument, RowLimitOption, load_app_config
@@ -46,7 +45,10 @@ def predict_command(
         None,
         "--variables",
         "-v",
-        help="Optional path to a variables-like CSV. Defaults to the config setting.",
+        help=(
+            "Optional path to a variables-like table (CSV, Parquet, Feather). "
+            "Defaults to the config setting."
+        ),
         path_type=Path,
     ),
     output: Optional[Path] = typer.Option(
@@ -60,7 +62,7 @@ def predict_command(
     ),
     row_limit: Optional[int] = RowLimitOption,
 ) -> None:
-    """Generate predictions for a variables-like CSV without evaluation."""
+    """Generate predictions for a variables-like table without evaluation."""
 
     config_path = config.resolve()
     base_path = config_path.parent
@@ -76,8 +78,8 @@ def predict_command(
     variables_default, _ = config_obj.data.to_paths(base_path)
     variables_path = resolve_path(base_path, variables_default, variables)
 
-    ensure_file_exists(variables_path, "variables CSV")
-    variables_df = pd.read_csv(variables_path, low_memory=False)
+    ensure_file_exists(variables_path, "variables data file")
+    variables_df = load_table(variables_path, low_memory=False)
     logger.info(
         "Loaded variables frame with %d rows and %d columns",
         len(variables_df),

@@ -19,6 +19,7 @@ from openai.types.chat import (
 from tqdm.auto import tqdm
 
 from vtm.taxonomy import build_name_maps_from_graph, build_taxonomy_graph
+from vtm.utils import load_table
 
 from .app import app, logger
 
@@ -263,7 +264,7 @@ def summarize_command(
     input_csv: Path = typer.Option(
         Path("data/Keywords.csv"),
         "--in",
-        help="Input keywords CSV path.",
+        help="Input keywords table path (CSV, Parquet, Feather).",
         path_type=Path,
     ),
     output_csv: Path = typer.Option(
@@ -291,9 +292,9 @@ def summarize_command(
         logger.error("Input not found: %s", input_csv)
         raise typer.Exit(code=2)
 
-    df = pd.read_csv(input_csv, low_memory=False)
+    df = load_table(input_csv, low_memory=False)
     if "definition" not in df.columns:
-        logger.error("Input CSV lacks 'definition' column.")
+        logger.error("Input data lacks 'definition' column.")
         raise typer.Exit(code=2)
 
     logger.info("Loaded %d rows from %s", len(df), input_csv)

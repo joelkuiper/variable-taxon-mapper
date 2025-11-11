@@ -9,6 +9,8 @@ from typing import Iterable, Sequence
 import pandas as pd
 from tabulate import tabulate
 
+from vtm.utils import load_table
+
 NORMALIZED_DECISIONS = {"Accept", "Reject", "Unknown"}
 _DECISION_MAP = {
     "a": "Accept",
@@ -260,7 +262,7 @@ def generate_report(args: argparse.Namespace) -> None:
     if len(args.csv_paths) < 2:
         raise AgreementReportError("Please provide at least two CSV files.")
 
-    frames = [pd.read_csv(path, dtype=str).fillna("") for path in args.csv_paths]
+    frames = [load_table(path, dtype=str).fillna("") for path in args.csv_paths]
     id_lower = _infer_common_column(
         frames,
         args.id_column,

@@ -9,7 +9,10 @@ from typing import Any, List, Optional
 
 import numpy as np
 import torch
+import pandas as pd
 
+
+logger = logging.getLogger(__name__)
 
 def clean_text(value: Any, empty="(empty)") -> str:
     """Normalize arbitrary values to a trimmed string or `empty`."""
@@ -131,3 +134,65 @@ def resolve_path(
     else:
         candidate = override
     return candidate.resolve()
+
+
+def load_table(
+    path: str | Path,
+    *,
+    csv_engine: str | None = "pyarrow",
+    **read_kwargs: Any,
+) -> pd.DataFrame:
+    """Load a tabular dataset from ``path`` using an appropriate backend.
+
+    Parameters
+    ----------
+    path:
+        File path pointing to a CSV/Parquet/Feather dataset. Compressed CSV files
+        (e.g., ``.csv.gz``) are automatically handled.
+    csv_engine:
+        Preferred pandas engine for CSV loading. Defaults to ``"pyarrow"`` when
+        available, falling back to pandas' default if the engine is unavailable.
+        Pass ``None`` to rely on pandas' default behaviour directly.
+    **read_kwargs:
+        Additional keyword arguments forwarded to the underlying pandas loader.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The loaded table.
+    """
+
+    resolved_path = Path(path)
+    suffixes = [s.lower() for s in resolved_path.suffixes]
+    suffix = suffixes[-1] if suffixes else ""
+    if suffix == ".gz" and len(suffixes) > 1:
+        suffix = suffixes[-2]
+
+    if suffix in {".parquet"}:
+        kwargs = dict(read_kwargs)
+        for key in ("low_memory", "dtype"):
+            kwargs.pop(key, None)
+        return pd.read_parquet(resolved_path, **kwargs)
+
+    if suffix in {".feather", ".ft"}:
+        kwargs = dict(read_kwargs)
+        for key in ("low_memory", "dtype"):
+            kwargs.pop(key, None)
+        return pd.read_feather(resolved_path, **kwargs)
+
+    kwargs = dict(read_kwargs)
+    engine = csv_engine
+    if engine is not None:
+        try:
+            return pd.read_csv(resolved_path, engine=engine, **kwargs)
+        except (ImportError, ValueError) as exc:
+            logger.debug(
+                "Falling back to pandas default CSV engine for %s due to error: %s",
+                resolved_path,
+                exc,
+            )
+            engine = None
+
+    if engine is None and "engine" in kwargs:
+        kwargs = {k: v for k, v in kwargs.items() if k != "engine"}
+    return pd.read_csv(resolved_path, **kwargs)

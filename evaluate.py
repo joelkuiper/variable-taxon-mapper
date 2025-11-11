@@ -9,7 +9,7 @@ import pandas as pd
 from vtm.config import AppConfig
 from vtm.evaluate import ProgressHook
 from vtm.pipeline import VariableTaxonMapper
-from vtm.utils import ensure_file_exists, resolve_path, set_global_seed
+from vtm.utils import ensure_file_exists, load_table, resolve_path, set_global_seed
 from vtm.cli import app as cli_app
 
 
@@ -41,7 +41,7 @@ def run_pipeline(
     variables_path = resolve_path(base_path, variables_default, variables_csv)
     keywords_path = resolve_path(base_path, keywords_default, None)
 
-    ensure_file_exists(variables_path, "variables CSV")
+    ensure_file_exists(variables_path, "variables data file")
 
     parallel_cfg = config.parallelism
     logger.info(
@@ -50,7 +50,7 @@ def run_pipeline(
         parallel_cfg.pruning_batch_size,
     )
 
-    variables = pd.read_csv(variables_path, low_memory=False)
+    variables = load_table(variables_path, low_memory=False)
     logger.info(
         "Loaded variables frame with %d rows and %d columns", len(variables), len(variables.columns)
     )
