@@ -10,6 +10,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletionMessageParam
+import httpx
+
+from vtm.config import HttpConfig, LLMConfig
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +50,47 @@ DEFAULT_MATCH_RESPONSE_FORMAT = json_schema_response_format(
 _SYNC_CLIENTS: Dict[Tuple[str, str], OpenAI] = {}
 _ASYNC_CLIENTS: Dict[Tuple[str, str], AsyncOpenAI] = {}
 _PROMPT_DEBUG_SHOWN = False
+
+
+def _resolve_timeout_components(
+    *,
+    timeout: float | None,
+    http_cfg: HttpConfig | None,
+    llm_cfg: LLMConfig | None,
+) -> tuple[float, httpx.Timeout | float]:
+    from vtm.evaluate.parallelism import sock_read_timeout
+
+    resolved_read: float
+    if http_cfg is not None and llm_cfg is not None:
+        resolved_read = float(sock_read_timeout(http_cfg, llm_cfg))
+    elif timeout is not None:
+        resolved_read = float(timeout)
+    elif llm_cfg is not None:
+        resolved_read = float(llm_cfg.n_predict)
+    else:
+        resolved_read = 120.0
+
+    if http_cfg is None and llm_cfg is not None and timeout is None:
+        resolved_read = max(resolved_read, 64.0)
+    elif timeout is not None:
+        resolved_read = max(resolved_read, 0.0)
+
+    connect_timeout: float | None = None
+    if http_cfg is not None:
+        connect_timeout = float(http_cfg.sock_connect)
+        resolved_read = max(resolved_read, float(http_cfg.sock_read_floor))
+
+    if connect_timeout is not None:
+        client_timeout: httpx.Timeout | float = httpx.Timeout(
+            connect=connect_timeout,
+            read=resolved_read,
+            write=resolved_read,
+            pool=connect_timeout,
+        )
+    else:
+        client_timeout = resolved_read if timeout is not None else resolved_read
+
+    return resolved_read, client_timeout
 
 
 def _normalize_api_base(endpoint: str) -> str:
@@ -122,18 +166,27 @@ async def llama_completion_async(
     endpoint: str,
     *,
     model: str,
-    timeout: float = 120.0,
+    timeout: float | None = None,
     api_key: Optional[str] = None,
+    http_cfg: HttpConfig | None = None,
+    llm_cfg: LLMConfig | None = None,
     **kwargs: Any,
 ) -> str:
-    client = _get_async_client(endpoint, api_key=api_key).with_options(timeout=timeout)
+    read_timeout, client_timeout = _resolve_timeout_components(
+        timeout=timeout, http_cfg=http_cfg, llm_cfg=llm_cfg
+    )
+    client = _get_async_client(endpoint, api_key=api_key).with_options(
+        timeout=client_timeout
+    )
     standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
-    response = await client.chat.completions.create(
+    request = client.chat.completions.create(
         model=model,
         messages=list(messages),
         extra_body=extra_body or None,
+        timeout=client_timeout,
         **standard_kwargs,
     )
+    response = await asyncio.wait_for(request, read_timeout)
     if not response.choices:
         raise RuntimeError("Chat completion returned no choices")
     message = response.choices[0].message
@@ -147,26 +200,36 @@ async def llama_completion_many(
     endpoint: str,
     *,
     model: str,
-    timeout: float = 120.0,
+    timeout: float | None = None,
     api_key: Optional[str] = None,
+    http_cfg: HttpConfig | None = None,
+    llm_cfg: LLMConfig | None = None,
 ) -> List[str]:
     """Resolve multiple chat prompts concurrently."""
 
     if not requests:
         return []
 
-    client = _get_async_client(endpoint, api_key=api_key).with_options(timeout=timeout)
+    read_timeout, client_timeout = _resolve_timeout_components(
+        timeout=timeout, http_cfg=http_cfg, llm_cfg=llm_cfg
+    )
+
+    client = _get_async_client(endpoint, api_key=api_key).with_options(
+        timeout=client_timeout
+    )
 
     async def _run_single(
         messages: Sequence[ChatCompletionMessageParam], kwargs: Dict[str, Any]
     ) -> str:
         standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
-        response = await client.chat.completions.create(
+        request = client.chat.completions.create(
             model=model,
             messages=list(messages),
             extra_body=extra_body or None,
+            timeout=client_timeout,
             **standard_kwargs,
         )
+        response = await asyncio.wait_for(request, read_timeout)
         if not response.choices:
             raise RuntimeError("Chat completion returned no choices")
         message = response.choices[0].message
@@ -207,18 +270,30 @@ def llama_completion(
     endpoint: str,
     *,
     model: str,
-    timeout: float = 120.0,
+    timeout: float | None = None,
     api_key: Optional[str] = None,
+    http_cfg: HttpConfig | None = None,
+    llm_cfg: LLMConfig | None = None,
     **kwargs: Any,
 ) -> str:
-    client = _get_sync_client(endpoint, api_key=api_key).with_options(timeout=timeout)
+    read_timeout, client_timeout = _resolve_timeout_components(
+        timeout=timeout, http_cfg=http_cfg, llm_cfg=llm_cfg
+    )
+    client = _get_sync_client(endpoint, api_key=api_key).with_options(
+        timeout=client_timeout
+    )
     standard_kwargs, extra_body = _split_request_kwargs(dict(kwargs))
     response = client.chat.completions.create(
         model=model,
         messages=list(messages),
         extra_body=extra_body or None,
+        timeout=client_timeout,
         **standard_kwargs,
     )
+    # ``httpx`` performs synchronous waits, but we defensively mirror the async
+    # interface's minimum timeout expectations.
+    if read_timeout <= 0:
+        raise TimeoutError("Configured read timeout must be positive")
     if not response.choices:
         raise RuntimeError("Chat completion returned no choices")
     message = response.choices[0].message

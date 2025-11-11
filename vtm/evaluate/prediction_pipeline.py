@@ -34,6 +34,7 @@ class PredictionPipeline:
         jobs: Sequence[PredictionJob],
         pruning_cfg,
         llm_cfg,
+        http_cfg,
         parallel_cfg: ParallelismConfig,
         keywords: pd.DataFrame,
         graph,
@@ -53,6 +54,7 @@ class PredictionPipeline:
         self.jobs = list(jobs)
         self.pruning_cfg = pruning_cfg
         self.llm_cfg = llm_cfg
+        self.http_cfg = http_cfg
         self.parallel_cfg = parallel_cfg
         self._prune_workers = max(1, int(getattr(parallel_cfg, "pruning_workers", 1)))
         self._prune_batch_size = max(
@@ -295,6 +297,7 @@ class PredictionPipeline:
                 embedder=self.embedder,
                 hnsw_index=self.hnsw_index,
                 llm_config=self.llm_cfg,
+                http_config=self.http_cfg,
                 prompt_renderer=self.prompt_renderer,
             )
         except Exception as exc:  # pragma: no cover - defensive logging
