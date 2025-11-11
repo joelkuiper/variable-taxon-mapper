@@ -38,7 +38,7 @@ VTM_DIR="${VTM_DIR:-$HOME/tmp02/Repositories/variable-taxon-mapper}"
 VTM_CFG="${VTM_CFG:-config.example.toml}"
 
 # -------------------- Determine final command --------------------
-DEFAULT_CMD=(vtm run "$VTM_CFG")
+DEFAULT_CMD=(vtm evaluate "$VTM_CFG")
 USE_DEFAULT=0
 
 if [[ $# -gt 0 ]]; then
