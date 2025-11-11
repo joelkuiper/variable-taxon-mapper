@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,12 @@ from vtm.utils import set_global_seed
 
 from .app import app, logger
 from .common import ConfigArgument, RowLimitOption, load_app_config
+
+
+class PrunerChoice(str, Enum):
+    NONE = "none"
+    MEDIAN = "median"
+    HALVING = "halving"
 
 
 @app.command("optimize-pruning")
@@ -62,12 +69,12 @@ def optimize_pruning_command(
         "--timeout",
         help="Optional global timeout in seconds for study.optimize.",
     ),
-    pruner: str = typer.Option(
-        "median",
+    pruner: PrunerChoice = typer.Option(
+        PrunerChoice.MEDIAN,
         "--pruner",
         help="Optuna pruner to use.",
-        show_default=True,
-        type=typer.Choice(["none", "median", "halving"], case_sensitive=False),
+        show_default=PrunerChoice.MEDIAN.value,
+        case_sensitive=False,
     ),
     save_trials_csv: Optional[Path] = typer.Option(
         None,
@@ -129,7 +136,7 @@ def optimize_pruning_command(
         min_coverage=min_coverage,
         min_possible=min_possible,
         timeout=timeout,
-        pruner=pruner,
+        pruner=pruner.value,
         save_trials_csv=save_trials_csv,
         ensure_mode_repeats=ensure_mode_repeats,
         tpe_startup=tpe_startup,
