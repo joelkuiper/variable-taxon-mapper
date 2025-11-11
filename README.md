@@ -27,25 +27,30 @@ In summary, the tool's idea is to use semantic embedding search to narrow the ta
 
 ## Configuring variable column mappings
 
-Many datasets use different column headers for the same logical fields (e.g.,
-`variable_id` instead of `dataset`, `display_name` instead of `label`, etc.).
-Use the `[fields]` section in the TOML configuration to map those logical
-fields to your CSV columns:
+Many datasets reuse different column headers for similar concepts (for example,
+`study_id` instead of `dataset`, `display_name` instead of `label`). The
+`[fields]` section lets you describe which columns should be embedded, surfaced
+in prompts/results, and used for evaluation:
 
 ```toml
 [fields]
-dataset = "source_id"
-label = "display_name"
-name = "short_name"
-description = "long_description"
-gold_labels = "manual_tags"
+embedding_columns = ["display_name", "long_description"]
+metadata_columns = ["study_id", "display_name", "unit"]
+gold_labels_column = "manual_tags"
+dataset_column = "study_id"
 ```
 
-Any field can be omitted or set to an empty string when the dataset does not
-provide it. The evaluation pipeline, pruning logic, and reporting utilities all
-respect this mapping. Settings such as `evaluation.dedupe_on` can reference the
-logical names (`dataset`, `label`, `name`, `description`) or raw column names;
-the mapper resolves them through this section before touching your data.
+- `embedding_columns` are concatenated and embedded whenever the pipeline needs
+  a text representation of the variable.
+- `metadata_columns` are carried through to prediction outputs, rendered in the
+  LLM prompt, and recorded alongside metrics.
+- `gold_labels_column` tells the evaluator which column contains comma-delimited
+  ground-truth taxonomy labels.
+- `dataset_column` (optional) identifies the column you want summaries grouped
+  by; the pipeline also exposes a canonical `dataset` alias for convenience.
+
+You can omit any optional setting when the data is unavailable. Options such as
+`evaluation.dedupe_on` now accept the raw column names from your variables CSV.
 
 When working with taxonomy CSVs that expose multiple parents per node, map the
 column containing the delimited parent identifiers through the

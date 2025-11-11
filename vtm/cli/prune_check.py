@@ -54,11 +54,12 @@ def _compute_effective_subset(
 ) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
     field_cfg = coerce_config(field_mapping, FieldMappingConfig, "field_mapping")
 
-    dedupe_columns: List[str] = []
-    for column in cfg.dedupe_on or []:
-        resolved = field_cfg.resolve_column(column)
-        if isinstance(resolved, str) and resolved and resolved not in dedupe_columns:
-            dedupe_columns.append(resolved)
+    dedupe_columns = [
+        str(column).strip()
+        for column in (cfg.dedupe_on or [])
+        if isinstance(column, str) and column.strip()
+    ]
+    dedupe_columns = list(dict.fromkeys(dedupe_columns))
 
     work_df = variables.copy()
     if dedupe_columns:
@@ -70,10 +71,7 @@ def _compute_effective_subset(
         )
 
     total_rows = int(len(work_df))
-    resolved_gold_column = field_cfg.resolve_column("gold_labels")
-    gold_column: Optional[str] = (
-        resolved_gold_column if isinstance(resolved_gold_column, str) else None
-    )
+    gold_column = field_cfg.gold_column()
     cleaned_gold = (
         work_df[gold_column].map(clean_str_or_none)
         if isinstance(gold_column, str) and gold_column in work_df.columns
@@ -83,13 +81,14 @@ def _compute_effective_subset(
     known_labels = set(tax_names)
     total_with_any_keyword = int(cleaned_gold.notna().sum()) if total_rows else 0
     if gold_column is None or gold_column not in work_df.columns:
-        configured_name = field_cfg.gold_labels
-        if configured_name:
+        if gold_column:
             raise KeyError(
                 "variables must include the column configured in "
-                f"fields.gold_labels ('{configured_name}')"
+                f"fields.gold_labels_column ('{gold_column}')"
             )
-        raise KeyError("Evaluation requires a gold label column; set fields.gold_labels")
+        raise KeyError(
+            "Evaluation requires a gold label column; set fields.gold_labels_column"
+        )
 
     token_lists = cleaned_gold.map(split_keywords_comma)
     token_sets = token_lists.map(lambda lst: set(t for t in lst if t))
@@ -210,13 +209,8 @@ def prune_check_command(
     logger.debug("Constructed resources for %d taxonomy labels", len(tax_names))
 
     field_cfg = config_obj.fields
-    dataset_col = field_cfg.resolve_column("dataset")
-    label_col = field_cfg.resolve_column("label")
-    name_col = field_cfg.resolve_column("name")
-    desc_col = field_cfg.resolve_column("description")
-    resolved_gold_column = field_cfg.resolve_column("gold_labels")
-    gold_column = resolved_gold_column if isinstance(resolved_gold_column, str) else None
-    text_keys = field_cfg.item_text_keys()
+    gold_column = field_cfg.gold_column()
+    metadata_columns = field_cfg.metadata_columns_list()
 
     work_df, token_sets, meta = _compute_effective_subset(
         variables_df,
@@ -244,14 +238,8 @@ def prune_check_command(
     for idx in tqdm(iterator, desc="Evaluating", unit="item"):
         row = work_df.iloc[idx]
         token_set = token_sets.iloc[idx]
-        item = {
-            "dataset": row.get(dataset_col) if dataset_col else None,
-            "label": row.get(label_col) if label_col else None,
-            "name": row.get(name_col) if name_col else None,
-            "description": row.get(desc_col) if desc_col else None,
-        }
-        if text_keys:
-            item["_text_fields"] = tuple(text_keys)
+        row_dict = {str(key): value for key, value in row.to_dict().items()}
+        item, base_metadata, item_columns = field_cfg.build_item_payload(row_dict)
 
         gold_labels = sorted(set(token_set) & tax_name_set)
 
@@ -318,13 +306,15 @@ def prune_check_command(
 
         gold_parent_chain_nodes_sorted = sorted(dict.fromkeys(gold_parent_chain_nodes))
 
+        base_row: Dict[str, Any] = {
+            column: item_columns.get(column) for column in metadata_columns
+        }
+        base_row["dataset"] = base_metadata.get("dataset")
+        if gold_column:
+            base_row[gold_column] = item_columns.get(gold_column)
         evaluation_rows.append(
             {
-                "dataset": row.get(dataset_col) if dataset_col else None,
-                "label": row.get(label_col) if label_col else None,
-                "name": row.get(name_col) if name_col else None,
-                "description": row.get(desc_col) if desc_col else None,
-                "keywords": row.get(gold_column) if gold_column else None,
+                **base_row,
                 "gold_labels": gold_labels,
                 "allowed_labels": allowed_ranked,
                 "n_allowed_labels": allowed_count,

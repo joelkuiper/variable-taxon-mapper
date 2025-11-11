@@ -7,13 +7,11 @@ variables_csv = "data/Variables_with_keywords_and_desc.csv"
 keywords_csv = "data/Keywords_summarized_new.csv"
 
 [fields]
-# Map logical variable fields to the column names used in your variables CSV.
-# Set a field to "" or omit it entirely if it is not available.
-# dataset = "dataset"
-# label = "label"
-# name = "name"
-# description = "description"
-# gold_labels = "keywords"
+# Configure which columns feed embeddings and metadata for variable rows.
+embedding_columns = ["label", "name", "description"]
+metadata_columns = ["label", "name", "dataset", "description"]
+gold_labels_column = "keywords"
+dataset_column = "dataset"
 
 [taxonomy_fields]
 # Map logical taxonomy fields to the column names used in your keywords CSV.
@@ -49,7 +47,7 @@ num_threads = 0
 [evaluation]
 n = 10_000
 seed = 37
-# Use logical field names (dataset, label, name, description) or raw column names.
+# Provide column names as they appear in your variables CSV.
 dedupe_on = ["name"]
 progress_log_interval = 10
 

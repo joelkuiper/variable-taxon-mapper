@@ -163,7 +163,9 @@ def _resolve_default_fields(
     field_mapping: FieldMappingConfig | None,
 ) -> List[str]:
     if field_mapping is not None:
-        return field_mapping.item_text_keys()
+        columns = field_mapping.embedding_columns_list()
+        if columns:
+            return columns
     candidate = item.get("_text_fields")
     if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes)):
         candidate_seq: Sequence[object] = list(candidate)
@@ -180,7 +182,7 @@ def _resolve_default_fields(
                     seen.add(key)
                     unique.append(key)
             return unique
-    return FieldMappingConfig().item_text_keys()
+    return FieldMappingConfig().embedding_columns_list()
 
 
 def collect_item_texts(

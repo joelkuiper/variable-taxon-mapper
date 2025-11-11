@@ -75,24 +75,12 @@ def _iter_prediction_jobs(
     jobs: List[PredictionJob] = []
     slot_base = max(1, parallel_cfg.num_slots)
 
-    dataset_col = field_mapping.resolve_column("dataset")
-    label_col = field_mapping.resolve_column("label")
-    name_col = field_mapping.resolve_column("name")
-    desc_col = field_mapping.resolve_column("description")
-    text_keys = field_mapping.item_text_keys()
-
     for j, idx in enumerate(idxs):
         row = df.loc[idx]
         row_dict_raw = row.to_dict()
         row_dict = {str(key): value for key, value in row_dict_raw.items()}
-        item = {
-            "dataset": row_dict.get(dataset_col) if dataset_col else None,
-            "label": row_dict.get(label_col) if label_col else None,
-            "name": row_dict.get(name_col) if name_col else None,
-            "description": row_dict.get(desc_col) if desc_col else None,
-        }
-        if text_keys:
-            item["_text_fields"] = tuple(text_keys)
+
+        item, base_metadata, item_columns = field_mapping.build_item_payload(row_dict)
 
         gold_labels: Optional[Sequence[str]] = None
         if evaluate and token_sets is not None:
@@ -100,16 +88,15 @@ def _iter_prediction_jobs(
             gold_labels = sorted(gold_tokens & known_labels)
 
         slot_id = j % slot_base
-        metadata: Dict[str, Any] = {
-            "dataset": item.get("dataset"),
-            "label": item.get("label"),
-            "name": item.get("name"),
-            "description": item.get("description"),
-            "_idx": idx,
-            "_j": j,
-            "_slot": slot_id,
-            "_error": None,
-        }
+        metadata: Dict[str, Any] = dict(base_metadata)
+        metadata.update(
+            {
+                "_idx": idx,
+                "_j": j,
+                "_slot": slot_id,
+                "_error": None,
+            }
+        )
 
         jobs.append(
             PredictionJob(
@@ -117,7 +104,7 @@ def _iter_prediction_jobs(
                 slot_id=slot_id,
                 metadata=metadata,
                 gold_labels=gold_labels,
-                item_columns=row_dict,
+                item_columns=item_columns,
             )
         )
 
@@ -192,11 +179,12 @@ def run_label_benchmark(
         prompt_cfg, base_dir=prompt_base_path
     )
 
-    dedupe_columns: list[str] = []
-    for column in cfg.dedupe_on or []:
-        resolved = field_cfg.resolve_column(column)
-        if isinstance(resolved, str) and resolved and resolved not in dedupe_columns:
-            dedupe_columns.append(resolved)
+    dedupe_columns = [
+        str(column).strip()
+        for column in (cfg.dedupe_on or [])
+        if isinstance(column, str) and column.strip()
+    ]
+    dedupe_columns = list(dict.fromkeys(dedupe_columns))
 
     work_df = _dedupe_variables(variables, dedupe_columns)
     total_rows = len(work_df)
@@ -207,10 +195,7 @@ def run_label_benchmark(
             total_rows,
             dedupe_columns,
         )
-    resolved_gold_column = field_cfg.resolve_column("gold_labels")
-    gold_column: Optional[str] = (
-        resolved_gold_column if isinstance(resolved_gold_column, str) else None
-    )
+    gold_column = field_cfg.gold_column()
     cleaned_gold = (
         work_df[gold_column].map(clean_str_or_none)
         if isinstance(gold_column, str) and gold_column in work_df.columns
@@ -224,14 +209,13 @@ def run_label_benchmark(
 
     if evaluate:
         if gold_column is None or gold_column not in work_df.columns:
-            configured_name = field_cfg.gold_labels
-            if configured_name:
+            if gold_column:
                 raise KeyError(
                     "variables must include the column configured in "
-                    f"fields.gold_labels ('{configured_name}')",
+                    f"fields.gold_labels_column ('{gold_column}')",
                 )
             raise KeyError(
-                "Evaluation requires a gold label column; set fields.gold_labels",
+                "Evaluation requires a gold label column; set fields.gold_labels_column",
             )
         token_lists = cleaned_gold.map(split_keywords_comma)
         token_sets = token_lists.map(lambda values: {val for val in values if val})

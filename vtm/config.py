@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, MutableMapping, Optional, Type, TypeVar
+from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence, Type, TypeVar
 
 import tomllib
 
@@ -21,49 +21,122 @@ class DataConfig:
 
 @dataclass
 class FieldMappingConfig:
-    """Logical field to column mapping for variable datasets."""
+    """Column selection for variable datasets."""
 
-    dataset: Optional[str] = "dataset"
-    label: Optional[str] = "label"
-    name: Optional[str] = "name"
-    description: Optional[str] = "description"
-    gold_labels: Optional[str] = "keywords"
+    embedding_columns: Sequence[str] = ("label", "name", "description")
+    metadata_columns: Sequence[str] = ("label", "name", "dataset", "description")
+    gold_labels_column: Optional[str] = "keywords"
+    dataset_column: Optional[str] = "dataset"
 
-    def as_dict(self) -> dict[str, Optional[str]]:
-        return {
-            "dataset": self.dataset,
-            "label": self.label,
-            "name": self.name,
-            "description": self.description,
-            "gold_labels": self.gold_labels,
+    def __post_init__(self) -> None:
+        self.embedding_columns = tuple(self._normalise_sequence(self.embedding_columns))
+        self.metadata_columns = tuple(self._normalise_sequence(self.metadata_columns))
+        self.gold_labels_column = self._normalise_optional(self.gold_labels_column)
+        dataset_normalised = self._normalise_optional(self.dataset_column)
+        self.dataset_column = dataset_normalised
+        if dataset_normalised and dataset_normalised not in self.metadata_columns:
+            # Ensure downstream consumers always see the dataset column value.
+            self.metadata_columns = tuple((*self.metadata_columns, dataset_normalised))
+
+    @staticmethod
+    def _normalise_sequence(values: Iterable[str] | str | None) -> list[str]:
+        if values is None:
+            return []
+        if isinstance(values, str):
+            values_iter: Iterable[str] = [values]
+        else:
+            try:
+                values_iter = list(values)
+            except TypeError:
+                values_iter = [str(values)]
+        normalised: list[str] = []
+        seen: set[str] = set()
+        for raw in values_iter:
+            if raw is None:
+                continue
+            text = str(raw).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalised.append(text)
+        return normalised
+
+    @staticmethod
+    def _normalise_optional(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def embedding_columns_list(self) -> list[str]:
+        return list(self.embedding_columns)
+
+    def metadata_columns_list(self) -> list[str]:
+        return list(self.metadata_columns)
+
+    def gold_column(self) -> Optional[str]:
+        return self.gold_labels_column
+
+    def dataset_column_name(self) -> Optional[str]:
+        return self.dataset_column
+
+    def build_item_payload(
+        self, row: Mapping[str, Any]
+    ) -> tuple[dict[str, Optional[str]], dict[str, Any], dict[str, Any]]:
+        """Return item + metadata dictionaries for ``row``.
+
+        The returned tuple contains ``(item, metadata, item_columns)``. The
+        ``item`` mapping is suitable for embedding and prompting, ``metadata``
+        captures the configured metadata columns, and ``item_columns`` provides a
+        normalised view of the raw row including helper aliases (e.g. ``dataset``).
+        """
+
+        row_columns: dict[str, Any] = {str(key): value for key, value in row.items()}
+
+        embed_cols = self.embedding_columns_list()
+        metadata_cols = self.metadata_columns_list()
+
+        item_keys: list[str] = []
+        for column in (*embed_cols, *metadata_cols):
+            if column and column not in item_keys:
+                item_keys.append(column)
+
+        item: dict[str, Optional[str]] = {
+            column: row_columns.get(column) for column in item_keys if column
         }
 
-    def resolve_column(self, key: str) -> Optional[str]:
-        mapping = self.as_dict()
-        if key in mapping:
-            value = mapping[key]
-            return value if value else None
-        return key
+        dataset_value: Any | None = None
+        dataset_col = self.dataset_column_name()
+        if dataset_col:
+            dataset_value = row_columns.get(dataset_col)
+        if dataset_value is None:
+            dataset_value = row_columns.get("dataset")
 
-    def item_text_keys(self) -> list[str]:
-        keys: list[str] = []
-        seen: set[str] = set()
-        for key in ("label", "name", "description"):
-            value = self.resolve_column(key)
-            if isinstance(value, str) and value and key not in seen:
-                keys.append(key)
-                seen.add(key)
-        return keys
+        # Persist the dataset alias even when the source column is renamed.
+        row_columns.setdefault("dataset", dataset_value)
+        if dataset_value is not None:
+            item.setdefault("dataset", dataset_value)
 
-    def item_text_columns(self) -> list[str]:
-        columns: list[str] = []
-        seen: set[str] = set()
-        for key in self.item_text_keys():
-            column = self.resolve_column(key)
-            if isinstance(column, str) and column not in seen:
-                columns.append(column)
-                seen.add(column)
-        return columns
+        metadata: dict[str, Any] = {
+            column: row_columns.get(column) for column in metadata_cols
+        }
+        metadata.setdefault("dataset", dataset_value)
+        if dataset_col:
+            metadata.setdefault(dataset_col, row_columns.get(dataset_col))
+
+        display_columns: list[str] = []
+        for column in metadata_cols:
+            if column and column not in display_columns:
+                display_columns.append(column)
+        if dataset_value is not None and "dataset" not in display_columns:
+            display_columns.append("dataset")
+
+        if embed_cols:
+            item["_text_fields"] = tuple(embed_cols)
+        if display_columns:
+            item["_display_fields"] = tuple(display_columns)
+
+        return item, metadata, row_columns
 
 
 @dataclass

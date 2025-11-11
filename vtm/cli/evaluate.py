@@ -117,4 +117,22 @@ def run_command(
     else:
         output_path = None
 
-    report_results(df, metrics, output_path=output_path)
+    field_cfg = config_obj.fields
+    metadata_columns = field_cfg.metadata_columns_list()
+    display_columns = list(dict.fromkeys(metadata_columns))
+    gold_column = field_cfg.gold_column()
+    if gold_column and gold_column not in display_columns:
+        display_columns.append(gold_column)
+    for extra in ["gold_labels", "resolved_label", "correct", "match_type"]:
+        if extra not in display_columns:
+            display_columns.append(extra)
+
+    dataset_column = field_cfg.dataset_column_name() or "dataset"
+
+    report_results(
+        df,
+        metrics,
+        display_columns=display_columns,
+        dataset_column=dataset_column,
+        output_path=output_path,
+    )

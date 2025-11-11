@@ -63,6 +63,8 @@ def _dataframe_to_text(frame: pd.DataFrame) -> str:
 def format_metrics(
     metrics: dict[str, Any] | None,
     df: pd.DataFrame | None = None,
+    *,
+    dataset_column: str | None = "dataset",
 ) -> str:
     sections: list[str] = []
 
@@ -91,7 +93,7 @@ def format_metrics(
     if hierarchy_table:
         sections.extend(["### Hierarchical distance metrics", hierarchy_table, ""])
 
-    dataset_table = _build_dataset_section(df)
+    dataset_table = _build_dataset_section(df, dataset_column=dataset_column)
     if dataset_table:
         sections.extend(["### Performance by dataset", dataset_table, ""])
 
@@ -328,11 +330,18 @@ def _build_additional_metrics_section(
     return _markdown(additional_df)
 
 
-def _build_dataset_section(df: pd.DataFrame | None) -> str:
-    if df is None or "dataset" not in df.columns or "correct" not in df.columns:
+def _build_dataset_section(
+    df: pd.DataFrame | None, *, dataset_column: str | None
+) -> str:
+    if (
+        df is None
+        or dataset_column is None
+        or dataset_column not in df.columns
+        or "correct" not in df.columns
+    ):
         return ""
 
-    grouped = df.groupby("dataset", dropna=False)
+    grouped = df.groupby(dataset_column, dropna=False)
     rows: list[dict[str, Any]] = []
     has_possible = "possible_correct_under_allowed" in df.columns
     has_match_type = "match_type" in df.columns
@@ -475,6 +484,7 @@ def report_results(
     metrics: dict[str, Any] | None = None,
     *,
     display_columns: Sequence[str] | None = None,
+    dataset_column: str | None = "dataset",
     extra_messages: Iterable[str] | None = None,
     output_path: str
     | Path
@@ -529,7 +539,7 @@ def report_results(
                 print(message)
                 text_sections.append(str(message))
 
-    metrics_report = format_metrics(metrics, df)
+    metrics_report = format_metrics(metrics, df, dataset_column=dataset_column)
     if metrics_report:
         print(metrics_report)
         text_sections.append(metrics_report)

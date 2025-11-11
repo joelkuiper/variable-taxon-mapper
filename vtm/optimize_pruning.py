@@ -180,11 +180,6 @@ def prepare_context(
     gloss_map = build_gloss_map(definition_source)
 
     field_cfg = config.fields
-    dataset_col = field_cfg.resolve_column("dataset")
-    label_col = field_cfg.resolve_column("label")
-    name_col = field_cfg.resolve_column("name")
-    desc_col = field_cfg.resolve_column("description")
-    text_keys = field_cfg.item_text_keys()
 
     work_df, token_sets, _meta = _compute_effective_subset(
         variables_df,
@@ -199,14 +194,8 @@ def prepare_context(
     for idx in range(len(work_df)):
         row = work_df.iloc[idx]
         token_set = token_sets.iloc[idx]
-        item = {
-            "dataset": row.get(dataset_col) if dataset_col else None,
-            "label": row.get(label_col) if label_col else None,
-            "name": row.get(name_col) if name_col else None,
-            "description": row.get(desc_col) if desc_col else None,
-        }
-        if text_keys:
-            item["_text_fields"] = tuple(text_keys)
+        row_dict = {str(key): value for key, value in row.to_dict().items()}
+        item, _metadata, _item_columns = field_cfg.build_item_payload(row_dict)
         gold_labels = sorted(set(token_set) & tax_name_set)
         rows.append(EvaluationRow(item=item, gold_labels=gold_labels))
 
