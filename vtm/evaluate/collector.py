@@ -50,7 +50,6 @@ def collect_predictions(
             jobs=jobs,
             pruning_cfg=pruning_cfg,
             llm_cfg=llm_cfg,
-            http_cfg=http_cfg,
             parallel_cfg=parallel_cfg,
             keywords=keywords,
             graph=graph,

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
-from vtm.config import HttpConfig, LLMConfig
+from vtm.config import LLMConfig
 from openai.types.chat import ChatCompletionMessageParam
 from .embedding import Embedder, collect_item_texts
 from .snap import maybe_snap_to_child
@@ -22,7 +22,6 @@ from .llm_chat import (
 )
 from .prompts import PromptRenderer, create_prompt_renderer
 from .string_similarity import normalized_score, normalized_token_set_ratio
-from .evaluate.parallelism import sock_read_timeout
 
 _PROMPT_DEBUG_SHOWN = False
 
@@ -223,7 +222,6 @@ async def match_items_to_tree(
     embedder: Embedder,
     hnsw_index,
     llm_config: LLMConfig,
-    http_config: HttpConfig | None = None,
     prompt_renderer: PromptRenderer | None = None,
     encode_lock: Optional[threading.Lock] = None,
 ) -> List[Dict[str, Any]]:
@@ -246,20 +244,12 @@ async def match_items_to_tree(
             (messages, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id))
         )
 
-    resolved_timeout: float | None = None
-    if http_config is None:
-        resolved_timeout = max(float(llm_config.n_predict), 64.0)
-    else:
-        resolved_timeout = float(sock_read_timeout(http_config, llm_config))
-
     raw_responses = await llama_completion_many(
         message_payloads,
         llm_config.endpoint,
         model=llm_config.model,
-        timeout=resolved_timeout,
+        timeout=max(float(llm_config.n_predict), 64.0),
         api_key=llm_config.api_key,
-        http_cfg=http_config,
-        llm_cfg=llm_config,
     )
 
     encode_guard = encode_lock or threading.Lock()
