@@ -100,11 +100,19 @@ vtm predict config.example.toml
 # Testing the tree pruning
 vtm prune-check config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
 
+# Optimising pruning parameters with Optuna
+vtm optimize-pruning config.example.toml --trials 80
+
 # uv convenience (no activation required)
 uv run vtm run config.example.toml
 uv run vtm predict config.example.toml
 uv run vtm summarize config.example.toml
 ```
+
+`vtm optimize-pruning` wraps the Optuna-based tuner from `optimize_pruning.py`,
+loading configuration through the shared CLI utilities so logging and seed
+control match the other commands. Use `--help` to review all available
+options, including Optuna storage parameters and trial sampling tweaks.
 
 `check_pruned_tree` respects the `[fields]` logical-to-physical column mapping
 from the configuration file. Override entries such as

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import math
-import os
-import random
 import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -19,13 +16,7 @@ import optuna
 import pandas as pd
 
 from check_pruned_tree import _compute_effective_subset
-from vtm.config import (
-    AppConfig,
-    HNSWConfig,
-    PruningConfig,
-    TaxonomyEmbeddingConfig,
-    load_config,
-)
+from vtm.config import AppConfig, HNSWConfig, PruningConfig, TaxonomyEmbeddingConfig
 from vtm.pipeline.service import prepare_keywords_dataframe
 from vtm.embedding import (
     Embedder,
@@ -38,7 +29,14 @@ from vtm.taxonomy import (
     build_name_maps_from_graph,
     build_taxonomy_graph,
 )
-from vtm.utils import configure_logging, ensure_file_exists, resolve_path
+from vtm.utils import ensure_file_exists, resolve_path
+
+try:
+    from typer import Exit as _TyperExit
+    from typer.main import get_command as _get_typer_command
+except ImportError:  # pragma: no cover - Typer ships with the project
+    _TyperExit = None  # type: ignore[assignment]
+    _get_typer_command = None  # type: ignore[assignment]
 
 
 logger = logging.getLogger(__name__)
@@ -54,13 +52,6 @@ def _q(x: float, nd: int = 3) -> float:
     if x is None or (isinstance(x, float) and (math.isnan(x) or math.isinf(x))):
         return x
     return float(f"{x:.{nd}f}")
-
-
-def _set_global_seed(seed: Optional[int]) -> None:
-    if seed is None:
-        return
-    random.seed(seed)
-    np.random.seed(seed)
 
 
 # ======================================================================================
@@ -139,124 +130,6 @@ class ObjectiveState:
     total_trials: int
     min_possible: Optional[float] = None
     objective_weights: Optional[Dict[str, float]] = None
-
-
-# ======================================================================================
-# CLI
-# ======================================================================================
-
-
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Tune pruning parameters to maximise coverage and pruning.",
-    )
-    parser.add_argument(
-        "config", type=Path, help="Path to the TOML configuration file."
-    )
-    parser.add_argument(
-        "--variables",
-        type=Path,
-        default=None,
-        help="Optional override for the variables CSV file.",
-    )
-    parser.add_argument(
-        "--keywords",
-        type=Path,
-        default=None,
-        help="Optional override for the taxonomy keywords CSV file.",
-    )
-    parser.add_argument(
-        "--trials", type=int, default=60, help="Number of Optuna trials to evaluate."
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Optional random seed (Python/NumPy/Optuna).",
-    )
-    parser.add_argument(
-        "--storage",
-        type=str,
-        default=None,
-        help="Optional Optuna storage URL for persisting studies.",
-    )
-    parser.add_argument(
-        "--study-name",
-        type=str,
-        default=None,
-        help="Optional Optuna study name when using persistent storage.",
-    )
-    parser.add_argument(
-        "--row-limit",
-        type=int,
-        default=None,
-        help="Limit evaluation to the first N eligible rows after shuffling.",
-    )
-    parser.add_argument(
-        "--min-coverage",
-        type=float,
-        default=0.97,
-        help="Minimum allowed_subtree_contains_gold_or_parent_rate to target.",
-    )
-    parser.add_argument(
-        "--min-possible",
-        type=float,
-        default=None,
-        help="Minimum possible_correct_under_allowed_rate; "
-        "defaults to --min-coverage if not provided.",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=None,
-        help="Optional global timeout in seconds for study.optimize.",
-    )
-    parser.add_argument(
-        "--pruner",
-        type=str,
-        default="median",
-        choices=["none", "median", "halving"],
-        help="Optuna pruner to use (default: median).",
-    )
-    parser.add_argument(
-        "--save-trials-csv",
-        type=Path,
-        default=None,
-        help="Optional path to dump all trial results as CSV.",
-    )
-
-    # Categorical exploration
-    parser.add_argument(
-        "--ensure-mode-repeats",
-        type=int,
-        default=2,
-        help="Enqueue this many seed trials for each pruning_mode to guarantee exploration.",
-    )
-    parser.add_argument(
-        "--tpe-startup",
-        type=int,
-        default=None,
-        help="Override TPE n_startup_trials (random warmup). "
-        "Default is max(24, 3 * repeats * num_modes).",
-    )
-
-    # Experimental toggles (default OFF to avoid warnings)
-    parser.add_argument(
-        "--tpe-multivariate",
-        action="store_true",
-        help="Enable TPE multivariate sampling (experimental; may warn).",
-    )
-    parser.add_argument(
-        "--tpe-constant-liar",
-        action="store_true",
-        help="Enable TPE constant-liar (experimental; may warn).",
-    )
-    parser.add_argument(
-        "--suppress-experimental-warnings",
-        action="store_true",
-        help="Suppress Optuna ExperimentalWarning messages.",
-    )
-    return parser.parse_args(argv)
 
 
 # ======================================================================================
@@ -768,21 +641,35 @@ def print_config_with_inline_comments(
 
 
 # ======================================================================================
-# Main
+# Optimization runner
 # ======================================================================================
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
-    configure_logging(level=os.getenv("LOG_LEVEL", logging.INFO))
+def run_optimization(
+    app_config: AppConfig,
+    *,
+    base_path: Path,
+    variables: Optional[Path] = None,
+    keywords: Optional[Path] = None,
+    trials: int = 60,
+    seed: Optional[int] = None,
+    storage: Optional[str] = None,
+    study_name: Optional[str] = None,
+    row_limit: Optional[int] = None,
+    min_coverage: float = 0.97,
+    min_possible: Optional[float] = None,
+    timeout: Optional[int] = None,
+    pruner: str = "median",
+    save_trials_csv: Optional[Path] = None,
+    ensure_mode_repeats: int = 2,
+    tpe_startup: Optional[int] = None,
+    tpe_multivariate: bool = False,
+    tpe_constant_liar: bool = False,
+    suppress_experimental_warnings: bool = False,
+) -> None:
+    """Run the Optuna-based pruning configuration optimisation."""
 
-    args = parse_args(argv)
-    config_path = args.config.resolve()
-    base_path = config_path.parent
-    app_config = load_config(config_path)
-    logger.info("Loaded configuration from %s", config_path)
-
-    # Optionally suppress Optuna experimental warnings
-    if args.suppress_experimental_warnings:
+    if suppress_experimental_warnings:
         try:
             from optuna.exceptions import ExperimentalWarning as _ImportedExperimentalWarning
         except Exception:  # pragma: no cover - optuna too old
@@ -799,14 +686,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
         warnings.filterwarnings("ignore", category=experimental_warning_type)
 
-    _set_global_seed(args.seed)
-
     context = prepare_context(
         app_config,
         base_path,
-        variables=args.variables,
-        keywords=args.keywords,
-        row_limit=args.row_limit,
+        variables=variables,
+        keywords=keywords,
+        row_limit=row_limit,
     )
 
     logger.info(
@@ -824,66 +709,64 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "anchor_hull",
         "dominant_forest",
     ]
-    repeats = max(0, int(args.ensure_mode_repeats))
+    repeats = max(0, int(ensure_mode_repeats))
     default_startup = max(24, 3 * repeats * len(pruning_modes))
-    tpe_startup = (
-        int(args.tpe_startup) if args.tpe_startup is not None else default_startup
+    tpe_startup_trials = (
+        int(tpe_startup) if tpe_startup is not None else default_startup
     )
 
-    # Build TPESampler kwargs based on flags (experimental opts are opt-in)
-    tpe_kwargs = dict(seed=args.seed, n_startup_trials=tpe_startup)
-    if args.tpe_multivariate:
+    tpe_kwargs = dict(seed=seed, n_startup_trials=tpe_startup_trials)
+    if tpe_multivariate:
         tpe_kwargs["multivariate"] = True
-    if args.tpe_constant_liar:
+    if tpe_constant_liar:
         tpe_kwargs["constant_liar"] = True
 
     sampler = optuna.samplers.TPESampler(**tpe_kwargs)
-    pruner = _make_pruner(args.pruner)
+    pruner_impl = _make_pruner(pruner)
 
     study = optuna.create_study(
         direction="maximize",
         sampler=sampler,
-        pruner=pruner,
-        study_name=args.study_name,
-        storage=args.storage,
-        load_if_exists=bool(args.storage and args.study_name),
+        pruner=pruner_impl,
+        study_name=study_name,
+        storage=storage,
+        load_if_exists=bool(storage and study_name),
     )
 
-    # Stratified queued trials for each mode
     if repeats > 0:
         for _ in range(repeats):
-            for m in pruning_modes:
-                study.enqueue_trial({"pruning_mode": m})
+            for mode in pruning_modes:
+                study.enqueue_trial({"pruning_mode": mode})
 
     state = ObjectiveState(
         base_config=app_config,
         context=context,
-        min_coverage=args.min_coverage,
-        total_trials=args.trials,
-        min_possible=args.min_possible,
+        min_coverage=min_coverage,
+        total_trials=trials,
+        min_possible=min_possible,
     )
 
     logger.info(
         "Starting optimization with %d trials (timeout=%s)",
-        args.trials,
-        args.timeout,
+        trials,
+        timeout,
     )
 
     try:
         study.optimize(
             create_objective(state),
-            n_trials=args.trials,
-            timeout=args.timeout,
+            n_trials=trials,
+            timeout=timeout,
             gc_after_trial=True,
         )
     except KeyboardInterrupt:
         logger.warning("Optimization interrupted by user. Proceeding to results...")
 
-    min_possible = (
-        args.min_possible if args.min_possible is not None else args.min_coverage
+    resolved_min_possible = (
+        min_possible if min_possible is not None else min_coverage
     )
     best = select_best_trial(
-        study, min_possible=min_possible, min_coverage=args.min_coverage
+        study, min_possible=resolved_min_possible, min_coverage=min_coverage
     )
     if best is None:
         logger.warning("No successful trials were completed.")
@@ -960,7 +843,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             else:
                 logger.info("%s = %s", key, json.dumps(value))
 
-    if args.save_trials_csv:
+    if save_trials_csv:
         rows = []
         for t in study.trials:
             if t.state != optuna.trial.TrialState.COMPLETE:
@@ -971,11 +854,39 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             rows.append(row)
         if rows:
             df = pd.DataFrame(rows)
-            df.to_csv(args.save_trials_csv, index=False)
-            logger.info("Saved %d completed trials → %s", len(rows), args.save_trials_csv)
+            df.to_csv(save_trials_csv, index=False)
+            logger.info("Saved %d completed trials → %s", len(rows), save_trials_csv)
         else:
-            logger.info("No completed trials to save at %s", args.save_trials_csv)
+            logger.info("No completed trials to save at %s", save_trials_csv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    """Delegate to the unified Typer CLI when executed as a script."""
+
+    if _get_typer_command is None or _TyperExit is None:  # pragma: no cover - safety
+        raise RuntimeError("Typer is required to invoke the unified CLI")
+
+    if argv is None:
+        import sys
+
+        args = list(sys.argv[1:])
+    else:
+        args = list(argv)
+
+    from vtm.cli import app as cli_app
+
+    command = _get_typer_command(cli_app)
+    try:
+        command.main(
+            args=["optimize-pruning", *args],
+            prog_name="vtm",
+            standalone_mode=False,
+        )
+    except _TyperExit as exc:  # pragma: no cover - propagate exit code
+        raise SystemExit(exc.exit_code) from exc
 
 
 if __name__ == "__main__":
     main()
+
+
