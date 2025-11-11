@@ -772,31 +772,17 @@ def print_config_with_inline_comments(
 # ======================================================================================
 
 
-def run_optimization(
-    app_config: AppConfig,
-    *,
-    base_path: Path,
-    variables: Optional[Path],
-    keywords: Optional[Path],
-    trials: int,
-    seed: Optional[int],
-    storage: Optional[str],
-    study_name: Optional[str],
-    row_limit: Optional[int],
-    min_coverage: float,
-    min_possible: Optional[float],
-    timeout: Optional[int],
-    pruner_name: str,
-    save_trials_csv: Optional[Path],
-    ensure_mode_repeats: int,
-    tpe_startup: Optional[int],
-    tpe_multivariate: bool,
-    tpe_constant_liar: bool,
-    suppress_experimental_warnings: bool,
-) -> None:
-    """Run the pruning parameter optimization workflow."""
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    configure_logging(level=os.getenv("LOG_LEVEL", logging.INFO))
 
-    if suppress_experimental_warnings:
+    args = parse_args(argv)
+    config_path = args.config.resolve()
+    base_path = config_path.parent
+    app_config = load_config(config_path)
+    logger.info("Loaded configuration from %s", config_path)
+
+    # Optionally suppress Optuna experimental warnings
+    if args.suppress_experimental_warnings:
         try:
             from optuna.exceptions import ExperimentalWarning as _ImportedExperimentalWarning
         except Exception:  # pragma: no cover - optuna too old
@@ -813,12 +799,14 @@ def run_optimization(
 
         warnings.filterwarnings("ignore", category=experimental_warning_type)
 
+    _set_global_seed(args.seed)
+
     context = prepare_context(
         app_config,
         base_path,
-        variables=variables,
-        keywords=keywords,
-        row_limit=row_limit,
+        variables=args.variables,
+        keywords=args.keywords,
+        row_limit=args.row_limit,
     )
 
     logger.info(
@@ -836,29 +824,29 @@ def run_optimization(
         "anchor_hull",
         "dominant_forest",
     ]
-    repeats = max(0, int(ensure_mode_repeats))
+    repeats = max(0, int(args.ensure_mode_repeats))
     default_startup = max(24, 3 * repeats * len(pruning_modes))
-    effective_tpe_startup = (
-        int(tpe_startup) if tpe_startup is not None else default_startup
+    tpe_startup = (
+        int(args.tpe_startup) if args.tpe_startup is not None else default_startup
     )
 
     # Build TPESampler kwargs based on flags (experimental opts are opt-in)
-    tpe_kwargs = dict(seed=seed, n_startup_trials=effective_tpe_startup)
-    if tpe_multivariate:
+    tpe_kwargs = dict(seed=args.seed, n_startup_trials=tpe_startup)
+    if args.tpe_multivariate:
         tpe_kwargs["multivariate"] = True
-    if tpe_constant_liar:
+    if args.tpe_constant_liar:
         tpe_kwargs["constant_liar"] = True
 
     sampler = optuna.samplers.TPESampler(**tpe_kwargs)
-    pruner = _make_pruner(pruner_name)
+    pruner = _make_pruner(args.pruner)
 
     study = optuna.create_study(
         direction="maximize",
         sampler=sampler,
         pruner=pruner,
-        study_name=study_name,
-        storage=storage,
-        load_if_exists=bool(storage and study_name),
+        study_name=args.study_name,
+        storage=args.storage,
+        load_if_exists=bool(args.storage and args.study_name),
     )
 
     # Stratified queued trials for each mode
@@ -870,32 +858,32 @@ def run_optimization(
     state = ObjectiveState(
         base_config=app_config,
         context=context,
-        min_coverage=min_coverage,
-        total_trials=trials,
-        min_possible=min_possible,
+        min_coverage=args.min_coverage,
+        total_trials=args.trials,
+        min_possible=args.min_possible,
     )
 
     logger.info(
         "Starting optimization with %d trials (timeout=%s)",
-        trials,
-        timeout,
+        args.trials,
+        args.timeout,
     )
 
     try:
         study.optimize(
             create_objective(state),
-            n_trials=trials,
-            timeout=timeout,
+            n_trials=args.trials,
+            timeout=args.timeout,
             gc_after_trial=True,
         )
     except KeyboardInterrupt:
         logger.warning("Optimization interrupted by user. Proceeding to results...")
 
-    min_possible_threshold = (
-        min_possible if min_possible is not None else min_coverage
+    min_possible = (
+        args.min_possible if args.min_possible is not None else args.min_coverage
     )
     best = select_best_trial(
-        study, min_possible=min_possible_threshold, min_coverage=min_coverage
+        study, min_possible=min_possible, min_coverage=args.min_coverage
     )
     if best is None:
         logger.warning("No successful trials were completed.")
@@ -972,7 +960,7 @@ def run_optimization(
             else:
                 logger.info("%s = %s", key, json.dumps(value))
 
-    if save_trials_csv:
+    if args.save_trials_csv:
         rows = []
         for t in study.trials:
             if t.state != optuna.trial.TrialState.COMPLETE:
@@ -983,44 +971,10 @@ def run_optimization(
             rows.append(row)
         if rows:
             df = pd.DataFrame(rows)
-            df.to_csv(save_trials_csv, index=False)
-            logger.info("Saved %d completed trials → %s", len(rows), save_trials_csv)
+            df.to_csv(args.save_trials_csv, index=False)
+            logger.info("Saved %d completed trials → %s", len(rows), args.save_trials_csv)
         else:
-            logger.info("No completed trials to save at %s", save_trials_csv)
-
-
-def main(argv: Optional[Sequence[str]] = None) -> None:
-    configure_logging(level=os.getenv("LOG_LEVEL", logging.INFO))
-
-    args = parse_args(argv)
-    config_path = args.config.resolve()
-    base_path = config_path.parent
-    app_config = load_config(config_path)
-    logger.info("Loaded configuration from %s", config_path)
-
-    _set_global_seed(args.seed)
-
-    run_optimization(
-        app_config,
-        base_path=base_path,
-        variables=args.variables,
-        keywords=args.keywords,
-        trials=args.trials,
-        seed=args.seed,
-        storage=args.storage,
-        study_name=args.study_name,
-        row_limit=args.row_limit,
-        min_coverage=args.min_coverage,
-        min_possible=args.min_possible,
-        timeout=args.timeout,
-        pruner_name=args.pruner,
-        save_trials_csv=args.save_trials_csv,
-        ensure_mode_repeats=args.ensure_mode_repeats,
-        tpe_startup=args.tpe_startup,
-        tpe_multivariate=args.tpe_multivariate,
-        tpe_constant_liar=args.tpe_constant_liar,
-        suppress_experimental_warnings=args.suppress_experimental_warnings,
-    )
+            logger.info("No completed trials to save at %s", args.save_trials_csv)
 
 
 if __name__ == "__main__":

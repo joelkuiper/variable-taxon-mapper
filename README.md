@@ -100,9 +100,6 @@ vtm predict config.example.toml
 # Testing the tree pruning
 vtm prune-check config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
 
-# Hyperparameter search for pruning
-vtm optimize-pruning config.example.toml --trials 100
-
 # uv convenience (no activation required)
 uv run vtm run config.example.toml
 uv run vtm predict config.example.toml
