@@ -14,7 +14,21 @@ from .common import ConfigArgument, load_app_config
 
 
 @app.command("evaluate")
-def run_command(config: Path = ConfigArgument) -> None:
+def run_command(
+    config: Path = ConfigArgument,
+    summary_md: Path | None = typer.Option(
+        None,
+        "--summary-md",
+        help="Write the evaluation summary to the given Markdown file.",
+        metavar="PATH",
+    ),
+    summary_text: Path | None = typer.Option(
+        None,
+        "--summary-text",
+        help="Also persist a plain-text summary to the given path.",
+        metavar="PATH",
+    ),
+) -> None:
     """Run the full variable taxonomy mapping pipeline with evaluation."""
 
     config_path = config.resolve()
@@ -65,4 +79,19 @@ def run_command(config: Path = ConfigArgument) -> None:
         json.dump(metrics, handle, indent=2, sort_keys=True)
     logger.info("Metrics saved to %s", metrics_path)
 
-    report_results(df, metrics)
+    summary_md = summary_md.resolve() if summary_md else None
+    summary_text = summary_text.resolve() if summary_text else None
+
+    if summary_text is not None and summary_md is None:
+        logger.error("--summary-text requires --summary-md to also be set")
+        raise typer.Exit(code=1)
+
+    output_path: Path | tuple[Path, Path] | None
+    if summary_md and summary_text:
+        output_path = (summary_md, summary_text)
+    elif summary_md:
+        output_path = summary_md
+    else:
+        output_path = None
+
+    report_results(df, metrics, output_path=output_path)
