@@ -76,30 +76,6 @@ class TaxonomyFieldMappingConfig:
     order: Optional[str] = "order"
     definition: Optional[str] = "definition_summary"
     label: Optional[str] = "label"
-    identifier_aliases: tuple[str, ...] | None = None
-
-    def __post_init__(self) -> None:
-        if self.identifier_aliases is None:
-            return
-
-        aliases: list[str] = []
-        for alias in self.identifier_aliases:
-            text = str(alias).strip()
-            if text:
-                aliases.append(text)
-
-        if not aliases:
-            self.identifier_aliases = None
-            return
-
-        seen: set[str] = set()
-        normalized: list[str] = []
-        for alias in aliases:
-            if alias not in seen:
-                normalized.append(alias)
-                seen.add(alias)
-
-        self.identifier_aliases = tuple(normalized)
 
     def resolve_column(self, key: str) -> Optional[str]:
         value = getattr(self, key, None)
@@ -129,11 +105,6 @@ class TaxonomyFieldMappingConfig:
         if not value:
             raise KeyError("Taxonomy field 'parents' is not configured")
         return value
-
-    def identifier_alias_columns(self) -> tuple[str, ...]:
-        if self.identifier_aliases is None:
-            return tuple()
-        return self.identifier_aliases
 
 
 @dataclass

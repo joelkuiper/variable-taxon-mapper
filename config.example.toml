@@ -25,7 +25,6 @@ keywords_csv = "data/Keywords_summarized_new.csv"
 # definition = "definition"
 definition = "definition_summary" # use this when working with summarized definitions
 # label = "label"
-# identifier_aliases = ["synonym_id", "legacy_id"] # optional: additional columns to map identifiers
 
 [embedder]
 model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
