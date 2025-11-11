@@ -11,11 +11,30 @@ from vtm.utils import ensure_file_exists, load_table, set_global_seed
 
 from .app import app, logger
 from .common import ConfigArgument, load_app_config
+from ._output import (
+    OutputFormat,
+    build_sidecar_path,
+    normalise_output_path,
+    write_output,
+)
 from ._metadata import build_run_metadata
 
 @app.command("evaluate")
 def run_command(
     config: Path = ConfigArgument,
+    output_format: OutputFormat = typer.Option(
+        "csv",
+        "--output-format",
+        "-f",
+        help="File format for the evaluation results (csv, parquet, feather, json).",
+        case_sensitive=False,
+    ),
+    compression: str | None = typer.Option(
+        None,
+        "--compression",
+        help="Optional compression codec (forwarded to the pandas writer).",
+        metavar="NAME",
+    ),
     summary_md: Path | None = typer.Option(
         None,
         "--summary-md",
@@ -70,9 +89,10 @@ def run_command(
         base_path=base_path,
         variables_path=variables_path,
     )
+    results_path = normalise_output_path(results_path, output_format, compression)
     results_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(results_path, index=False)
-    logger.info("Results saved to %s", results_path)
+    write_output(df, results_path, output_format, compression=compression)
+    logger.info("Results saved to %s (%s)", results_path, output_format.upper())
 
     run_metadata = build_run_metadata(
         config=config_obj,
@@ -83,14 +103,14 @@ def run_command(
     )
 
     # Metrics + metadata
-    metrics_path = results_path.with_name(f"{results_path.stem}_metrics.json")
+    metrics_path = build_sidecar_path(results_path, "metrics")
     metrics_payload = dict(metrics)
     metrics_payload["_run_metadata"] = run_metadata
     with metrics_path.open("w", encoding="utf-8") as handle:
         json.dump(metrics_payload, handle, indent=2, sort_keys=True)
     logger.info("Metrics saved to %s", metrics_path)
 
-    manifest_path = results_path.with_name(f"{results_path.stem}_manifest.json")
+    manifest_path = build_sidecar_path(results_path, "manifest")
     manifest = {
         "_run_metadata": run_metadata,
         "column_schema": [

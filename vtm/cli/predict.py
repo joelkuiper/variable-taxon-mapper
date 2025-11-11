@@ -12,6 +12,12 @@ from vtm.utils import ensure_file_exists, load_table, resolve_path, set_global_s
 
 from .app import app, logger
 from .common import ConfigArgument, RowLimitOption, load_app_config
+from ._output import (
+    OutputFormat,
+    build_sidecar_path,
+    normalise_output_path,
+    write_output,
+)
 from ._metadata import build_run_metadata
 
 
@@ -58,16 +64,29 @@ def predict_command(
         "--output",
         "-o",
         help=(
-            "Optional output CSV path. Defaults to evaluation.results_csv in the configuration. "
-            "A JSON manifest is stored alongside the CSV."
+            "Optional output path. Defaults to evaluation.results_csv in the configuration. "
+            "A JSON manifest is stored alongside the main output."
         ),
         path_type=Path,
+    ),
+    output_format: OutputFormat = typer.Option(
+        "csv",
+        "--output-format",
+        "-f",
+        help="File format for the generated predictions (csv, parquet, feather, json).",
+        case_sensitive=False,
+    ),
+    compression: Optional[str] = typer.Option(
+        None,
+        "--compression",
+        help="Optional compression codec forwarded to the pandas writer.",
+        metavar="NAME",
     ),
     row_limit: Optional[int] = RowLimitOption,
 ) -> None:
     """Generate predictions for a variables-like table without evaluation.
 
-    In addition to the CSV, the command now records a JSON run manifest that
+    In addition to the primary output file, the command records a JSON run manifest that
     captures configuration, git metadata, and the output schema for FAIR reuse.
     """
 
@@ -119,11 +138,14 @@ def predict_command(
             variables_path=variables_path,
         )
 
+    output_path = normalise_output_path(output_path, output_format, compression)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(output_path, index=False)
-    logger.info("Saved %d predictions to %s", len(df), output_path)
+    write_output(df, output_path, output_format, compression=compression)
+    logger.info(
+        "Saved %d predictions to %s (%s)", len(df), output_path, output_format.upper()
+    )
 
-    manifest_path = output_path.with_name(f"{output_path.stem}_manifest.json")
+    manifest_path = build_sidecar_path(output_path, "manifest")
     manifest = {
         "_run_metadata": build_run_metadata(
             config=config_obj,

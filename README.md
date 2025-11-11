@@ -20,7 +20,7 @@ This is a tool designed to map free-text variable metadata (from datasets) to a 
 
 -   **LLM Matching**: The pruned taxonomy subgraph is then turned into a nested Markdown list (indentation representing hierarchy) and included in a prompt ([example prompt](./doc/example_prompt.md)) to a local LLM. The prompt essentially asks the LLM (running via an OpenAI-compatible server such as `llama.cpp`) to pick the most appropriate taxonomy label for the variable, given its name/description and the pruned list of candidates. The LLM response is constrained by a JSON schema (using the `response_format` parameter) so that it returns a JSON object with a field for the chosen concept label. In practice, it sends a request to the server's `POST /v1/chat/completions` endpoint with the prompt messages, and the LLM responds with a proposed label.
 
--   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output CSV of results and prints them to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). A companion JSON manifest captures the configuration, git commit (when available), schema, and timestamp. It also prints a summary of evaluation metrics (see [example output](./doc/results/20251103_results.md)). Pass `--summary-md <path>` to `vtm evaluate` to persist that Markdown report (optionally pair it with `--summary-text` for a plain-text dump that mirrors the console output).
+-   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output table (CSV by default) and prints the results to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). A companion JSON manifest captures the configuration, git commit (when available), schema, and timestamp. It also prints a summary of evaluation metrics (see [example output](./doc/results/20251103_results.md)). Pass `--summary-md <path>` to `vtm evaluate` to persist that Markdown report (optionally pair it with `--summary-text` for a plain-text dump that mirrors the console output).
 
 In summary, the tool's idea is to use semantic embedding search to narrow the taxonomy and then leverage an LLM's contextual understanding to pick the best-fitting category. All operational parameters (model names, number of neighbors, pruning depth, LLM endpoint, etc.) are defined in a config TOML file (see [config.example.toml](./config.example.toml)) for flexibility, making it easy to tweak the pipeline without changing code.
 
@@ -102,11 +102,11 @@ llama-server -hf  unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
 ``` shell
 # Configuration and parameters are set via TOML
 
-# Run evaluation
+# Run evaluation (CSV by default)
 vtm evaluate config.example.toml
 
 # Predictions
-vtm predict config.example.toml
+vtm predict config.example.toml --output data/predictions --output-format parquet
 
 # Testing the tree pruning
 vtm prune-check config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
@@ -134,7 +134,7 @@ console-friendly text (DataFrame preview plus status messages) written to disk.
 Both paths are resolved relative to your current working directory, and parent
 directories are created automatically.
 
-Prediction runs emit both the CSV and a `<output>.manifest.json` file that
+Prediction runs emit the chosen table format and a `<output>.manifest.json` file that
 documents the configuration path, git revision (when available), output schema,
 and generation timestamp.
 
