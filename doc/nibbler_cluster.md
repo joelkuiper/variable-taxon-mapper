@@ -101,6 +101,7 @@ Verify that the venv works:
 ```bash
 source .venv/bin/activate
 python --version # should be Python ≥3.11
+vtm predict --help # Should print the help for predict
 ```
 
 ---
