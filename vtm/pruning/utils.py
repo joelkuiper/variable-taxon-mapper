@@ -8,6 +8,7 @@ from typing import (
     List,
     Mapping,
     Optional,
+    Protocol,
     Sequence,
     Set,
     Tuple,
@@ -33,6 +34,128 @@ from ..string_similarity import (
     normalized_score,
     normalized_token_set_ratio,
 )
+
+
+class LexicalExtractor(Protocol):
+    """Protocol describing the subset of rapidfuzz extractors we rely on."""
+
+    def extract(
+        self, query: str, *, limit: int, score_cutoff: float
+    ) -> Sequence[Tuple[str, float, int]]:
+        ...
+
+
+class _CdistExtractor:
+    """Lightweight adapter around ``process.cdist`` for cached lookups."""
+
+    def __init__(
+        self,
+        normalized_choices: Sequence[str],
+        preprocessed_choices,
+        *,
+        scorer: Callable[[str, str], float],
+    ) -> None:
+        self._normalized_choices = list(normalized_choices)
+        self._preprocessed = preprocessed_choices
+        self._scorer = scorer
+
+    def extract(
+        self, query: str, *, limit: int, score_cutoff: float
+    ) -> Sequence[Tuple[str, float, int]]:
+        if not self._normalized_choices:
+            return []
+
+        if limit <= 0:
+            return []
+
+        try:
+            scores = process.cdist(
+                [query],
+                self._preprocessed,
+                scorer=self._scorer,
+                score_cutoff=score_cutoff,
+            )
+        except TypeError:
+            # Older versions of rapidfuzz do not accept score_cutoff when using a
+            # preprocessed candidate matrix. Compute the full matrix and apply the
+            # cutoff manually below.
+            scores = process.cdist(
+                [query], self._preprocessed, scorer=self._scorer
+            )
+
+        if isinstance(scores, np.ndarray):
+            if scores.ndim == 2:
+                scores = scores[0]
+            elif scores.ndim == 1:
+                scores = scores
+            else:  # pragma: no cover - unexpected
+                scores = scores.reshape(-1)
+            score_array = scores.astype(np.float64, copy=False)
+        else:  # pragma: no cover - rapidfuzz contract is ndarray
+            score_array = np.asarray(scores, dtype=np.float64)
+
+        candidate_count = score_array.size
+        if candidate_count == 0:
+            return []
+
+        top_k = min(limit, candidate_count)
+        if top_k <= 0:
+            return []
+
+        # Identify the top ``limit`` candidates and filter by the requested cutoff.
+        kth = top_k - 1
+        top_indices = np.argpartition(-score_array, kth)[:top_k]
+        top_indices = top_indices[np.argsort(-score_array[top_indices])]
+
+        matches: List[Tuple[str, float, int]] = []
+        for idx in top_indices:
+            score = float(score_array[idx])
+            if score < score_cutoff:
+                continue
+            matches.append(
+                (self._normalized_choices[int(idx)], score, int(idx))
+            )
+        return matches
+
+
+def build_lexical_extractor(
+    normalized_choices: Sequence[str],
+    *,
+    scorer: Callable[[str, str], float] = fuzz.token_sort_ratio,
+) -> Optional[LexicalExtractor]:
+    """Create a reusable lexical extractor when supported by rapidfuzz."""
+
+    if not normalized_choices:
+        return None
+
+    extractor_cls = getattr(process, "Extractor", None)
+    if extractor_cls is not None:
+        try:
+            return extractor_cls(
+                normalized_choices,
+                processor=None,
+                scorer=scorer,
+            )
+        except TypeError:
+            # Fallback for older rapidfuzz releases that expect positional
+            # arguments only.
+            return extractor_cls(normalized_choices)
+
+    cdist_preprocessor = getattr(process, "cdist_preprocessor", None)
+    if cdist_preprocessor is None:
+        cdist_preprocessor = getattr(process, "cdist_preprocess", None)
+
+    if cdist_preprocessor is not None:
+        try:
+            preprocessed = cdist_preprocessor(
+                normalized_choices,
+                processor=None,
+            )
+        except TypeError:
+            preprocessed = cdist_preprocessor(normalized_choices)
+        return _CdistExtractor(normalized_choices, preprocessed, scorer=scorer)
+
+    return None
 
 
 def taxonomy_similarity_scores(
@@ -78,6 +201,7 @@ def lexical_anchor_indices(
     tax_names_normalized: Optional[Sequence[str]] = None,
     existing: Sequence[int],
     max_anchors: int = 3,
+    extractor: Optional[LexicalExtractor] = None,
 ) -> List[int]:
     """Return indices of lexically similar taxonomy names using token sorting."""
 
@@ -92,28 +216,43 @@ def lexical_anchor_indices(
     if tax_names_normalized is not None and len(tax_names_normalized) != len(tax_names):
         raise ValueError("tax_names_normalized must align with tax_names")
 
-    normalized_tax_names = (
-        list(tax_names_normalized)
-        if tax_names_normalized is not None
-        else [normalize_similarity_text(name) for name in tax_names]
-    )
-
     scored: Dict[int, float] = {}
-    if not normalized_tax_names:
+    candidate_count = len(tax_names)
+    if candidate_count == 0:
         return []
 
-    limit = min(len(normalized_tax_names), max(max_anchors * 5, max_anchors))
+    if extractor is None:
+        normalized_tax_names = (
+            list(tax_names_normalized)
+            if tax_names_normalized is not None
+            else [normalize_similarity_text(name) for name in tax_names]
+        )
+        if not normalized_tax_names:
+            return []
+        limit = min(len(normalized_tax_names), max(max_anchors * 5, max_anchors))
+
+        def fetch_matches(text: str):
+            return process.extract(
+                text,
+                normalized_tax_names,
+                processor=None,
+                scorer=fuzz.token_sort_ratio,
+                limit=limit,
+                score_cutoff=0.0,
+            )
+
+    else:
+        limit = min(candidate_count, max(max_anchors * 5, max_anchors))
+        extractor_local = extractor
+        assert extractor_local is not None
+
+        def fetch_matches(text: str):
+            return extractor_local.extract(text, limit=limit, score_cutoff=0.0)
+
     for text in normalized_item_texts:
         if not text:
             continue
-        matches = process.extract(
-            text,
-            normalized_tax_names,
-            processor=None,
-            scorer=fuzz.token_sort_ratio,
-            limit=limit,
-            score_cutoff=0.0,
-        )
+        matches = fetch_matches(text)
         for _, score, idx in matches:
             if idx in existing_set:
                 continue

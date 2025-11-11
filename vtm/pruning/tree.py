@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import networkx as nx
 import numpy as np
 import pandas as pd
+from rapidfuzz import fuzz, process
 
 from vtm.config import PruningConfig
 from ..embedding import Embedder, collect_item_texts, encode_item_texts
@@ -13,6 +14,7 @@ from ..taxonomy import make_label_display, normalize_taxonomy_label
 from .errors import PrunedTreeComputationError
 from .utils import (
     anchor_hull_subtree,
+    build_lexical_extractor,
     community_pagerank_subtree,
     dominant_anchor_forest,
     get_undirected_taxonomy,
@@ -101,6 +103,9 @@ class TreePruner:
         ]
         self._tax_names_embedding_texts = embedding_texts
         self._tax_names_normalized = [text.lower() for text in embedding_texts]
+        self._lexical_extractor = build_lexical_extractor(
+            self._tax_names_normalized, scorer=fuzz.token_sort_ratio
+        )
         self._tax_embs_unit = tax_embs_unit
         self._hnsw_index = hnsw_index
         self._config = pruning_cfg or PruningConfig()
@@ -471,6 +476,7 @@ class TreePruner:
             tax_names_normalized=self._tax_names_normalized,
             existing=anchor_idxs,
             max_anchors=context.lexical_anchor_limit,
+            extractor=self._lexical_extractor,
         )
 
         combined: List[int] = []
