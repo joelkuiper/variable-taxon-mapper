@@ -296,12 +296,8 @@ def build_taxonomy_config(
     # Quantized to 3 decimals
     gamma = trial.suggest_float("gamma", 0.05, 0.90, step=0.001)
     summary_weight = trial.suggest_float("summary_weight", 0.05, 0.90, step=0.001)
-    child_weight = (
-        base_cfg.child_aggregation_weight
-        if base_cfg.child_aggregation_weight != 0.0
-        else 0.1
-    )
-    child_depth = base_cfg.child_aggregation_depth
+    child_weight = trial.suggest_float("child_aggregation_weight", 0.05, 0.90, step=0.001)
+    child_depth = trial.suggest_categorical("child_aggregation_depth", [None, 1, 2, 3])
     return replace(
         base_cfg,
         gamma=gamma,
@@ -1016,5 +1012,3 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
-
-
