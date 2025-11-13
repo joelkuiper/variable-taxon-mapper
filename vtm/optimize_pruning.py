@@ -296,7 +296,19 @@ def build_taxonomy_config(
     # Quantized to 3 decimals
     gamma = trial.suggest_float("gamma", 0.05, 0.90, step=0.001)
     summary_weight = trial.suggest_float("summary_weight", 0.05, 0.90, step=0.001)
-    return replace(base_cfg, gamma=gamma, summary_weight=summary_weight)
+    child_weight = (
+        base_cfg.child_aggregation_weight
+        if base_cfg.child_aggregation_weight != 0.0
+        else 0.1
+    )
+    child_depth = base_cfg.child_aggregation_depth
+    return replace(
+        base_cfg,
+        gamma=gamma,
+        summary_weight=summary_weight,
+        child_aggregation_weight=child_weight,
+        child_aggregation_depth=child_depth,
+    )
 
 
 def resolve_taxonomy_artifacts(
@@ -514,6 +526,19 @@ def create_objective(state: ObjectiveState):
             _q(getattr(taxonomy_cfg, "summary_weight", float("nan")), 3),
         )
         trial.set_user_attr(
+            "child_aggregation_weight",
+            _q(
+                getattr(
+                    taxonomy_cfg, "child_aggregation_weight", float("nan")
+                ),
+                3,
+            ),
+        )
+        trial.set_user_attr(
+            "child_aggregation_depth",
+            getattr(taxonomy_cfg, "child_aggregation_depth", None),
+        )
+        trial.set_user_attr(
             "pagerank_damping",
             _q(getattr(pruning_cfg, "pagerank_damping", float("nan")), 2),
         )
@@ -714,6 +739,12 @@ def _derive_best_guess_params(app_config: AppConfig) -> Dict[str, Any]:
         best_guess["gamma"] = float(taxonomy.gamma)
     if 0.05 <= taxonomy.summary_weight <= 0.90:
         best_guess["summary_weight"] = float(taxonomy.summary_weight)
+    if taxonomy.child_aggregation_weight > 0.0:
+        best_guess["child_aggregation_weight"] = float(
+            taxonomy.child_aggregation_weight
+        )
+    if taxonomy.child_aggregation_depth is not None:
+        best_guess["child_aggregation_depth"] = int(taxonomy.child_aggregation_depth)
 
     return best_guess
 
@@ -912,9 +943,17 @@ def run_optimization(
         inline_placeholders_if_missing=PLACEHOLDERS_IF_MISSING,
     )
 
-    taxonomy_updates = {
-        k: v for k, v in best.params.items() if k in {"gamma", "summary_weight"}
-    }
+    taxonomy_updates: Dict[str, Any] = {}
+    for key in {
+        "gamma",
+        "summary_weight",
+        "child_aggregation_weight",
+        "child_aggregation_depth",
+    }:
+        if key in best.params:
+            taxonomy_updates[key] = best.params[key]
+        elif key in best.user_attrs:
+            taxonomy_updates[key] = best.user_attrs[key]
     if taxonomy_updates:
         best_taxonomy_cfg = replace(app_config.taxonomy_embeddings, **taxonomy_updates)
         logger.info("\nSuggested [taxonomy_embeddings] configuration:")
@@ -922,6 +961,8 @@ def run_optimization(
         taxonomy_inline = {
             "gamma": "blend between name embedding and structural context (higher → more structure)",
             "summary_weight": "weight for summary/gloss text when available",
+            "child_aggregation_weight": "pull child signal back into ancestors; set to 0.0 to disable",
+            "child_aggregation_depth": "limit how many ancestor hops receive child signal (unset = to the root)",
         }
         for key, value in items.items():
             comment = taxonomy_inline.get(key)
