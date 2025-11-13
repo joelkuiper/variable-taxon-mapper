@@ -231,7 +231,7 @@ Once inside the node:
 * By default executes (after `uv sync`, which installs the local `vtm` console script):
 
   ```bash
-  vtm run config.example.toml
+  vtm evaluate config.example.toml
   ```
 
 * You can override the final command by passing arguments, for example:
