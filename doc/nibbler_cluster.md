@@ -42,11 +42,16 @@ All paths below use the `$WORKDIR`.
   mkdir -p "$WORKDIR/Repositories"
   ```
 
-* Clone this repository:
+* Clone this repository (or checkout a tagged release if you prefer a fixed version):
 
   ```bash
   git clone https://github.com/joelkuiper/variable-taxon-mapper.git \
       "$WORKDIR/Repositories/variable-taxon-mapper"
+  cd "$WORKDIR/Repositories/variable-taxon-mapper"
+  git fetch --tags
+  # optionally pin to a release
+  # git checkout v0.1.0
+  git rev-parse HEAD | tee "$WORKDIR/Repositories/variable-taxon-mapper/.checkout"
   ```
 
 * Copy your local `Variables.csv` and `Keywords.csv` data into `$WORKDIR/Repositories/variable-taxon-mapper/data/` using `scp` or `rsync`.
@@ -108,13 +113,20 @@ vtm predict --help # Should print the help for predict
 
 ## Compiling `llama.cpp` (with CUDA)
 
-Although pre-built binaries exist, the safest option on Nibbler is to **compile from source**.
+Although pre-built binaries exist, the safest option on Nibbler is to **compile from source** on a compute node.
 
 ```bash
 cd "$WORKDIR/Repositories"
-git clone --depth 1 https://github.com/ggml-org/llama.cpp
+git clone https://github.com/ggml-org/llama.cpp
 cd llama.cpp
+git fetch --tags
+git checkout b7051
+git rev-parse HEAD | tee "$WORKDIR/Repositories/llama.cpp/.checkout"
 
+srun --export=WORKDIR --cpus-per-task=32 --mem=32G --nodes=1 --time=00:30:00 \
+  --qos=interactive --pty bash -i
+
+# once inside the node:
 module load GCCcore/11.3.0
 module load CMake/3.23.1-GCCcore-11.3.0
 module load CUDA/12.2.0
@@ -124,26 +136,25 @@ export LD_LIBRARY_PATH="$CUDA_HOME/lib64/stubs:$LD_LIBRARY_PATH"
 export LIBRARY_PATH="$CUDA_HOME/lib64/stubs:$LIBRARY_PATH"
 export LDFLAGS="${LDFLAGS} -L$CUDA_HOME/lib64/stubs -Wl,-rpath,$CUDA_HOME/lib64"
 
+cd "$WORKDIR/Repositories/llama.cpp"
+# optionally stage the build on the node-local NVMe for speed
+# mkdir -p /local/$USER/llama-build
+# rsync -a --delete ./ /local/$USER/llama-build/
+# cd /local/$USER/llama-build
 cmake -B build \
   -DGGML_CUDA=ON \
   -DCMAKE_CUDA_ARCHITECTURES="86;89" \
   -DLLAMA_CURL=OFF \
   -DCUDAToolkit_ROOT="$CUDA_HOME"
 
-cmake --build build -j 2 --config Release
-```
-
-This compilation can take several hours.
-Run it inside a `screen` or `tmux` session so it survives disconnections.
-Use `-j 2` to avoid hogging CPUs on the shared UI login machine.
-Alternatively, compile on a compute node (faster, safer):
-
-```bash
-srun --cpus-per-task=32 —mem=32gb --nodes=1 --time=00:30:00 --qos=interactive --pty bash -i
-
-# once inside the node:
 cmake --build build -j 32 --config Release
+# if you used /local, copy the artefacts back afterwards
+# rsync -a --delete /local/$USER/llama-build/ "$WORKDIR/Repositories/llama.cpp/"
 ```
+
+> The `--export=WORKDIR` flag keeps your workspace path while avoiding leaking the
+> full login-shell environment into compute-node jobs. Define any additional variables
+> you need inside the allocated shell.
 
 ---
 
@@ -165,7 +176,8 @@ wget https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwe
 Reserve an interactive GPU node (example: 2×A40 GPUs, 16 CPUs, 32 GB RAM for 4 h):
 
 ```bash
-srun --cpus-per-task=4 —mem=32gb --nodes=1 --gres=gpu:a40:2 --time=04:00:00 --qos=interactive --pty bash -i
+srun --export=WORKDIR --cpus-per-task=4 --mem=32gb --nodes=1 --gres=gpu:a40:2 \
+  --time=04:00:00 --qos=interactive --pty bash -i
 ```
 
 Once inside the node:
@@ -177,6 +189,10 @@ Once inside the node:
    cd "$WORKDIR/Repositories/variable-taxon-mapper"
    LB_PORT=8080 ./run_pipeline_lb.sh
    ```
+
+> Remember to export only the variables that the workflow needs (for example `WORKDIR`,
+> `MODEL`, or `GPU_IDS`). Avoid sourcing your full login-shell profile inside the job to
+> keep the environment reproducible.
 
 ---
 
