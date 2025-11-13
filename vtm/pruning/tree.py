@@ -8,8 +8,13 @@ import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz, process
 
-from vtm.config import PruningConfig
-from ..embedding import Embedder, collect_item_texts, encode_item_texts
+from vtm.config import FieldMappingConfig, PruningConfig
+from ..embedding import (
+    Embedder,
+    ItemTextChunk,
+    collect_item_texts,
+    encode_item_texts,
+)
 from ..taxonomy import make_label_display, normalize_taxonomy_label
 from .errors import PrunedTreeComputationError
 from .utils import (
@@ -83,6 +88,7 @@ class TreePruner:
         tax_embs_unit: np.ndarray,
         hnsw_index,
         pruning_cfg: Optional[PruningConfig] = None,
+        field_mapping: Optional[FieldMappingConfig] = None,
         name_col: str = "name",
         order_col: str = "order",
         gloss_map: Optional[Dict[str, str]] = None,
@@ -109,6 +115,7 @@ class TreePruner:
         self._tax_embs_unit = tax_embs_unit
         self._hnsw_index = hnsw_index
         self._config = pruning_cfg or PruningConfig()
+        self._field_mapping = field_mapping
         self._name_col = name_col
         self._order_col = order_col
         self._gloss_map = dict(gloss_map or {})
@@ -241,7 +248,7 @@ class TreePruner:
         item: Dict[str, Optional[str]],
     ) -> Tuple[Sequence[str], np.ndarray, Dict[str, float]]:
         _ = context  # context currently unused but kept for interface parity
-        item_texts = collect_item_texts(item)
+        item_texts = collect_item_texts(item, field_mapping=self._field_mapping)
 
         embedder = self._embedder
         if embedder is None:
@@ -253,6 +260,7 @@ class TreePruner:
         item_embs = encode_item_texts(
             item,
             embedder,
+            field_mapping=self._field_mapping,
             texts=item_texts,
         )
 
@@ -261,8 +269,8 @@ class TreePruner:
         return item_texts, item_embs, similarity_map
 
     def _normalise_precomputed_inputs(
-        self, precomputed: Tuple[Sequence[str], np.ndarray]
-    ) -> Tuple[Sequence[str], np.ndarray]:
+        self, precomputed: Tuple[Sequence[ItemTextChunk], np.ndarray]
+    ) -> Tuple[Sequence[ItemTextChunk], np.ndarray]:
         item_texts, item_embs = precomputed
         if not isinstance(item_texts, Sequence):
             item_texts = tuple(item_texts)  # type: ignore[assignment]
@@ -291,7 +299,7 @@ class TreePruner:
         context: PruningContext,
         *,
         item_embs: np.ndarray,
-        item_texts: Sequence[str],
+        item_texts: Sequence[ItemTextChunk],
     ) -> Tuple[
         List[str],
         Dict[str, float],
@@ -471,7 +479,7 @@ class TreePruner:
             )
 
         lexical_idxs = lexical_anchor_indices(
-            item_texts,
+            [chunk.text for chunk in item_texts],
             self._tax_names,
             tax_names_normalized=self._tax_names_normalized,
             existing=anchor_idxs,
@@ -584,6 +592,7 @@ def pruned_tree_markdown_for_item(
     tax_embs_unit: np.ndarray,
     hnsw_index,
     pruning_cfg: Optional[PruningConfig] = None,
+    field_mapping: Optional[FieldMappingConfig] = None,
     name_col: str = "name",
     order_col: str = "order",
     gloss_map: Optional[Dict[str, str]] = None,
@@ -599,6 +608,7 @@ def pruned_tree_markdown_for_item(
         tax_embs_unit=tax_embs_unit,
         hnsw_index=hnsw_index,
         pruning_cfg=pruning_cfg,
+        field_mapping=field_mapping,
         name_col=name_col,
         order_col=order_col,
         gloss_map=gloss_map,

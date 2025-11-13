@@ -12,6 +12,11 @@ embedding_columns = ["label", "name", "description"]
 metadata_columns = ["label", "name", "dataset", "description"]
 gold_labels_column = "keywords"
 dataset_column = "dataset"
+# Optional chunking controls for long text fields. Set ``embedding_chunk_chars`` to
+# split fields into overlapping slices instead of truncating them, and tune
+# ``chunk_overlap`` to retain context between slices.
+# embedding_chunk_chars = 512
+# chunk_overlap = 64
 
 [taxonomy_fields]
 # Map logical taxonomy fields to the column names used in your keywords CSV.
@@ -36,6 +41,10 @@ mean_pool = false # false = CLS token
 [taxonomy_embeddings]
 gamma = 0.05
 summary_weight = 0.85
+# Pull child signal back into ancestors; set to 0.0 to disable.
+child_aggregation_weight = 0.1
+# Limit how many ancestor hops receive child signal (unset = to the root).
+# child_aggregation_depth = 1
 
 [hnsw]
 space = "cosine"

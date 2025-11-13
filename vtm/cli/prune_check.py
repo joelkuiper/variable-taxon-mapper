@@ -202,6 +202,7 @@ def prune_check_command(
         graph,
         embedder,
         definitions=definition_source,
+        multi_parents=multi_parents,
         **taxonomy_kwargs,
     )
     hnsw_index = build_hnsw_index(tax_embs, **config_obj.hnsw.to_kwargs())
@@ -252,6 +253,7 @@ def prune_check_command(
             tax_embs_unit=tax_embs,
             hnsw_index=hnsw_index,
             pruning_cfg=config_obj.pruning,
+            field_mapping=field_cfg,
             name_col="name",
             order_col="order",
             gloss_map=gloss_map,

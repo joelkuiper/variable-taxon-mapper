@@ -11,9 +11,10 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-from vtm.config import PruningConfig
+from vtm.config import FieldMappingConfig, PruningConfig
 from ..embedding import (
     Embedder,
+    ItemTextChunk,
     build_hnsw_index,
     collect_item_texts,
     encode_item_texts,
@@ -34,6 +35,7 @@ class _PrunerState:
     tax_names: Tuple[str, ...]
     tax_embs_unit: np.ndarray
     pruning_cfg: Optional[PruningConfig]
+    field_mapping: Optional[FieldMappingConfig]
     name_col: str
     order_col: str
     gloss_map: Optional[Dict[str, str]]
@@ -47,7 +49,7 @@ class _PrunerState:
 class PrunePayload:
     idx: int
     item: Dict[str, Optional[str]]
-    item_texts: Tuple[str, ...]
+    item_texts: Tuple[ItemTextChunk, ...]
     item_embs: np.ndarray
 
 
@@ -100,6 +102,7 @@ def _init_tree_pruner(state: _PrunerState) -> None:
         tax_embs_unit=state.tax_embs_unit,
         hnsw_index=hnsw_index,
         pruning_cfg=state.pruning_cfg,
+        field_mapping=state.field_mapping,
         name_col=state.name_col,
         order_col=state.order_col,
         gloss_map=state.gloss_map,
@@ -180,6 +183,7 @@ class AsyncTreePruner:
         tax_embs_unit: np.ndarray,
         hnsw_index,
         pruning_cfg: Optional[PruningConfig] = None,
+        field_mapping: Optional[FieldMappingConfig] = None,
         name_col: str = "name",
         order_col: str = "order",
         gloss_map: Optional[Dict[str, str]] = None,
@@ -193,6 +197,7 @@ class AsyncTreePruner:
         workers = max(1, int(max_workers))
         self._parent_embedder = embedder
         self._precompute_embeddings = embedder_init_kwargs is None
+        self._field_mapping = field_mapping
         if self._precompute_embeddings and embedder is None:
             raise ValueError(
                 "AsyncTreePruner requires an embedder when running in precompute"
@@ -213,6 +218,7 @@ class AsyncTreePruner:
                 tax_embs_unit=tax_embs_unit,
                 hnsw_index=hnsw_index,
                 pruning_cfg=pruning_cfg,
+                field_mapping=field_mapping,
                 name_col=name_col,
                 order_col=order_col,
                 gloss_map=gloss_map,
@@ -255,6 +261,7 @@ class AsyncTreePruner:
                 tax_names=tuple(tax_names),
                 tax_embs_unit=tax_embs_unit,
                 pruning_cfg=pruning_cfg,
+                field_mapping=field_mapping,
                 name_col=name_col,
                 order_col=order_col,
                 gloss_map=dict(gloss_map or {}),
@@ -343,14 +350,21 @@ class AsyncTreePruner:
 
         payloads: List[PrunePayload] = []
         for idx, item in batch:
-            texts = tuple(collect_item_texts(item))
-            embs = encode_item_texts(item, embedder, texts=texts)
+            text_chunks = tuple(
+                collect_item_texts(item, field_mapping=self._field_mapping)
+            )
+            embs = encode_item_texts(
+                item,
+                embedder,
+                field_mapping=self._field_mapping,
+                texts=text_chunks,
+            )
             embs = np.asarray(embs, dtype=np.float32)
             payloads.append(
                 PrunePayload(
                     idx=idx,
                     item=item,
-                    item_texts=texts,
+                    item_texts=text_chunks,
                     item_embs=embs,
                 )
             )

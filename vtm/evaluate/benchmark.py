@@ -276,6 +276,7 @@ def run_label_benchmark(
         progress_hook=progress_hook or default_progress_hook,
         prompt_renderer=renderer,
         hnsw_config=hnsw_cfg,
+        field_mapping=field_cfg,
     )
 
     if progress_bar is not None:

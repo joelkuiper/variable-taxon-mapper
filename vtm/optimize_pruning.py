@@ -16,7 +16,13 @@ import optuna
 import pandas as pd
 
 from vtm.cli.prune_check import _compute_effective_subset
-from vtm.config import AppConfig, HNSWConfig, PruningConfig, TaxonomyEmbeddingConfig
+from vtm.config import (
+    AppConfig,
+    FieldMappingConfig,
+    HNSWConfig,
+    PruningConfig,
+    TaxonomyEmbeddingConfig,
+)
 from vtm.pipeline.service import prepare_keywords_dataframe
 from vtm.embedding import (
     Embedder,
@@ -74,6 +80,7 @@ class EvaluationContext:
     graph: nx.DiGraph
     frame: pd.DataFrame
     embedder: Embedder
+    field_mapping: FieldMappingConfig
     tax_names: Sequence[str]
     tax_embs: np.ndarray
     hnsw_index: object
@@ -81,9 +88,10 @@ class EvaluationContext:
     rows: Sequence[EvaluationRow]
     total_nodes: int
     ancestor_cache: Dict[str, set[str]]
-    taxonomy_cache: Dict[Tuple[float, float], Tuple[np.ndarray, object]]
+    taxonomy_cache: Dict[Tuple[float, float, float, Optional[int]], Tuple[np.ndarray, object]]
     definition_frame: Optional[pd.DataFrame]
     hnsw_config: HNSWConfig
+    multi_parents: Dict[str, Tuple[str, ...]]
 
 
 @dataclass
@@ -155,13 +163,14 @@ def prepare_context(
     keywords_df, definition_df, multi_parents = prepare_keywords_dataframe(
         keywords_raw, config.taxonomy_fields
     )
+    multi_parent_map = {str(k): tuple(v) for k, v in (multi_parents or {}).items()}
 
     graph = build_taxonomy_graph(
         keywords_df,
         name_col="name",
         parent_col="parent",
         order_col="order",
-        multi_parents=multi_parents,
+        multi_parents=multi_parent_map,
     )
     build_name_maps_from_graph(graph)  # validation side-effect
 
@@ -174,6 +183,7 @@ def prepare_context(
         graph,
         embedder,
         definitions=definition_source,
+        multi_parents=multi_parent_map,
         **taxonomy_kwargs,
     )
     hnsw_index = build_hnsw_index(tax_embs, **hnsw_kwargs)
@@ -203,6 +213,7 @@ def prepare_context(
         graph=graph,
         frame=keywords_df,
         embedder=embedder,
+        field_mapping=field_cfg,
         tax_names=tax_names,
         tax_embs=tax_embs,
         hnsw_index=hnsw_index,
@@ -214,10 +225,13 @@ def prepare_context(
             (
                 round(float(taxonomy_kwargs["gamma"]), 6),
                 round(float(taxonomy_kwargs["summary_weight"]), 6),
+                round(float(taxonomy_kwargs.get("child_aggregation_weight", 0.0)), 6),
+                taxonomy_kwargs.get("child_aggregation_depth"),
             ): (tax_embs, hnsw_index)
         },
         definition_frame=definition_source,
         hnsw_config=config.hnsw,
+        multi_parents=multi_parent_map,
     )
 
 
@@ -289,7 +303,12 @@ def resolve_taxonomy_artifacts(
     context: EvaluationContext,
     taxonomy_cfg: TaxonomyEmbeddingConfig,
 ) -> Tuple[np.ndarray, object]:
-    key = (round(taxonomy_cfg.gamma, 6), round(taxonomy_cfg.summary_weight, 6))
+    key = (
+        round(taxonomy_cfg.gamma, 6),
+        round(taxonomy_cfg.summary_weight, 6),
+        round(taxonomy_cfg.child_aggregation_weight, 6),
+        taxonomy_cfg.child_aggregation_depth,
+    )
     cached = context.taxonomy_cache.get(key)
     if cached is not None:
         return cached
@@ -298,6 +317,7 @@ def resolve_taxonomy_artifacts(
         context.graph,
         context.embedder,
         definitions=context.definition_frame,
+        multi_parents=context.multi_parents,
         **taxonomy_cfg.to_kwargs(),
     )
     hnsw_index = build_hnsw_index(tax_embs, **context.hnsw_config.to_kwargs())
@@ -319,6 +339,7 @@ def evaluate_pruning(
         tax_embs_unit=tax_embs,
         hnsw_index=hnsw_index,
         pruning_cfg=pruning_cfg,
+        field_mapping=context.field_mapping,
         name_col="name",
         order_col="order",
         gloss_map=context.gloss_map,

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from vtm.config import HNSWConfig, ParallelismConfig
+from vtm.config import FieldMappingConfig, HNSWConfig, ParallelismConfig
 
 from ..embedding import Embedder
 from ..matching import MatchRequest, match_items_to_tree
@@ -50,6 +50,7 @@ class PredictionPipeline:
         hnsw_config: HNSWConfig,
         progress_hook: ProgressHook | None,
         prompt_renderer: PromptRenderer,
+        field_mapping: FieldMappingConfig | None = None,
     ) -> None:
         self.jobs = list(jobs)
         self.pruning_cfg = pruning_cfg
@@ -76,6 +77,7 @@ class PredictionPipeline:
         self.hnsw_config = hnsw_config
         self.progress_hook = progress_hook
         self.prompt_renderer = prompt_renderer
+        self.field_mapping = field_mapping
 
         self.total = len(self.jobs)
         self.rows: List[Optional[Dict[str, Any]]] = [None] * self.total
@@ -101,6 +103,7 @@ class PredictionPipeline:
             tax_embs_unit=self.tax_embs_unit,
             hnsw_index=self.hnsw_index,
             pruning_cfg=self.pruning_cfg,
+            field_mapping=self.field_mapping,
             name_col="name",
             order_col="order",
             gloss_map=self.gloss_map,

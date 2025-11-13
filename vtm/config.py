@@ -27,6 +27,8 @@ class FieldMappingConfig:
     metadata_columns: Sequence[str] = ("label", "name", "dataset", "description")
     gold_labels_column: Optional[str] = "keywords"
     dataset_column: Optional[str] = "dataset"
+    embedding_chunk_chars: Optional[int] = None
+    chunk_overlap: int = 0
 
     def __post_init__(self) -> None:
         self.embedding_columns = tuple(self._normalise_sequence(self.embedding_columns))
@@ -37,6 +39,30 @@ class FieldMappingConfig:
         if dataset_normalised and dataset_normalised not in self.metadata_columns:
             # Ensure downstream consumers always see the dataset column value.
             self.metadata_columns = tuple((*self.metadata_columns, dataset_normalised))
+
+        chunk_chars = self.embedding_chunk_chars
+        if chunk_chars is not None:
+            try:
+                chunk_chars = int(chunk_chars)
+            except (TypeError, ValueError):
+                chunk_chars = None
+            else:
+                if chunk_chars <= 0:
+                    chunk_chars = None
+        self.embedding_chunk_chars = chunk_chars
+
+        overlap = self.chunk_overlap
+        try:
+            overlap = int(overlap)
+        except (TypeError, ValueError):
+            overlap = 0
+        if overlap < 0:
+            overlap = 0
+        if self.embedding_chunk_chars is None:
+            overlap = 0
+        elif overlap >= self.embedding_chunk_chars:
+            overlap = max(0, self.embedding_chunk_chars - 1)
+        self.chunk_overlap = overlap
 
     @staticmethod
     def _normalise_sequence(values: Iterable[str] | str | None) -> list[str]:
@@ -201,6 +227,8 @@ class TaxonomyEmbeddingConfig:
 
     gamma: float = 0.3
     summary_weight: float = 0.25
+    child_aggregation_weight: float = 0.0
+    child_aggregation_depth: Optional[int] = None
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)

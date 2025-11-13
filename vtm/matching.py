@@ -144,7 +144,7 @@ def _canonicalize_label_text(
 
 def _compose_item_text(item: Mapping[str, Optional[str]]) -> str:
     parts = collect_item_texts(item, clean=True)
-    return " ".join(part for part in parts if part)
+    return " ".join(chunk.text for chunk in parts if chunk.text)
 
 
 def _build_match_result(

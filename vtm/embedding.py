@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
@@ -33,6 +34,21 @@ from vtm.config import FieldMappingConfig
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ItemTextChunk:
+    """A chunk of item text derived from a specific source field."""
+
+    text: str
+    field: str
+    chunk_index: int
+    chunk_count: int
+
+    def __post_init__(self) -> None:  # pragma: no cover - dataclass post-init
+        normalized = self.text if isinstance(self.text, str) else str(self.text)
+        object.__setattr__(self, "text", normalized)
+        object.__setattr__(self, "field", str(self.field))
 
 
 def l2_normalize(a: np.ndarray, eps: float = 1e-9) -> np.ndarray:
@@ -185,6 +201,68 @@ def _resolve_default_fields(
     return FieldMappingConfig().embedding_columns_list()
 
 
+def _iter_text_chunks(text: str, chunk_chars: int, chunk_overlap: int) -> List[str]:
+    if chunk_chars <= 0:
+        return [text]
+    if chunk_overlap < 0:
+        chunk_overlap = 0
+    step = chunk_chars - min(chunk_overlap, chunk_chars - 1)
+    if step <= 0:
+        step = 1
+    chunks: List[str] = []
+    start = 0
+    length = len(text)
+    while start < length:
+        end = start + chunk_chars
+        chunk = text[start:end]
+        if chunk:
+            chunks.append(chunk)
+        if end >= length:
+            break
+        start += step
+    if not chunks and text:
+        chunks.append(text)
+    return chunks
+
+
+def _normalize_chunk_params(
+    *,
+    field_mapping: FieldMappingConfig | None,
+    chunk_chars: Optional[int],
+    chunk_overlap: Optional[int],
+) -> tuple[Optional[int], int]:
+    mapping_chunk = field_mapping.embedding_chunk_chars if field_mapping else None
+    mapping_overlap = field_mapping.chunk_overlap if field_mapping else 0
+
+    if chunk_chars is None:
+        chunk_chars = mapping_chunk
+    if chunk_overlap is None:
+        chunk_overlap = mapping_overlap
+
+    if chunk_chars is not None:
+        try:
+            chunk_chars = int(chunk_chars)
+        except (TypeError, ValueError):
+            chunk_chars = None
+        else:
+            if chunk_chars <= 0:
+                chunk_chars = None
+
+    if chunk_chars is None:
+        chunk_overlap = 0
+    else:
+        try:
+            chunk_overlap = int(chunk_overlap)
+        except (TypeError, ValueError):
+            chunk_overlap = 0
+        if chunk_overlap < 0:
+            chunk_overlap = 0
+        if chunk_overlap >= chunk_chars:
+            chunk_overlap = chunk_chars - 1
+
+    return chunk_chars, chunk_overlap
+
+
 def collect_item_texts(
     item: Mapping[str, Optional[str]],
     *,
@@ -192,7 +270,9 @@ def collect_item_texts(
     field_mapping: FieldMappingConfig | None = None,
     clean: bool = True,
     max_length: int = 256,
-) -> List[str]:
+    chunk_chars: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
+) -> List[ItemTextChunk]:
     """Extract candidate text fields from an item for embedding."""
 
     resolved_fields: Sequence[str]
@@ -201,13 +281,24 @@ def collect_item_texts(
     else:
         resolved_fields = list(fields)
 
-    texts: List[str] = []
+    try:
+        normalized_max_length = int(max_length)
+    except (TypeError, ValueError):
+        normalized_max_length = 0
+    normalized_max_length = max(0, normalized_max_length)
+    resolved_chunk_chars, resolved_overlap = _normalize_chunk_params(
+        field_mapping=field_mapping,
+        chunk_chars=chunk_chars,
+        chunk_overlap=chunk_overlap,
+    )
+
+    chunks: List[ItemTextChunk] = []
     for key in resolved_fields:
         raw = item.get(key)
         if clean:
             text = clean_text(raw)
-            if text and text != "(empty)":
-                texts.append(text[:max_length])
+            if not text or text == "(empty)":
+                continue
         else:
             if isinstance(raw, str):
                 text = raw.strip()
@@ -215,9 +306,38 @@ def collect_item_texts(
                 text = ""
             else:
                 text = str(raw).strip()
-            if text:
-                texts.append(text[:max_length])
-    return texts
+            if not text:
+                continue
+
+        if resolved_chunk_chars is None:
+            truncated = text[:normalized_max_length] if normalized_max_length else text
+            if not truncated:
+                continue
+            chunks.append(
+                ItemTextChunk(
+                    text=truncated,
+                    field=key,
+                    chunk_index=0,
+                    chunk_count=1,
+                )
+            )
+            continue
+
+        field_chunks = _iter_text_chunks(text, resolved_chunk_chars, resolved_overlap)
+        total = len(field_chunks)
+        for idx, chunk in enumerate(field_chunks):
+            if not chunk:
+                continue
+            chunks.append(
+                ItemTextChunk(
+                    text=chunk,
+                    field=key,
+                    chunk_index=idx,
+                    chunk_count=total,
+                )
+            )
+
+    return chunks
 
 
 def encode_item_texts(
@@ -228,7 +348,9 @@ def encode_item_texts(
     field_mapping: FieldMappingConfig | None = None,
     clean: bool = True,
     max_length: int = 256,
-    texts: Optional[Sequence[str]] = None,
+    chunk_chars: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
+    texts: Optional[Sequence[ItemTextChunk | str]] = None,
 ) -> np.ndarray:
     """Encode selected text fields from ``item`` using ``embedder``."""
 
@@ -239,13 +361,29 @@ def encode_item_texts(
             field_mapping=field_mapping,
             clean=clean,
             max_length=max_length,
+            chunk_chars=chunk_chars,
+            chunk_overlap=chunk_overlap,
         )
     else:
         texts = list(texts)
 
-    if not texts:
+    resolved_chunks: List[ItemTextChunk] = []
+    for entry in texts:
+        if isinstance(entry, ItemTextChunk):
+            resolved_chunks.append(entry)
+        elif isinstance(entry, str):
+            resolved_chunks.append(
+                ItemTextChunk(text=entry, field="", chunk_index=0, chunk_count=1)
+            )
+        else:
+            raise TypeError(
+                "texts must contain strings or ItemTextChunk instances, "
+                f"got {type(entry)!r}"
+            )
+
+    if not resolved_chunks:
         return np.zeros((0, 768), dtype=np.float32)
-    return embedder.encode(texts)
+    return embedder.encode([chunk.text for chunk in resolved_chunks])
 
 
 def cosine_match_maxpool(
@@ -337,6 +475,9 @@ def build_taxonomy_embeddings_composed(
     *,
     definitions: Optional[object] = None,
     summary_weight: float = 1.0,
+    child_aggregation_weight: float = 0.0,
+    child_aggregation_depth: Optional[int] = None,
+    multi_parents: Optional[Mapping[str, Sequence[str]]] = None,
     taxonomy_text_transform: Optional[Callable[[str], str]] = None,
 ) -> Tuple[List[str], np.ndarray]:
     start_ts = time.perf_counter()
@@ -346,26 +487,42 @@ def build_taxonomy_embeddings_composed(
     topo = _topological_order(G)
     cache = ensure_traversal_cache(G)
     all_parents = cache.get("all_parents", {}) if cache is not None else {}
-    parent_indices: List[Tuple[int, ...]] = [tuple() for _ in names]
+    parent_indices: List[List[int]] = [[] for _ in names]
     if all_parents:
         for node, parents in all_parents.items():
             idx = label2idx.get(node)
             if idx is None or not parents:
                 continue
-            parent_indices[idx] = tuple(
+            parent_indices[idx] = [
                 label2idx[p] for p in parents if p in label2idx
-            )
+            ]
     else:
         for node in names:
             idx = label2idx[node]
             preds = tuple(G.predecessors(node))
             if preds:
-                parent_indices[idx] = tuple(
+                parent_indices[idx] = [
                     label2idx[p] for p in preds if p in label2idx
-                )
+                ]
 
+    if multi_parents:
+        for child_name, parent_names in multi_parents.items():
+            child_idx = label2idx.get(child_name)
+            if child_idx is None:
+                continue
+            for parent_name in parent_names:
+                parent_idx = label2idx.get(parent_name)
+                if parent_idx is None:
+                    continue
+                if parent_idx not in parent_indices[child_idx]:
+                    parent_indices[child_idx].append(parent_idx)
+
+    child_weight = float(child_aggregation_weight)
     logger.info(
-        "Composing taxonomy embeddings for %d nodes (gamma=%.2f)", len(names), gamma
+        "Composing taxonomy embeddings for %d nodes (gamma=%.2f, child_weight=%.2f)",
+        len(names),
+        gamma,
+        child_weight,
     )
 
     if taxonomy_text_transform is not None:
@@ -422,6 +579,46 @@ def build_taxonomy_embeddings_composed(
             logger.info(
                 "Composed embeddings for %d/%d taxonomy nodes", processed, total_nodes
             )
+
+    depth_limit = child_aggregation_depth
+    apply_child_agg = child_weight > 0.0
+    if apply_child_agg and depth_limit is not None and depth_limit <= 0:
+        apply_child_agg = False
+
+    if apply_child_agg:
+        aggregated = out.copy()
+        contrib = out.copy()
+        depth = 0
+        while True:
+            depth += 1
+            parent_buffer = np.zeros_like(out)
+            active = False
+            for child_idx, parents in enumerate(parent_indices):
+                if not parents:
+                    continue
+                vec = contrib[child_idx]
+                norm = float(np.linalg.norm(vec))
+                if norm <= 1e-9:
+                    continue
+                normalised_child = (vec / norm).astype(np.float32, copy=False)
+                for parent_idx in parents:
+                    parent_buffer[parent_idx] += normalised_child
+                    active = True
+            if not active:
+                break
+            for parent_idx in range(len(parent_indices)):
+                vec = parent_buffer[parent_idx]
+                norm = float(np.linalg.norm(vec))
+                if norm <= 1e-9:
+                    parent_buffer[parent_idx].fill(0.0)
+                    continue
+                normalised_parent = (vec / norm).astype(np.float32, copy=False)
+                aggregated[parent_idx] += child_weight * normalised_parent
+                parent_buffer[parent_idx] = normalised_parent
+            if depth_limit is not None and depth >= depth_limit:
+                break
+            contrib = parent_buffer
+        out = aggregated
 
     out = out / np.clip(np.linalg.norm(out, axis=1, keepdims=True), 1e-9, None)
     logger.info(

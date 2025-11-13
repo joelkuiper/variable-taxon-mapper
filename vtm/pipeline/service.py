@@ -400,6 +400,7 @@ class VariableTaxonMapper:
             graph,
             mapper_embedder,
             definitions=definitions,
+            multi_parents=artifacts.multi_parents,
             **taxonomy_kwargs,
         )
         logger.info(

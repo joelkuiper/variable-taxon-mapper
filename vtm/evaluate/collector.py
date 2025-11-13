@@ -9,7 +9,14 @@ from typing import Any, Dict, List, Sequence
 import numpy as np
 import pandas as pd
 
-from vtm.config import HNSWConfig, HttpConfig, LLMConfig, ParallelismConfig, PruningConfig
+from vtm.config import (
+    FieldMappingConfig,
+    HNSWConfig,
+    HttpConfig,
+    LLMConfig,
+    ParallelismConfig,
+    PruningConfig,
+)
 
 from ..embedding import Embedder
 from ..graph_utils import compute_node_depths, get_undirected_taxonomy
@@ -40,6 +47,7 @@ async def async_collect_predictions(
     hnsw_config: HNSWConfig,
     progress_hook: ProgressHook | None,
     prompt_renderer: PromptRenderer,
+    field_mapping: FieldMappingConfig | None = None,
 ) -> List[Dict[str, Any]]:
     """Asynchronously collect predictions for ``jobs`` using the pipeline."""
 
@@ -67,6 +75,7 @@ async def async_collect_predictions(
         hnsw_config=hnsw_config,
         progress_hook=progress_hook,
         prompt_renderer=prompt_renderer,
+        field_mapping=field_mapping,
     )
 
     pipeline.run_prune_workers()
@@ -110,6 +119,7 @@ def collect_predictions(
     hnsw_config: HNSWConfig,
     progress_hook: ProgressHook | None,
     prompt_renderer: PromptRenderer,
+    field_mapping: FieldMappingConfig | None = None,
 ) -> List[Dict[str, Any]]:
     """Synchronously collect predictions, delegating to ``async_collect_predictions``."""
 
@@ -144,6 +154,7 @@ def collect_predictions(
                 hnsw_config=hnsw_config,
                 progress_hook=progress_hook,
                 prompt_renderer=prompt_renderer,
+                field_mapping=field_mapping,
             )
         )
     except KeyboardInterrupt:

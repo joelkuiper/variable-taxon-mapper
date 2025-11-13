@@ -13,6 +13,8 @@ keywords_csv = "data/MeSH.csv"
 # name = "name"
 # description = "description"
 # gold_labels = "keywords"
+# embedding_chunk_chars = 512
+# chunk_overlap = 64
 
 [taxonomy_fields]
 # Map logical taxonomy fields to the column names used in your keywords CSV.
@@ -35,6 +37,8 @@ mean_pool = false # false = CLS token
 [taxonomy_embeddings]
 gamma = 0.05
 summary_weight = 0.85
+child_aggregation_weight = 0.0
+# child_aggregation_depth = 1
 
 [hnsw]
 space = "cosine"
