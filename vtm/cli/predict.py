@@ -69,6 +69,16 @@ def predict_command(
         ),
         path_type=Path,
     ),
+    keywords: Optional[Path] = typer.Option(
+        None,
+        "--keywords",
+        "-k",
+        help=(
+            "Optional path to the taxonomy keywords table (CSV, Parquet, Feather). "
+            "Defaults to the config setting."
+        ),
+        path_type=Path,
+    ),
     output_format: OutputFormat = typer.Option(
         "csv",
         "--output-format",
@@ -101,10 +111,12 @@ def predict_command(
         config_obj.evaluation.n = row_limit
         logger.info("Row limit overridden to %s", row_limit)
 
-    variables_default, keywords_path = config_obj.data.to_paths(base_path)
+    variables_default, keywords_default = config_obj.data.to_paths(base_path)
     variables_path = resolve_path(base_path, variables_default, variables)
+    keywords_path = resolve_path(base_path, keywords_default, keywords)
 
     ensure_file_exists(variables_path, "variables data file")
+    ensure_file_exists(keywords_path, "keywords data file")
     variables_df = load_table(variables_path, low_memory=False)
     logger.info(
         "Loaded variables frame with %d rows and %d columns",
@@ -112,7 +124,11 @@ def predict_command(
         len(variables_df.columns),
     )
 
-    mapper = VariableTaxonMapper.from_config(config_obj, base_path=base_path)
+    mapper = VariableTaxonMapper.from_config(
+        config_obj,
+        base_path=base_path,
+        keywords_path=keywords_path,
+    )
     progress_hook = _make_tqdm_progress()
     try:
         df, _ = mapper.predict(

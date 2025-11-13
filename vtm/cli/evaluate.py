@@ -7,7 +7,7 @@ import typer
 
 from vtm.pipeline import VariableTaxonMapper
 from vtm.reporting import report_results
-from vtm.utils import ensure_file_exists, load_table, set_global_seed
+from vtm.utils import ensure_file_exists, load_table, resolve_path, set_global_seed
 
 from .app import app, logger
 from .common import ConfigArgument, load_app_config
@@ -22,6 +22,26 @@ from ._metadata import build_run_metadata
 @app.command("evaluate")
 def run_command(
     config: Path = ConfigArgument,
+    variables: Path | None = typer.Option(
+        None,
+        "--variables",
+        "-v",
+        help=(
+            "Optional path to a variables-like table (CSV, Parquet, Feather). "
+            "Defaults to the config setting."
+        ),
+        path_type=Path,
+    ),
+    keywords: Path | None = typer.Option(
+        None,
+        "--keywords",
+        "-k",
+        help=(
+            "Optional path to the taxonomy keywords table (CSV, Parquet, Feather). "
+            "Defaults to the config setting."
+        ),
+        path_type=Path,
+    ),
     output_format: OutputFormat = typer.Option(
         "csv",
         "--output-format",
@@ -57,8 +77,11 @@ def run_command(
 
     set_global_seed(config_obj.seed)
 
-    variables_path, keywords_path = config_obj.data.to_paths(base_path)
+    variables_default, keywords_default = config_obj.data.to_paths(base_path)
+    variables_path = resolve_path(base_path, variables_default, variables)
+    keywords_path = resolve_path(base_path, keywords_default, keywords)
     ensure_file_exists(variables_path, "variables data file")
+    ensure_file_exists(keywords_path, "keywords data file")
 
     mapper = VariableTaxonMapper.from_config(
         config_obj,
