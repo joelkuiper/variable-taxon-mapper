@@ -112,6 +112,12 @@ def optimize_pruning_command(
         help="Suppress Optuna ExperimentalWarning messages.",
         show_default=True,
     ),
+    enqueue_best_guess: bool = typer.Option(
+        True,
+        "--enqueue-best-guess/--no-enqueue-best-guess",
+        help="Seed the study with the current config values when possible.",
+        show_default=True,
+    ),
 ) -> None:
     """Tune pruning parameters to maximise coverage and pruning quality."""
 
@@ -143,4 +149,5 @@ def optimize_pruning_command(
         tpe_multivariate=tpe_multivariate,
         tpe_constant_liar=tpe_constant_liar,
         suppress_experimental_warnings=suppress_experimental_warnings,
+        enqueue_best_guess=enqueue_best_guess,
     )

@@ -655,6 +655,69 @@ def print_config_with_inline_comments(
 # ======================================================================================
 
 
+def _derive_best_guess_params(app_config: AppConfig) -> Dict[str, Any]:
+    """Return a mapping of current config values that fit the search space."""
+
+    pruning = app_config.pruning
+    taxonomy = app_config.taxonomy_embeddings
+
+    best_guess: Dict[str, Any] = {}
+
+    valid_pruning_modes = {
+        "community_pagerank",
+        "steiner_similarity",
+        "anchor_hull",
+        "dominant_forest",
+    }
+    if pruning.pruning_mode in valid_pruning_modes:
+        best_guess["pruning_mode"] = pruning.pruning_mode
+
+    if 4 <= pruning.anchor_top_k <= 64:
+        best_guess["anchor_top_k"] = int(pruning.anchor_top_k)
+    if 1 <= pruning.max_descendant_depth <= 4:
+        best_guess["max_descendant_depth"] = int(pruning.max_descendant_depth)
+    if 0 <= pruning.lexical_anchor_limit <= 6:
+        best_guess["lexical_anchor_limit"] = int(pruning.lexical_anchor_limit)
+    if 0 <= pruning.community_clique_size <= 4:
+        best_guess["community_clique_size"] = int(pruning.community_clique_size)
+
+    valid_max_community = {None, 64, 96, 128, 160, 192, 224, 256}
+    if pruning.max_community_size in valid_max_community:
+        best_guess["max_community_size"] = pruning.max_community_size
+
+    if 1 <= pruning.anchor_overfetch_multiplier <= 6:
+        best_guess["anchor_overfetch_multiplier"] = int(
+            pruning.anchor_overfetch_multiplier
+        )
+
+    valid_min_overfetch = {64, 96, 128, 160, 192, 224, 256}
+    if pruning.anchor_min_overfetch in valid_min_overfetch:
+        best_guess["anchor_min_overfetch"] = int(pruning.anchor_min_overfetch)
+
+    if 0.75 <= pruning.pagerank_damping <= 0.95:
+        best_guess["pagerank_damping"] = float(pruning.pagerank_damping)
+    if 0.0 <= pruning.pagerank_score_floor <= 0.05:
+        best_guess["pagerank_score_floor"] = float(pruning.pagerank_score_floor)
+
+    if 60 <= pruning.node_budget <= 250:
+        best_guess["node_budget"] = int(pruning.node_budget)
+
+    valid_tree_sort_modes = {"relevance", "proximity", "pagerank"}
+    if pruning.tree_sort_mode in valid_tree_sort_modes:
+        best_guess["tree_sort_mode"] = pruning.tree_sort_mode
+
+    valid_pagerank_limits = {None, 64, 128, 256, 384, 512}
+    if pruning.pagerank_candidate_limit in valid_pagerank_limits:
+        best_guess["pagerank_candidate_limit"] = pruning.pagerank_candidate_limit
+
+    if 0.05 <= taxonomy.gamma <= 0.90:
+        best_guess["gamma"] = float(taxonomy.gamma)
+    if 0.05 <= taxonomy.summary_weight <= 0.90:
+        best_guess["summary_weight"] = float(taxonomy.summary_weight)
+
+    return best_guess
+
+
 def run_optimization(
     app_config: AppConfig,
     *,
@@ -676,6 +739,7 @@ def run_optimization(
     tpe_multivariate: bool = False,
     tpe_constant_liar: bool = False,
     suppress_experimental_warnings: bool = False,
+    enqueue_best_guess: bool = True,
 ) -> None:
     """Run the Optuna-based pruning configuration optimisation."""
 
@@ -742,6 +806,19 @@ def run_optimization(
         storage=storage,
         load_if_exists=bool(storage and study_name),
     )
+
+    if enqueue_best_guess:
+        best_guess_params = _derive_best_guess_params(app_config)
+        if best_guess_params:
+            study.enqueue_trial(best_guess_params)
+            logger.info(
+                "Enqueued current configuration as initial trial: %s",
+                json.dumps(best_guess_params, sort_keys=True),
+            )
+        else:
+            logger.info(
+                "Skipped best-guess enqueue; no current parameters fall within the search space."
+            )
 
     if repeats > 0:
         for _ in range(repeats):
