@@ -120,7 +120,7 @@ cd "$WORKDIR/Repositories"
 git clone https://github.com/ggml-org/llama.cpp
 cd llama.cpp
 git fetch --tags
-git checkout b7051
+git checkout 7fdd16b43
 git rev-parse HEAD | tee "$WORKDIR/Repositories/llama.cpp/.checkout"
 
 srun --export=WORKDIR --cpus-per-task=32 --mem=32G --nodes=1 --time=00:30:00 \
