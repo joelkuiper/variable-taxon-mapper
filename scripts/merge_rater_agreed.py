@@ -31,7 +31,7 @@ def write_table(df: pd.DataFrame, path: Path, csv_sep_keywords: str):
                     if isinstance(v, (list, tuple, set))
                     else v
                 )
-                df_out.to_csv(path, index=False)
+        df_out.to_csv(path, index=False)
     elif ext in (".parquet", ".pq"):
         df.to_parquet(path, index=False)
     elif ext in (".feather", ".ft"):
@@ -116,10 +116,21 @@ def main():
         default="|",
         help="Delimiter for CSV serialization of keywords lists",
     )
+    ap.add_argument(
+        "--final-decision-column",
+        default=None,
+        help=(
+            "Optional column name in review files that encodes the final decision. "
+            "If provided, rows with this column == 'accept' are applied directly, "
+            "bypassing consensus/intersection logic."
+        ),
+    )
     args = ap.parse_args()
 
-    if len(args.reviews) < 2:
-        ap.error("At least two --review files are required to define agreement.")
+    use_final_decision = args.final_decision_column is not None
+
+    if not use_final_decision and len(args.reviews) < 2:
+        ap.error("At least two --review files are required to define agreement (or use --final-decision-column).")
 
     print(f"[merge_rater_agreed] Loading variables from: {args.variables}")
     vars_df = read_table(args.variables)
@@ -130,19 +141,44 @@ def main():
         print(f"  - {p}")
         review_dfs.append(pd.read_csv(p))
 
-    accepted_dfs = [
-        df[df["decision"].astype(str).str.lower() == "accept"].copy()
-        for df in review_dfs
-    ]
-    accepted_counts = [len(df) for df in accepted_dfs]
-    print(f"[merge_rater_agreed] Accepted rows per reviewer: {accepted_counts}")
+    if use_final_decision:
+        # Ensure column exists everywhere
+        missing = [i for i, df in enumerate(review_dfs) if args.final_decision_column not in df.columns]
+        if missing:
+            ap.error(
+                f"--final-decision-column '{args.final_decision_column}' not found in review file indices: {missing}"
+            )
+
+        print(f"[merge_rater_agreed] Using final decision column: {args.final_decision_column}")
+
+        final_accepted_dfs = []
+        final_counts = []
+        for df in review_dfs:
+            acc = df[df[args.final_decision_column].astype(str).str.lower() == "accept"].copy()
+            final_accepted_dfs.append(acc)
+            final_counts.append(len(acc))
+        print(f"[merge_rater_agreed] Final-accepted rows per file: {final_counts}")
+
+        if final_accepted_dfs:
+            accepted_union_df = pd.concat(final_accepted_dfs, ignore_index=True)
+        else:
+            accepted_union_df = pd.DataFrame(columns=["row_index", "resolved_label"])
+    else:
+        accepted_dfs = [
+            df[df["decision"].astype(str).str.lower() == "accept"].copy()
+            for df in review_dfs
+        ]
+        accepted_counts = [len(df) for df in accepted_dfs]
+        print(f"[merge_rater_agreed] Accepted rows per reviewer: {accepted_counts}")
 
     can_match_on_index = (
         "row_index" in vars_df.columns
-        and all("row_index" in df.columns for df in accepted_dfs)
+        and all("row_index" in df.columns for df in review_dfs)
     )
-    print(f"[merge_rater_agreed] Matching strategy: "
-          f"{'row_index' if can_match_on_index else 'composite key (dataset|label|name)'}")
+    print(
+        "[merge_rater_agreed] Matching strategy: "
+        f"{'row_index' if can_match_on_index else 'composite key (dataset|label|name)'}"
+    )
 
     if args.keywords_column not in vars_df.columns:
         vars_df[args.keywords_column] = ""
@@ -150,19 +186,35 @@ def main():
     updated_rows = 0  # track how many rows actually change
 
     if can_match_on_index:
-        index_sets = [set(df["row_index"]) for df in accepted_dfs]
-        agreed_indices = set.intersection(*index_sets) if index_sets else set()
-        print(f"[merge_rater_agreed] Agreed row_index count: {len(agreed_indices)}")
+        if use_final_decision:
+            # Use union of all final-accepted rows
+            if "row_index" not in accepted_union_df.columns:
+                raise ValueError("Expected 'row_index' column in review files when matching by index.")
+            agreed_indices = set(accepted_union_df["row_index"].unique())
+            print(f"[merge_rater_agreed] Final-accepted row_index count: {len(agreed_indices)}")
 
-        index_to_labels = {}
-        for df in accepted_dfs:
+            index_to_labels = {}
             for idx, labels in (
-                    df[df["row_index"].isin(agreed_indices)]
-                    .groupby("row_index")["resolved_label"]
+                accepted_union_df[accepted_union_df["row_index"].isin(agreed_indices)]
+                .groupby("row_index")["resolved_label"]
             ):
                 labels_set = index_to_labels.setdefault(idx, set())
                 labels_set.update(map(str, labels))
+        else:
+            index_sets = [set(df["row_index"]) for df in accepted_dfs]
+            agreed_indices = set.intersection(*index_sets) if index_sets else set()
+            print(f"[merge_rater_agreed] Agreed row_index count: {len(agreed_indices)}")
 
+            index_to_labels = {}
+            for df in accepted_dfs:
+                for idx, labels in (
+                    df[df["row_index"].isin(agreed_indices)]
+                    .groupby("row_index")["resolved_label"]
+                ):
+                    labels_set = index_to_labels.setdefault(idx, set())
+                    labels_set.update(map(str, labels))
+
+        # Sort labels for deterministic output
         for idx in list(index_to_labels.keys()):
             index_to_labels[idx] = sorted(index_to_labels[idx])
 
@@ -180,21 +232,35 @@ def main():
         vars_df[args.keywords_column] = vars_df.apply(add_labels_row, axis=1)
 
     else:
-        for df in accepted_dfs:
-            df["__key"] = keyify(df)
+        if use_final_decision:
+            # Build keys on the union df
+            accepted_union_df["__key"] = keyify(accepted_union_df)
+            agreed_keys = set(accepted_union_df["__key"].unique())
+            print(f"[merge_rater_agreed] Final-accepted composite key count: {len(agreed_keys)}")
 
-        key_sets = [set(df["__key"]) for df in accepted_dfs]
-        agreed_keys = set.intersection(*key_sets) if key_sets else set()
-        print(f"[merge_rater_agreed] Agreed composite key count: {len(agreed_keys)}")
-
-        key_to_labels = {}
-        for df in accepted_dfs:
+            key_to_labels = {}
             for k, labels in (
-                    df[df["__key"].isin(agreed_keys)]
-                    .groupby("__key")["resolved_label"]
+                accepted_union_df[accepted_union_df["__key"].isin(agreed_keys)]
+                .groupby("__key")["resolved_label"]
             ):
                 labels_set = key_to_labels.setdefault(k, set())
                 labels_set.update(map(str, labels))
+        else:
+            for df in accepted_dfs:
+                df["__key"] = keyify(df)
+
+            key_sets = [set(df["__key"]) for df in accepted_dfs]
+            agreed_keys = set.intersection(*key_sets) if key_sets else set()
+            print(f"[merge_rater_agreed] Agreed composite key count: {len(agreed_keys)}")
+
+            key_to_labels = {}
+            for df in accepted_dfs:
+                for k, labels in (
+                    df[df["__key"].isin(agreed_keys)]
+                    .groupby("__key")["resolved_label"]
+                ):
+                    labels_set = key_to_labels.setdefault(k, set())
+                    labels_set.update(map(str, labels))
 
         for k in list(key_to_labels.keys()):
             key_to_labels[k] = sorted(key_to_labels[k])
