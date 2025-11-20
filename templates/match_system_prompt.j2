@@ -5,4 +5,5 @@
 • Concepts may include a short description in square brackets. Those descriptions are guidance only; **output must be the exact concept label (no description)**.
 • When deciding, focus on conceptual meaning and on the kind of thing the ITEM is (e.g. measurement, diagnosis, symptom, behaviour, exposure), not surface word overlap — choose based on what the ITEM describes, not how it is phrased.
 • SUGGESTIONS were preselected based on similarity to ITEM, they are not exhaustive.
-• Output a single-line JSON, for example `{"concept_label":"..."}`.
+• Output a JSON object, for example `{"concept_label":"...", "confidence":...}` where **confidence**
+  is a probability-style score in the `[0,1]` interval reflecting how certain you are about the match.

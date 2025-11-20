@@ -22,8 +22,9 @@ MATCH_RESPONSE_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "concept_label": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
     },
-    "required": ["concept_label"],
+    "required": ["concept_label", "confidence"],
     "additionalProperties": False,
 }
 

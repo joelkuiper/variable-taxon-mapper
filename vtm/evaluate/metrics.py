@@ -141,6 +141,10 @@ def build_result_row(
             "direct_parent": lookup_direct_parent(graph, resolved_label),
             "_error": job.metadata.get("_error"),
             "match_strategy": prediction.get("match_strategy"),
+            "llm_score": prediction.get("llm_score"),
+            "embedding_similarity": prediction.get("embedding_similarity"),
+            "embedding_score": prediction.get("embedding_score"),
+            "confidence_score": prediction.get("confidence_score"),
         }
     )
     if "raw" in prediction:
