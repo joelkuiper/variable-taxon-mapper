@@ -211,11 +211,14 @@ class EmbedderConfig:
     """Model and batching configuration for the embedding model."""
 
     model_name: str = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
+    models: Sequence[str] | None = None
     device: str | None = None
     max_length: int = 256
     batch_size: int = 128
     fp16: bool = True
     mean_pool: bool = True
+    pca_components: Optional[int] = None
+    pca_whiten: bool = False
 
     def to_kwargs(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v is not None}

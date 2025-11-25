@@ -23,6 +23,7 @@ from typing import Literal
 
 import numpy as np
 import torch
+from sklearn.decomposition import PCA
 from transformers import AutoModel, AutoTokenizer
 
 
@@ -76,32 +77,70 @@ class Embedder:
     def __init__(
         self,
         model_name: str = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext",
+        *,
+        models: Sequence[str] | None = None,
         device: str | None = None,
         max_length: int = 512,
         batch_size: int = 128,
         fp16: bool = True,
         mean_pool: bool = False,  # False = [CLS]
+        pca_components: Optional[int] = None,
+        pca_whiten: bool = False,
     ):
-        self.model_name = model_name
+        model_candidates = [
+            str(name).strip()
+            for name in (models if models is not None else [model_name])
+            if str(name).strip()
+        ]
+        if not model_candidates:
+            raise ValueError("At least one embedding model must be provided")
+
+        self.model_names = tuple(model_candidates)
+        self.model_name = self.model_names[0]
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.tok = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
         self.fp16 = bool(fp16)
-        if self.fp16 and self.device.startswith("cuda"):
-            self.model.half()
-        self.model.to(self.device).eval()
         self.max_length = max_length
         self.batch_size = batch_size
         self.mean_pool = mean_pool
+        if pca_components is None:
+            validated_components = None
+        else:
+            try:
+                validated_components = int(pca_components)
+            except (TypeError, ValueError):
+                validated_components = None
+            else:
+                if validated_components <= 0:
+                    validated_components = None
 
-    @torch.no_grad()
-    def encode(self, texts: Sequence[str]) -> np.ndarray:
+        self._pca_components = validated_components
+        self._pca_whiten = bool(pca_whiten)
+        self._pca_model: PCA | None = None
+        self._pca_fitted = False
+
+        self.tokenizers: list[Any] = []
+        self.models: list[Any] = []
+        self.hidden_sizes: list[int] = []
+
+        for name in self.model_names:
+            tok = AutoTokenizer.from_pretrained(name)
+            model = AutoModel.from_pretrained(name)
+            if self.fp16 and self.device.startswith("cuda"):
+                model.half()
+            model.to(self.device).eval()
+
+            self.tokenizers.append(tok)
+            self.models.append(model)
+            self.hidden_sizes.append(int(getattr(model.config, "hidden_size", 768)))
+
+    def _encode_with_model(
+        self, model: Any, tok: Any, texts: Sequence[str], *, model_label: str
+    ) -> np.ndarray:
         n_texts = len(texts)
+        hidden_size = int(getattr(model.config, "hidden_size", 768))
         if n_texts == 0:
-            hidden_size = getattr(self.model.config, "hidden_size", 768)
             return np.zeros((0, hidden_size), dtype=np.float32)
 
-        hidden_size = getattr(self.model.config, "hidden_size", 768)
         out = np.empty((n_texts, hidden_size), dtype=np.float32)
         bs = self.batch_size
         total_tokens = 0
@@ -112,15 +151,16 @@ class Embedder:
         start_ts = time.perf_counter()
         if log_progress:
             logger.info(
-                "Encoding %d texts with batch size %d on %s",
+                "Encoding %d texts with %s (batch size %d) on %s",
                 n_texts,
+                model_label,
                 bs,
                 self.device,
             )
 
         for i in range(0, n_texts, bs):
             batch = texts[i : i + bs]
-            toks = self.tok.batch_encode_plus(
+            toks = tok.batch_encode_plus(
                 batch,
                 padding=True,
                 max_length=self.max_length,
@@ -130,7 +170,7 @@ class Embedder:
             total_tokens += int(toks["attention_mask"].sum().item())
             toks = {k: v.to(self.device) for k, v in toks.items()}
             with torch.inference_mode():
-                last_hidden = self.model(**toks)[0]
+                last_hidden = model(**toks)[0]
                 if self.mean_pool:
                     attn = (toks["attention_mask"].unsqueeze(-1)).float()
                     summed = (last_hidden * attn).sum(dim=1)
@@ -144,9 +184,10 @@ class Embedder:
 
             if log_progress and offset >= next_progress:
                 logger.info(
-                    "Encoded %d/%d texts (%.0f%%)",
+                    "Encoded %d/%d texts with %s (%.0f%%)",
                     offset,
                     n_texts,
+                    model_label,
                     100 * offset / n_texts,
                 )
                 next_progress += progress_interval
@@ -154,23 +195,68 @@ class Embedder:
         if log_progress:
             duration = time.perf_counter() - start_ts
             logger.info(
-                "Finished encoding %d texts in %.2fs (%.1f tokens/s)",
+                "Finished encoding %d texts with %s in %.2fs (%.1f tokens/s)",
                 n_texts,
+                model_label,
                 duration,
                 total_tokens / duration if duration > 0 else float("inf"),
             )
         return l2_normalize(out)
+
+    @torch.no_grad()
+    def encode(self, texts: Sequence[str]) -> np.ndarray:
+        n_texts = len(texts)
+        total_dim = int(sum(self.hidden_sizes)) if self.hidden_sizes else 0
+        if n_texts == 0:
+            if self._pca_components is not None:
+                total_dim = min(total_dim, self._pca_components)
+            return np.zeros((0, total_dim), dtype=np.float32)
+
+        model_vecs = [
+            self._encode_with_model(model, tok, texts, model_label=name)
+            for name, model, tok in zip(self.model_names, self.models, self.tokenizers)
+        ]
+
+        combined = model_vecs[0] if len(model_vecs) == 1 else np.concatenate(model_vecs, axis=1)
+
+        if self._pca_components is not None:
+            if self._pca_model is None:
+                n_components = min(
+                    self._pca_components,
+                    combined.shape[1],
+                    combined.shape[0],
+                )
+                self._pca_model = PCA(
+                    n_components=n_components,
+                    whiten=self._pca_whiten,
+                )
+            if self._pca_fitted:
+                combined = self._pca_model.transform(combined)
+            else:
+                combined = self._pca_model.fit_transform(combined)
+                self._pca_fitted = True
+                logger.info(
+                    "Fitted PCA on %d embeddings (n_components=%d, whiten=%s)",
+                    combined.shape[0],
+                    self._pca_model.n_components_,
+                    self._pca_model.whiten,
+                )
+
+        return l2_normalize(combined.astype(np.float32, copy=False))
 
     def export_init_kwargs(self) -> Dict[str, Any]:
         """Return keyword arguments that can rebuild this embedder."""
 
         return {
             "model_name": self.model_name,
+            "models": list(self.model_names),
             "device": self.device,
             "max_length": self.max_length,
             "batch_size": self.batch_size,
             "fp16": self.fp16,
             "mean_pool": self.mean_pool,
+            "pca_components": self._pca_components,
+            "pca_whiten": self._pca_whiten,
         }
 
 
