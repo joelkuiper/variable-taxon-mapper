@@ -30,16 +30,16 @@ definition = "definition_summary" # use this when working with summarized defini
 # label = "label"
 
 [embedder]
-# model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
+model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
 # model_name = "BAAI/bge-large-en-v1.5"
-models = ["BAAI/bge-large-en-v1.5", "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"]
+# models = ["BAAI/bge-large-en-v1.5", "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"]
 max_length = 512
 batch_size = 256
 fp16 = true
 # device = "cpu"
 mean_pool = false # false = CLS token
-pca_components = 256 # set to project concatenated embeddings (if models is provided)
-pca_whiten = true
+# pca_components = 256 # set to project concatenated embeddings (if models is provided)
+# pca_whiten = true
 
 [taxonomy_embeddings]
 gamma = 0.05
