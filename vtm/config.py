@@ -314,7 +314,7 @@ class PruningConfig:
 
 @dataclass
 class LLMConfig:
-    """Settings for LLM matching requests."""
+    """Connection and generation settings for LLM matching requests."""
 
     endpoint: str = "http://127.0.0.1:8080/v1"
     model: str = "gpt-3.5-turbo"
@@ -324,17 +324,35 @@ class LLMConfig:
     top_k: int = 20
     top_p: float = 0.8
     min_p: float = 0.0
-    cache_prompt: bool = True
-    n_keep: int = -1
     response_format: Optional[Dict[str, Any]] = None
     json_schema: Optional[Dict[str, Any]] = None
+
+    def to_kwargs(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class LlamaCppConfig:
+    """llama.cpp-specific toggles that may not be portable."""
+
+    cache_prompt: bool = True
+    n_keep: int = -1
+    force_slot_id: bool = False
+
+    def to_kwargs(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class PostprocessingConfig:
+    """Controls for interpreting and refining LLM outputs."""
+
     embedding_remap_threshold: float = 0.45
     alias_similarity_threshold: float = 0.9
     snap_to_child: bool = False
     snap_margin: float = 0.1
     snap_similarity: str = "token_sort"
     snap_descendant_depth: int = 1
-    force_slot_id: bool = False
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)
@@ -421,6 +439,8 @@ class AppConfig:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     pruning: PruningConfig = field(default_factory=PruningConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    llama_cpp: LlamaCppConfig = field(default_factory=LlamaCppConfig)
+    postprocessing: PostprocessingConfig = field(default_factory=PostprocessingConfig)
     prompts: PromptTemplateConfig = field(default_factory=PromptTemplateConfig)
     parallelism: ParallelismConfig = field(default_factory=ParallelismConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
@@ -433,6 +453,14 @@ def _coerce_section(section: Mapping[str, Any] | None, cls: type[Any]) -> Any:
         raise TypeError(f"Expected a mapping for {cls.__name__}, got {type(section)!r}")
     kwargs: MutableMapping[str, Any] = dict(section)
     return cls(**kwargs)
+
+
+def _coerce_optional_mapping(section: Mapping[str, Any] | None, label: str):
+    if section is None:
+        return None
+    if not isinstance(section, Mapping):
+        raise TypeError(f"Config '{label}' section must be a mapping if provided.")
+    return dict(section)
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -466,10 +494,38 @@ def load_config(path: str | Path) -> AppConfig:
     hnsw_section = raw.get("hnsw")
     evaluation_section = raw.get("evaluation")
     pruning_section = raw.get("pruning")
-    llm_section = raw.get("llm")
+    llm_section = _coerce_optional_mapping(raw.get("llm"), "llm")
+    postprocessing_section = _coerce_optional_mapping(
+        raw.get("postprocessing"), "postprocessing"
+    )
+    llama_cpp_section = _coerce_optional_mapping(raw.get("llama_cpp"), "llama_cpp")
     prompts_section = raw.get("prompts")
     parallel_section = raw.get("parallelism")
     http_section = raw.get("http")
+
+    # Backwards compatibility: split legacy llm keys into new sections when
+    # explicit sections are not provided.
+    postprocessing_keys = {
+        "embedding_remap_threshold",
+        "alias_similarity_threshold",
+        "snap_to_child",
+        "snap_margin",
+        "snap_similarity",
+        "snap_descendant_depth",
+    }
+    llama_cpp_keys = {"cache_prompt", "n_keep", "force_slot_id"}
+    if llm_section is None:
+        llm_section = {}
+    if postprocessing_section is None:
+        postprocessing_section = {}
+    if llama_cpp_section is None:
+        llama_cpp_section = {}
+    for key in postprocessing_keys:
+        if key in llm_section and key not in postprocessing_section:
+            postprocessing_section[key] = llm_section.pop(key)
+    for key in llama_cpp_keys:
+        if key in llm_section and key not in llama_cpp_section:
+            llama_cpp_section[key] = llm_section.pop(key)
 
     evaluation_cfg = _coerce_section(evaluation_section, EvaluationConfig)
     if not isinstance(evaluation_section, Mapping) or "seed" not in evaluation_section:
@@ -488,6 +544,10 @@ def load_config(path: str | Path) -> AppConfig:
         evaluation=evaluation_cfg,
         pruning=_coerce_section(pruning_section, PruningConfig),
         llm=_coerce_section(llm_section, LLMConfig),
+        llama_cpp=_coerce_section(llama_cpp_section, LlamaCppConfig),
+        postprocessing=_coerce_section(
+            postprocessing_section, PostprocessingConfig
+        ),
         prompts=_coerce_section(prompts_section, PromptTemplateConfig),
         parallelism=_coerce_section(parallel_section, ParallelismConfig),
         http=_coerce_section(http_section, HttpConfig),

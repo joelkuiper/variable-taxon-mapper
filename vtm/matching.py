@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
-from vtm.config import HttpConfig, LLMConfig
+from vtm.config import HttpConfig, LLMConfig, LlamaCppConfig, PostprocessingConfig
 from openai.types.chat import ChatCompletionMessageParam
 from .embedding import Embedder, collect_item_texts
 from .snap import maybe_snap_to_child
@@ -224,16 +224,18 @@ class MatchRequest:
     item_columns: Mapping[str, Any] | None = None
 
 
-def _llm_kwargs_for_config(cfg: LLMConfig, *, slot_id: int) -> Dict[str, Any]:
-    use_explicit_slots = getattr(cfg, "force_slot_id", False)
+def _llm_kwargs_for_config(
+    cfg: LLMConfig, llama_cpp_cfg: LlamaCppConfig, *, slot_id: int
+) -> Dict[str, Any]:
+    use_explicit_slots = getattr(llama_cpp_cfg, "force_slot_id", False)
 
     kwargs: Dict[str, Any] = {
         "temperature": cfg.temperature,
         "top_k": cfg.top_k,
         "top_p": cfg.top_p,
         "min_p": cfg.min_p,
-        "cache_prompt": cfg.cache_prompt,
-        "n_keep": cfg.n_keep,
+        "cache_prompt": llama_cpp_cfg.cache_prompt,
+        "n_keep": llama_cpp_cfg.n_keep,
     }
     if cfg.response_format is not None:
         kwargs["response_format"] = cfg.response_format
@@ -261,6 +263,8 @@ async def match_items_to_tree(
     embedder: Embedder,
     hnsw_index,
     llm_config: LLMConfig,
+    llama_cpp_config: LlamaCppConfig,
+    postprocessing: PostprocessingConfig,
     http_config: HttpConfig | None = None,
     prompt_renderer: PromptRenderer | None = None,
     encode_lock: Optional[threading.Lock] = None,
@@ -281,7 +285,12 @@ async def match_items_to_tree(
         )
         _print_prompt_once(messages)
         message_payloads.append(
-            (messages, _llm_kwargs_for_config(llm_config, slot_id=req.slot_id))
+            (
+                messages,
+                _llm_kwargs_for_config(
+                    llm_config, llama_cpp_config, slot_id=req.slot_id
+                ),
+            )
         )
 
     resolved_timeout: float | None = None
@@ -301,7 +310,9 @@ async def match_items_to_tree(
     )
 
     encode_guard = encode_lock or threading.Lock()
-    embedding_remap_threshold = getattr(llm_config, "embedding_remap_threshold", 0.45)
+    embedding_remap_threshold = getattr(
+        postprocessing, "embedding_remap_threshold", 0.45
+    )
 
     item_texts = [_compose_item_text(req.item) for req in requests]
 
@@ -349,7 +360,7 @@ async def match_items_to_tree(
             node_label_raw,
             allowed_labels=req.allowed_labels,
             similarity_cutoff=getattr(
-                llm_config, "alias_similarity_threshold", 0.9
+                postprocessing, "alias_similarity_threshold", 0.9
             ),
         )
 
@@ -358,7 +369,7 @@ async def match_items_to_tree(
                 canonical_label,
                 item_text=item_text,
                 allowed_children=req.allowed_children,
-                llm_config=llm_config,
+                llm_config=postprocessing,
                 embedder=embedder,
                 encode_lock=encode_guard,
             )
@@ -440,13 +451,13 @@ async def match_items_to_tree(
                     ):
                         resolved_label = allowed_idx_map[best_idx]
                         snapped_label = maybe_snap_to_child(
-                            resolved_label,
-                            item_text=item_text,
-                            allowed_children=req.allowed_children,
-                            llm_config=llm_config,
-                            embedder=embedder,
-                            encode_lock=encode_guard,
-                        )
+                        resolved_label,
+                        item_text=item_text,
+                        allowed_children=req.allowed_children,
+                        llm_config=postprocessing,
+                        embedder=embedder,
+                        encode_lock=encode_guard,
+                    )
                         snapped = bool(
                             snapped_label
                             and resolved_label
@@ -517,6 +528,8 @@ async def match_item_to_tree(
     embedder: Embedder,
     hnsw_index,
     llm_config: LLMConfig,
+    llama_cpp_config: LlamaCppConfig,
+    postprocessing: PostprocessingConfig,
     slot_id: int = 0,
     item_columns: Mapping[str, Any] | None = None,
     prompt_renderer: PromptRenderer | None = None,
@@ -542,6 +555,8 @@ async def match_item_to_tree(
         embedder=embedder,
         hnsw_index=hnsw_index,
         llm_config=llm_config,
+        llama_cpp_config=llama_cpp_config,
+        postprocessing=postprocessing,
         prompt_renderer=prompt_renderer,
         encode_lock=encode_lock,
     )

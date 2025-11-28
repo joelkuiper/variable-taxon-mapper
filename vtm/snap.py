@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from typing import Iterable, Mapping, Optional, Sequence
 
-from vtm.config import LLMConfig
+from vtm.config import PostprocessingConfig
 from .embedding import Embedder
 from .string_similarity import (
     normalized_token_set_ratio,
@@ -129,7 +129,7 @@ def maybe_snap_to_child(
     *,
     item_text: str,
     allowed_children: Mapping[str, Sequence[Sequence[str]] | Sequence[str]] | None,
-    llm_config: LLMConfig,
+    llm_config: PostprocessingConfig,
     embedder: Embedder,
     encode_lock: threading.Lock | None,
 ) -> Optional[str]:

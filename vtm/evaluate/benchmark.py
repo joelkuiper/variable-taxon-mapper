@@ -17,6 +17,8 @@ from vtm.config import (
     HNSWConfig,
     HttpConfig,
     LLMConfig,
+    LlamaCppConfig,
+    PostprocessingConfig,
     PromptTemplateConfig,
     ParallelismConfig,
     PruningConfig,
@@ -153,6 +155,8 @@ def run_label_benchmark(
     eval_config: EvaluationConfig | Dict[str, Any] | None = None,
     pruning_config: PruningConfig | Dict[str, Any] | None = None,
     llm_config: LLMConfig | Dict[str, Any] | None = None,
+    llama_cpp_config: LlamaCppConfig | Dict[str, Any] | None = None,
+    postprocessing_config: PostprocessingConfig | Dict[str, Any] | None = None,
     parallel_config: ParallelismConfig | Dict[str, Any] | None = None,
     http_config: HttpConfig | Dict[str, Any] | None = None,
     evaluate: bool = True,
@@ -170,6 +174,12 @@ def run_label_benchmark(
     cfg = coerce_eval_config(eval_config)
     pruning_cfg = coerce_config(pruning_config, PruningConfig, "pruning_config")
     llm_cfg = coerce_config(llm_config, LLMConfig, "llm_config")
+    llama_cpp_cfg = coerce_config(
+        llama_cpp_config, LlamaCppConfig, "llama_cpp_config"
+    )
+    postprocessing_cfg = coerce_config(
+        postprocessing_config, PostprocessingConfig, "postprocessing_config"
+    )
     parallel_cfg = coerce_config(parallel_config, ParallelismConfig, "parallel_config")
     http_cfg = coerce_config(http_config, HttpConfig, "http_config")
     hnsw_cfg = coerce_config(hnsw_config, HNSWConfig, "hnsw_config")
@@ -262,6 +272,8 @@ def run_label_benchmark(
         jobs,
         pruning_cfg=pruning_cfg,
         llm_cfg=llm_cfg,
+        llama_cpp_cfg=llama_cpp_cfg,
+        postprocessing_cfg=postprocessing_cfg,
         parallel_cfg=parallel_cfg,
         http_cfg=http_cfg,
         keywords=keywords,
