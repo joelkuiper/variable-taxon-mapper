@@ -308,42 +308,64 @@ node_budget = 200
 # =============================================================================
 # LLM configuration
 #
-# Connection (llama.cpp or any OpenAI-compatible endpoint)
-# - endpoint: chat completion endpoint URL.
-# - model: model identifier; empty uses the server default.
-# - api_key: API key for remote endpoints (leave blank for local llama.cpp or
-#   use OPENAI_API_KEY).
+# [llm]
+#   endpoint
+#     Chat completion endpoint URL (local llama.cpp or any OpenAI-compatible API).
 #
-# Generation controls
-# - n_predict: maximum tokens to generate.
-# - temperature, top_k, top_p, min_p: sampling parameters (keep temperature at
-#   zero for deterministic classification).
+#   model
+#     Model identifier at that endpoint. Leave empty to use the server default.
 #
-# llama.cpp compatibility toggles (optional)
-# - cache_prompt: enable prompt caching when supported by llama.cpp.
-# - n_keep, force_slot_id: llama.cpp-specific knobs that may not work on other
-#   OpenAI endpoints.
+#   api_key
+#     API key for remote endpoints. Leave blank when using local llama.cpp or
+#     when providing OPENAI_API_KEY via the environment.
 #
-# Post-processing of LLM outputs
-# - embedding_remap_threshold: cosine distance threshold when remapping to known
-#   taxonomy nodes.
-# - alias_similarity_threshold: string similarity threshold for mapping to known
-#   labels.
-# - snap_to_child: refine broad ancestor predictions down to better matching
-#   children when enabled.
-# - snap_margin: minimum margin to allow snapping.
-# - snap_similarity: similarity method for snapping ("token_sort", "token_set",
-#   or "embedding").
-# - snap_descendant_depth: maximum descendant depth to consider when snapping.
+#   n_predict
+#     Maximum number of tokens to generate.
 #
-# Prompt templates
-# - system_template_path: path to the system prompt Jinja2 template.
-# - user_template_path: path to the user prompt Jinja2 template.
+#   temperature, top_k, top_p, min_p
+#     Sampling parameters. For deterministic classification, set temperature to 0.
+#
+# [llama_cpp]
+#   cache_prompt
+#     Enable prompt caching when supported by llama.cpp.
+#
+#   n_keep, force_slot_id
+#     llama.cpp-specific toggles. These may not apply to other OpenAI-compatible
+#     servers.
+#
+# [postprocessing]
+#   embedding_remap_threshold
+#     Cosine distance threshold for mapping LLM outputs back to known taxonomy
+#     nodes using embeddings.
+#
+#   alias_similarity_threshold
+#     String similarity threshold for mapping LLM output to known labels.
+#
+#   snap_to_child
+#     When enabled, refine broad ancestor predictions by snapping to a more
+#     specific matching child node.
+#
+#   snap_margin
+#     Minimum margin required to perform snapping.
+#
+#   snap_similarity
+#     Similarity metric used for snapping ("token_sort", "token_set", or
+#     "embedding").
+#
+#   snap_descendant_depth
+#     Maximum descendant depth to consider when snapping.
+#
+# [prompts]
+#   system_template_path
+#     Path to the system prompt Jinja2 template.
+#
+#   user_template_path
+#     Path to the user prompt Jinja2 template.
 # =============================================================================
 [llm]
 endpoint = "http://127.0.0.1:8080/v1"
 model    = ""
-api_key  = "" # leave blank to use OPENAI_API_KEY or a local default
+api_key  = ""
 
 n_predict   = 32
 temperature = 0.0
@@ -360,7 +382,6 @@ force_slot_id = false
 embedding_remap_threshold  = 0.25
 alias_similarity_threshold = 0.9
 
-# Enable snapping ancestor predictions down to a better matching child label.
 snap_to_child         = false
 snap_margin           = 0.25
 snap_similarity       = "token_set"
