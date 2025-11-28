@@ -1,6 +1,7 @@
-# Variable Taxon Mapper
+![Logo](./doc/logo.png)
+# Variable Taxon Mapper (VTM)
 
-Variable Taxon Mapper maps free-text variable metadata (such as variable names and descriptions) to a curated biomedical taxonomy.
+Variable Taxon Mapper maps free-text variable metadata (such as variable names and descriptions) to a curated (biomedical) taxonomy.
 
 It addresses a common harmonization problem: datasets often include thousands of variables with inconsistent naming, vague descriptions, or no standard annotation. This tool links each variable to a taxonomy term, making datasets comparable and interoperable.
 
@@ -22,7 +23,7 @@ On a real dataset of 1,363 variables with known ground truth, the system achieve
 * **An additional ~24%** mapped to a closely related parent/child within the right branch.
 * **~13% incorrect branch placements**.
 
-See `doc/results/` for detailed metrics.
+See [doc/results/](doc/results/) for detailed metrics.
 
 ---
 
@@ -290,4 +291,4 @@ See [doc/nibbler_cluster.md](doc/nibbler_cluster.md) for Slurm and multi-GPU clu
 # Full Configuration Reference
 
 The complete configuration is defined in the TOML file.
-See the heavily annotated `config.example.toml` for a full option reference and explanations.
+See the heavily annotated [config.example.toml](config.example.toml) for a full option reference and explanations.
