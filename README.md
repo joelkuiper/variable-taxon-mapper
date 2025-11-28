@@ -2,7 +2,14 @@
 
 Variable Taxon Mapper maps free text variable metadata to a curated biomedical taxonomy.
 
-It solves a common harmonization problem: datasets often contain thousands of variables with inconsistent names, vague descriptions, and no standard annotation. This tool links each variable to a taxonomy term, making datasets comparable and interoperable.
+It solves a common harmonization problem: datasets often contain thousands of variables with inconsistent names, vague descriptions, and no standard annotation. The current framing targets the https://molgeniscatalogue.org/ ingestion task: turning study-specific variables into catalogue-ready, taxonomy-linked entries that can be searched and compared across cohorts.
+
+**Recent evaluation snapshot (2025-11-26)**
+
+* 86.87% accuracy (any match) on 1,363 evaluated rows
+* 97.14% possible-correct rate under allowed matches
+
+See [doc/results/20251126_results.md](doc/results/20251126_results.md) for the full tables.
 
 The system works in two phases:
 
@@ -19,6 +26,20 @@ Inputs:
 
 - A variables table (CSV, Parquet, or Feather)
 - A taxonomy table with one row per taxonomy node
+
+### Input and output formats
+
+**Variables table**
+
+* Must include the columns referenced in `[fields]` within `config.example.toml`
+* Common fields: `variable_name`, `label`, `description`, `units`, `table`, `domain`
+* Text assembled from `embedding_columns` becomes the representation sent to the encoder
+
+**Taxonomy table**
+
+* Columns mapped in `[taxonomy_fields]` (label, parent, optional parents list, description)
+* Supports multiple parents via a delimiter (see `parents` field in the config)
+* Any additional metadata columns are preserved for downstream reporting
 
 For each variable:
 
@@ -240,8 +261,8 @@ Steps:
 
 1. Render system and user prompts using:
 
-   * `system_template_path`
-   * `user_template_path`
+   * [`system_template_path`](./templates/match_system_prompt.j2)
+   * [`user_template_path`](./templates/match_user_prompt.j2)
 
 2. Call an OpenAI-compatible endpoint (`[llm]`).
 
