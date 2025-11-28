@@ -1,57 +1,51 @@
 # Variable Taxon Mapper
 
-Variable Taxon Mapper maps free text variable metadata to a curated biomedical taxonomy.
+Variable Taxon Mapper maps free-text variable metadata (such as variable names and descriptions) to a curated biomedical taxonomy.
 
-It solves a common harmonization problem: datasets often contain thousands of variables with inconsistent names, vague descriptions, and no standard annotation. The current framing targets the https://molgeniscatalogue.org/ ingestion task: turning study-specific variables into catalogue-ready, taxonomy-linked entries that can be searched and compared across cohorts.
-
-**Recent evaluation snapshot (2025-11-26)**
-
-* 86.87% accuracy (any match) on 1,363 evaluated rows
-* 97.14% possible-correct rate under allowed matches
-
-See [doc/results/20251126_results.md](doc/results/20251126_results.md) for the full tables.
+It addresses a common harmonization problem: datasets often include thousands of variables with inconsistent naming, vague descriptions, or no standard annotation. This tool links each variable to a taxonomy term, making datasets comparable and interoperable.
 
 The system works in two phases:
 
-1. Use embeddings and the taxonomy graph to prune the taxonomy to a small, relevant sub tree.
-2. Ask an LLM to pick the best term within that tree.
+* Use embeddings and the taxonomy graph to prune the taxonomy to a small, relevant subtree.
+* Ask an LLM to pick the best term within that subtree.
 
-Together these produce mostly accurate mappings while keeping the LLM workload small.
+Together these steps produce accurate mappings while keeping LLM workload small.
 
 ---
 
-## High level pipeline
+## Evaluation
 
-Inputs:
+On a real dataset of 1,363 variables with known ground truth, the system achieved roughly:
 
-- A variables table (CSV, Parquet, or Feather)
-- A taxonomy table with one row per taxonomy node
+* **87% accuracy** when considering any correct placement in the taxonomy (exact match or correct branch).
+* **63% exact matches** to the correct term.
+* **An additional ~24%** mapped to a closely related parent/child within the right branch.
+* **~13% incorrect branch placements**.
 
-### Input and output formats
+See `doc/results/` for detailed metrics.
 
-**Variables table**
+---
 
-* Must include the columns referenced in `[fields]` within `config.example.toml`
-* Common fields: `variable_name`, `label`, `description`, `units`, `table`, `domain`
-* Text assembled from `embedding_columns` becomes the representation sent to the encoder
+## High-Level Pipeline
 
-**Taxonomy table**
+### Inputs
 
-* Columns mapped in `[taxonomy_fields]` (label, parent, optional parents list, description)
-* Supports multiple parents via a delimiter (see `parents` field in the config)
-* Any additional metadata columns are preserved for downstream reporting
+* A variables table (CSV, Parquet, or Feather).
+* A taxonomy table (CSV or Feather) with one row per taxonomy node (including term names and parent relationships).
 
-For each variable:
+### Per-Variable Steps
 
-1. Embeds taxonomy nodes and builds an approximate nearest neighbor index.
-2. Finds anchors in the taxonomy using semantic and lexical similarity.
-3. Expands those anchors to a local neighborhood in the taxonomy graph.
-4. Trims that region down to a small, well structured tree.
-5. Sends the pruned tree and variable metadata to an LLM for final selection.
+* Embed taxonomy and build ANN index.
+* Find anchors via semantic similarity and lexical matching.
+* Expand these anchors in the taxonomy graph.
+* Trim the expanded region into a small subtree.
+* Ask an LLM to choose the best term from this subtree.
 
-### ASCII flow
+---
 
-```text
+## ASCII Flow
+
+```
 Variables.csv + Taxonomy.csv
         │
         ▼
@@ -66,277 +60,191 @@ For each variable:
   │    ├─ ANN similarity search
   │    └─ Lexical similarity
   ├─ Expand anchors
-  ├─ Trim candidates to a sub tree
-  ├─ Render prompt with sub tree
+  ├─ Trim candidates to a subtree
+  ├─ Render prompt with subtree
   ├─ Call LLM for final label
   └─ Record prediction
-````
+```
 
 ---
 
-## Conceptual overview
+## Conceptual Overview
 
-A short summary of how it works:
+The mapping process works as follows:
 
-* Each taxonomy node becomes a vector that encodes meaning and some hierarchical structure.
-* The variable text is also embedded.
-* The system retrieves a small set of nearest taxonomy nodes (anchors).
-* Those anchors define a region of interest in the taxonomy graph.
-* That region is expanded, cleaned, and trimmed to a compact candidate sub tree.
-* The sub tree and variable metadata are shown to an LLM.
-* The LLM selects the best fitting term.
-* The term becomes the final taxonomy assignment.
+* Each taxonomy node is embedded into a vector space encoding its meaning and hierarchical context.
+* The variable text is embedded into the same space.
+* Nearest taxonomy nodes are retrieved as **anchors**.
+* These anchors define a local region of the taxonomy.
+* The region is expanded, pruned, and arranged into a small subtree.
+* An LLM receives this subtree plus the variable’s metadata and selects the best term.
+* The chosen term becomes the final taxonomy assignment.
 
-Default components:
+By default, the mapper uses:
 
-* Embeddings: SapBERT or similar biomedical models
-* ANN search: HNSW
-* LLM: Qwen3 4B via llama.cpp
-* Alternative LLM backends: any OpenAI-compatible endpoint
+* **SapBERT** or similar biomedical model for embeddings.
+* **HNSW** for approximate nearest neighbor search.
+* **Qwen-3 4B** via `llama.cpp` for the LLM step (or any OpenAI-compatible model via API).
 
-Outputs and summaries live in `doc/`, for example `doc/results`.
+See `doc/` for detailed evaluation outputs.
 
 ---
 
-## Why it is built this way
+## Why It Is Built This Way
 
-This architecture comes from practical constraints when mapping real biomedical variables.
+### Embeddings Alone Are Not Enough
 
-### 1. Embeddings alone do not solve the task
+Variable names in the wild are messy. They may use acronyms, units, or local shorthand. Some taxonomy terms are abstract or located in unexpected branches. Pure embedding similarity can be misleading in such cases.
 
-Variables are messy:
+### LLMs Cannot Handle Large Taxonomies
 
-* They use abbreviations, shorthand, and lab-specific conventions.
-* Many contain measurement units or custom formatting.
-* Some taxonomy labels are very abstract or appear in unexpected branches.
+Biomed taxonomies often contain thousands of terms. LLMs:
 
-Cosine similarity alone often retrieves superficially similar but incorrect labels.
-Even top-10 or top-20 neighbors may not contain the right term if the taxonomy is large or deeply hierarchical.
+* cannot read them in one prompt,
+* struggle with long lists of similar items,
+* become slow or unreliable with huge contexts.
 
-### 2. LLMs cannot handle large taxonomies
+The LLM must only receive a small, curated subset.
 
-A typical taxonomy might contain thousands of terms.
-LLMs:
+### Combining Approaches Solves Both Problems
 
-* cannot read full taxonomies in a single prompt,
-* degrade when given long lists of similar items, and
-* become slow or unstable with large contexts.
+This architecture separates:
 
-The LLM must be shown a tiny, relevant subset.
+* **Where to look:** embeddings + graph pruning,
+* **What fits best:** LLM selection from a small candidate set.
 
-### 3. Combining both methods solves both problems
+This provides:
 
-The system separates:
+* Fast, deterministic retrieval of candidates.
+* Small, meaningful context for the LLM.
+* Structured JSON output.
+* A configurable pipeline.
 
-* **Where to look** → handled by embeddings + graph pruning
-* **What fits best** → handled by the LLM
-
-This gives:
-
-* Fast, deterministic candidate retrieval
-* A small and meaningful context for the LLM
-* A consistent JSON output schema
-* A fully configurable pipeline in `config.example.toml`
-
-A complete configuration reference is available at:
-[`config.example.toml`](./config.example.toml)
+See `config.example.toml` for a complete reference.
 
 ---
 
-## Pipeline stages
+# Pipeline Stages
 
-Below is a deeper, technical walk-through of the internal stages.
+## Embedding the Taxonomy
 
----
+* Load taxonomy and construct a directed acyclic graph.
+* Compute embeddings using a biomedical encoder.
+* Optionally incorporate hierarchy by mixing parent/child vectors.
+* Normalize embeddings and index them via HNSW.
 
-### 1. Embedding the taxonomy
-
-Goal: represent each taxonomy node as a vector that reflects both its meaning and its position in the hierarchy.
-
-Steps:
-
-1. Read taxonomy from `[data].keywords_csv`.
-2. Map column names using `[taxonomy_fields]` (name, parent, parents, label, definition).
-3. Build a directed acyclic graph using `networkx`.
-
-   * One row → one node
-   * Parent relationships define the hierarchy
-   * Multi-parent taxonomies are supported via a delimited `parents` column
-4. Compute base embeddings with the model from `[embedder]`.
-
-   * Usually embedding the node’s name and optionally its definition
-5. Inject hierarchy:
-
-   * parent → child mixing via `taxonomy_embeddings.gamma`
-   * optional child → parent mixing via `child_aggregation_weight`
-6. Normalize vectors and build an HNSW index (`[hnsw]`).
-
-Why this stage exists:
-
-* Taxonomy labels are often short or ambiguous.
-* Definitions clarify meaning.
-* Hierarchy mixing ensures that local embeddings reflect broader context.
+This provides semantic and structural grounding for later retrieval steps.
 
 ---
 
-### 2. Getting anchors
+## Getting Anchors
 
-Goal: identify a small set of promising taxonomy nodes for each variable.
+For each variable:
 
-Steps:
+* Embed the variable’s combined text fields.
+* Retrieve top-K nearest nodes via ANN search.
+* Perform lexical matching for direct or fuzzy hits.
+* Merge results into a final anchor set.
 
-1. Build variable text from `[fields].embedding_columns`.
-2. Embed it using the same encoder.
-3. Semantic anchors:
-
-   * Query the HNSW index for the top `anchor_top_k` neighbors
-4. Lexical anchors:
-
-   * Fuzzy matches between variable text and taxonomy labels
-   * Up to `lexical_anchor_limit` matches
-5. Merge and dedupe.
-
-Why this stage exists:
-
-* Semantic anchors capture meaning.
-* Lexical anchors catch obvious direct matches (e.g. “BMI” → “Body mass index”).
-* Combining both improves recall before pruning.
+Semantic and lexical recall complement one another, ensuring the correct region is included early.
 
 ---
 
-### 3. Expanding anchors
+## Expanding the Anchors
 
-Goal: build a local candidate region around the anchors.
+The anchor set is expanded to include:
 
-Steps:
+* **Ancestors** (to generalize).
+* **Descendants** (to specialize).
+* Optional **community detection** to isolate cohesive regions.
+* Optional **graph scoring** (e.g., PageRank) to identify central nodes.
 
-* Add ancestors up to the root (unless the pruning mode limits this).
-* Add descendants up to `max_descendant_depth`.
-* Optionally perform community detection:
-
-  * controlled by `community_clique_size` and `max_community_size`
-* Some modes compute PageRank scores inside this region.
-
-Why this stage exists:
-
-* A variable often belongs *near* a semantic anchor, but not exactly at it.
-* Expanding up/down the graph increases recall.
-* Community detection helps in dense areas like symptoms or phenotypes.
-
-Key config: `[pruning].pruning_mode`, `max_descendant_depth`, community settings.
+This greatly increases the chance that the true label appears in the candidate mix.
 
 ---
 
-### 4. Trimming the tree back
+## Trimming the Tree
 
-Goal: shrink the expanded region to a small, well-organized sub tree to show the LLM.
+The expanded candidate set is pruned:
 
-Steps:
+* Apply a pruning strategy (similarity-based, radius-based, centrality-based, or connecting-tree heuristics).
+* Enforce a **node budget** to ensure LLM-friendly size.
+* Arrange remaining nodes into a clean subtree.
 
-1. Score or filter nodes depending on pruning mode:
-
-   * similarity-based
-   * radius-based
-   * Steiner-like
-   * community-pagerank
-2. Apply `node_budget` as a hard cap on the maximum number of nodes.
-3. Sort nodes for LLM display:
-
-   * hierarchical sorting: `tree_sort_mode`
-   * top suggestions: `suggestion_sort_mode`, `suggestion_list_limit`
-
-Why this stage exists:
-
-* LLM prompts must stay small.
-* A compact, well ordered tree improves comprehension.
-* The budgeted sub tree usually contains the correct term in practice.
+A compact and structured subtree helps the LLM make a precise choice.
 
 ---
 
-### 5. Asking the LLM for the final label
+## Final LLM Selection
 
-Goal: pick the single best taxonomy node from the pruned sub tree.
+* Build prompt using system and user templates.
+* Provide the variable description and pruned subtree.
+* Call the configured LLM.
+* Expect a minimal JSON output such as:
 
-Steps:
+```json
+{"label": "Body height"}
+```
 
-1. Render system and user prompts using:
+* Perform optional post-processing, including alias normalization or snapping high-level labels to appropriate children.
 
-   * [`system_template_path`](./templates/match_system_prompt.j2)
-   * [`user_template_path`](./templates/match_user_prompt.j2)
-
-2. Call an OpenAI-compatible endpoint (`[llm]`).
-
-3. Receive a constrained JSON object, e.g.:
-
-   ```json
-   {"label": "Body height"}
-   ```
-
-4. Postprocess the result:
-
-   * remap aliases or misspellings
-   * optionally snap broad labels to child nodes (`snap_to_child`)
-
-Why this stage exists:
-
-* LLMs are good at resolving borderline cases:
-
-  * similar siblings
-  * multiword synonyms
-  * vague variable names
-* The pruned sub tree gives the LLM exactly the context it needs.
+This step handles the nuanced semantic decision that embeddings and heuristics cannot fully resolve.
 
 ---
 
-## Installation and running
+# Installation and Running
 
-### Install dependencies
+## Install Dependencies
+
+Using `uv`:
 
 ```bash
 uv sync
 source .venv/bin/activate
 ```
 
-### Start an LLM backend
+## Start an LLM Backend
 
-Local llama.cpp:
+### Local LLM (via `llama.cpp`)
+
+Example:
 
 ```bash
 llama-server -hf unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
 ```
 
-Using OpenAI instead:
+### Remote LLM (OpenAI API)
 
 ```toml
 [llm]
 endpoint = "https://api.openai.com/v1"
 model = "gpt-4"
-api_key = "sk-..."
+api_key = "sk-...your API key..."
 ```
 
 ---
 
-## Core commands
+## Core Commands
 
-Evaluate mappings using gold labels:
+### Evaluate With Gold Labels
 
 ```bash
 vtm evaluate config.example.toml
 ```
 
-Predict without evaluation:
+### Predict Without Evaluation
 
 ```bash
 vtm predict config.example.toml --output data/predictions.parquet
 ```
 
-Check pruning coverage:
+### Check Pruning Coverage
 
 ```bash
 vtm prune-check config.example.toml --limit 10000
 ```
 
-Optimize pruning parameters:
+### Optimize Pruning Settings
 
 ```bash
 vtm optimize-pruning config.example.toml --trials 80
@@ -344,11 +252,9 @@ vtm optimize-pruning config.example.toml --trials 80
 
 ---
 
-## Extra tools
+# Additional Tools
 
-### Error review CLI
-
-Interactive review:
+## Error Review CLI
 
 ```bash
 python -m vtm.error_review_cli \
@@ -358,24 +264,30 @@ python -m vtm.error_review_cli \
   --config config.toml
 ```
 
-### Programmatic use
+This provides an interactive interface for examining and annotating misclassifications.
+
+---
+
+## Programmatic Use
 
 ```python
 from vtm import VariableTaxonMapper
+
 mapper = VariableTaxonMapper(config_path="config.toml")
 pred_df = mapper.predict()
 ```
 
-### HPC usage
-
-For Slurm jobs and GPU cluster instructions see:
-[`doc/nibbler_cluster.md`](doc/nibbler_cluster.md)
+Use `mapper.evaluate()` if gold labels are available.
 
 ---
 
-## Full configuration reference
+## HPC Usage
 
-The full configuration is in:
-[`config.example.toml`](./config.example.toml)
+See `doc/nibbler_cluster.md` for Slurm and multi-GPU cluster instructions.
 
-It is self-documenting: every option includes comments describing what it controls and why it exists.
+---
+
+# Full Configuration Reference
+
+The complete configuration is defined in the TOML file.
+See the heavily annotated `config.example.toml` for a full option reference and explanations.
