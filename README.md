@@ -204,8 +204,6 @@ Why this stage exists:
 
 Key config: `[pruning].pruning_mode`, `max_descendant_depth`, community settings.
 
-See [`doc/pruning_strategies.md`](doc/pruning_strategies.md) for pseudocode descriptions of each pruning mode.
-
 ---
 
 ### 4. Trimming the tree back
