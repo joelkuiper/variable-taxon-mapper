@@ -1,13 +1,15 @@
 # Variable Taxon Mapper
 
-Variable Taxon Mapper maps free text **variable metadata** to a curated **biomedical taxonomy**.
+Variable Taxon Mapper maps free text variable metadata to a curated biomedical taxonomy.
 
-It works in two main phases:
+It solves a common harmonization problem: datasets often contain thousands of variables with inconsistent names, vague descriptions, and no standard annotation. This tool links each variable to a taxonomy term, making datasets comparable and interoperable.
 
-1. Use **embeddings** and the taxonomy graph to prune the taxonomy to a small, relevant sub tree.
-2. Ask an **LLM** to pick the single best label from that sub tree.
+The system works in two phases:
 
-This helps with dataset harmonization and consistent variable annotation across studies.
+1. Use embeddings and the taxonomy graph to prune the taxonomy to a small, relevant sub tree.
+2. Ask an LLM to pick the best term within that tree.
+
+Together these produce accurate, explainable mappings while keeping the LLM workload small and cheap.
 
 ---
 
@@ -15,16 +17,16 @@ This helps with dataset harmonization and consistent variable annotation across 
 
 Inputs:
 
-- A **variables table** (CSV, Parquet, or Feather).
-- A **taxonomy table** with one row per taxonomy node.
+- A variables table (CSV, Parquet, or Feather)
+- A taxonomy table with one row per taxonomy node
 
-For each variable, the system:
+For each variable:
 
-1. **Embeds the taxonomy** and builds a nearest neighbor index.
-2. **Gets anchors** by comparing the variable text to the taxonomy.
-3. **Expands anchors** into a local neighborhood in the taxonomy graph.
-4. **Trims the tree back** to a small, budgeted sub tree.
-5. **Asks the LLM for the final label** and records that label as the mapping.
+1. Embeds taxonomy nodes and builds an approximate nearest neighbor index.
+2. Finds anchors in the taxonomy using semantic and lexical similarity.
+3. Expands those anchors to a local neighborhood in the taxonomy graph.
+4. Trims that region down to a small, well structured tree.
+5. Sends the pruned tree and variable metadata to an LLM for final selection.
 
 ### ASCII flow
 
@@ -32,211 +34,236 @@ For each variable, the system:
 Variables.csv + Taxonomy.csv
         │
         ▼
-Build taxonomy graph (tree or forest)
-Embed all taxonomy terms
-Build HNSW index over taxonomy embeddings
+Build taxonomy graph
+Embed taxonomy nodes
+Build HNSW index
         │
 For each variable:
-  ├─ Build variable text from configured columns
-  ├─ Embed variable text
+  ├─ Build variable text
+  ├─ Embed variable
   ├─ Get anchors
-  │    ├─ ANN similarity search (semantic anchors)
-  │    └─ Lexical similarity (lexical anchors)
-  ├─ Expand anchors into a candidate subgraph
-  ├─ Trim the tree back to a node budget
-  ├─ Render subgraph + variable into an LLM prompt
-  ├─ Call LLM to pick best label
-  └─ Post process and record final taxonomy label
-        │
-        ▼
-Predictions table (+ optional evaluation report in doc/results)
+  │    ├─ ANN similarity search
+  │    └─ Lexical similarity
+  ├─ Expand anchors
+  ├─ Trim candidates to a sub tree
+  ├─ Render prompt with sub tree
+  ├─ Call LLM for final label
+  └─ Record prediction
 ````
 
 ---
 
 ## Conceptual overview
 
-Non technical summary:
+A short summary of how it works:
 
-* The taxonomy is converted into vectors that encode meaning plus some hierarchy context.
-* Each variable description is converted into a vector with the same embedder.
-* The system finds a small set of anchors in the taxonomy that are close to the variable.
-* It expands around those anchors, then trims back to a compact candidate sub tree.
-* It shows that sub tree, plus the variable context, to an LLM and asks for the best fitting label.
-* The chosen label is the final taxonomy mapping for that variable.
+* Each taxonomy node becomes a vector that encodes meaning and some hierarchical structure.
+* The variable text is also embedded.
+* The system retrieves a small set of nearest taxonomy nodes (anchors).
+* Those anchors define a region of interest in the taxonomy graph.
+* That region is expanded, cleaned, and trimmed to a compact candidate sub tree.
+* The sub tree and variable metadata are shown to an LLM.
+* The LLM selects the best fitting term.
+* The term becomes the final taxonomy assignment.
 
-By default:
+Default components:
 
-* Embeddings use a biomedical model such as **SapBERT**.
-* Semantic search uses an **HNSW** index.
-* The LLM is **Qwen3 4B Instruct** served through **llama.cpp**.
-* The LLM endpoint is OpenAI compatible and can be pointed at **OpenAI** or any other compatible service.
+* Embeddings: SapBERT or similar biomedical models
+* ANN search: HNSW
+* LLM: Qwen3 4B via llama.cpp
+* Alternative LLM backends: any OpenAI-compatible endpoint
+
+Outputs and summaries live in `doc/`, for example `doc/results`.
+
+---
+
+## Why it is built this way
+
+This architecture comes from practical constraints when mapping real biomedical variables.
+
+### 1. Embeddings alone do not solve the task
+
+Variables are messy:
+
+* They use abbreviations, shorthand, and lab-specific conventions.
+* Many contain measurement units or custom formatting.
+* Some taxonomy labels are very abstract or appear in unexpected branches.
+
+Cosine similarity alone often retrieves superficially similar but incorrect labels.
+Even top-10 or top-20 neighbors may not contain the right term if the taxonomy is large or deeply hierarchical.
+
+### 2. LLMs cannot handle large taxonomies
+
+A typical taxonomy might contain thousands of terms.
+LLMs:
+
+* cannot read full taxonomies in a single prompt,
+* degrade when given long lists of similar items, and
+* become slow or unstable with large contexts.
+
+The LLM must be shown a tiny, relevant subset.
+
+### 3. Combining both methods solves both problems
+
+The system separates:
+
+* **Where to look** → handled by embeddings + graph pruning
+* **What fits best** → handled by the LLM
+
+This gives:
+
+* Fast, deterministic candidate retrieval
+* A small and meaningful context for the LLM
+* A consistent JSON output schema
+* A fully configurable pipeline in `config.example.toml`
+
+A complete configuration reference is available at:
+[`config.example.toml`](./config.example.toml)
 
 ---
 
 ## Pipeline stages
 
-### Embedding the taxonomy
+Below is a deeper, technical walk-through of the internal stages.
 
-**Goal:** represent each taxonomy node as a vector that reflects both its local meaning and its position in the hierarchy.
+---
 
-Steps:
+### 1. Embedding the taxonomy
 
-1. Read the taxonomy table from `[data].keywords_csv`.
-2. Map raw columns to logical fields using `[taxonomy_fields]`:
-
-   * `name`, `parent`, optional `parents`, `label`, `definition`.
-3. Build a directed acyclic graph using `networkx`:
-
-   * One node per taxonomy term.
-   * Each node has one primary parent by default.
-   * Optional multi parent support via a delimited `parents` column.
-4. Compute base embeddings with the model from `[embedder]`:
-
-   * Base text is usually `name`.
-   * Optionally mix in `definition` controlled by `taxonomy_embeddings.summary_weight`.
-5. Inject hierarchy structure:
-
-   * Add a fraction `gamma` of each parent embedding into each child.
-   * Optionally add a fraction of each child into its parent using `child_aggregation_weight` and `child_aggregation_depth`.
-6. Normalize and index:
-
-   * L2 normalize all embeddings.
-   * Build an **HNSW** index with settings from `[hnsw]` for fast nearest neighbor search.
-
-Important config sections:
-
-* `[data]` for paths.
-* `[taxonomy_fields]` for column mapping.
-* `[embedder]` for the embedding model.
-* `[taxonomy_embeddings]` for hierarchy aware tweaks.
-* `[hnsw]` for approximate nearest neighbor settings.
-
-### Getting anchors
-
-**Goal:** find a small set of clearly relevant taxonomy nodes for each variable.
-
-For each variable row:
-
-1. Build variable text by concatenating columns in `[fields].embedding_columns`.
-2. Embed this text with the same embedder as the taxonomy.
-3. **Semantic anchors**:
-
-   * Query the HNSW index for top `anchor_top_k` nearest neighbors.
-4. **Lexical anchors**:
-
-   * Compare variable text to taxonomy `name` or `label` via lexical similarity.
-   * Keep up to `lexical_anchor_limit` matching nodes.
-5. Combine anchors and deduplicate.
-
-Key config:
-
-* `[fields].embedding_columns`.
-* `[pruning].anchor_top_k`.
-* `[pruning].lexical_anchor_limit`.
-* `[pruning].anchor_overfetch_multiplier`.
-* `[pruning].anchor_min_overfetch`.
-
-### Expanding anchors
-
-**Goal:** grow a local region around the anchors to form a candidate subgraph.
-
-From the union of all anchors:
-
-1. Add ancestors up to the root or until limited by the pruning strategy.
-2. Add descendants up to `max_descendant_depth`.
-3. Optionally group anchors into communities and expand within these communities:
-
-   * Use parameters like `community_clique_size` and `max_community_size` to control community size.
-4. Optionally compute PageRank scores for nodes inside each region.
-
-Key config:
-
-* `[pruning].pruning_mode`.
-* `[pruning].max_descendant_depth`.
-* `[pruning].community_clique_size`.
-* `[pruning].max_community_size`.
-
-### Trimming the tree back
-
-**Goal:** reduce the expanded candidate set to a compact subgraph that fits within a node budget and is well sorted for the LLM prompt.
+Goal: represent each taxonomy node as a vector that reflects both its meaning and its position in the hierarchy.
 
 Steps:
 
-1. Score candidate nodes based on `pruning_mode`:
+1. Read taxonomy from `[data].keywords_csv`.
+2. Map column names using `[taxonomy_fields]` (name, parent, parents, label, definition).
+3. Build a directed acyclic graph using `networkx`.
 
-   * Similarity based modes use embedding similarity.
-   * Graph based modes use degrees, distances, or PageRank.
-   * Steiner like modes favor nodes that connect multiple anchors.
-2. Apply global limits:
+   * One row → one node
+   * Parent relationships define the hierarchy
+   * Multi-parent taxonomies are supported via a delimited `parents` column
+4. Compute base embeddings with the model from `[embedder]`.
 
-   * Enforce `[pruning].node_budget` as an absolute cap on nodes in the pruned subgraph.
-   * For PageRank based modes, use `pagerank_damping`, `pagerank_score_floor`, and optionally `pagerank_candidate_limit`.
-3. Sort nodes for display:
+   * Usually embedding the node’s name and optionally its definition
+5. Inject hierarchy:
 
-   * `tree_sort_mode` controls order of siblings in the hierarchical view.
-   * `suggestion_sort_mode` and `suggestion_list_limit` control an optional top suggestions list.
+   * parent → child mixing via `taxonomy_embeddings.gamma`
+   * optional child → parent mixing via `child_aggregation_weight`
+6. Normalize vectors and build an HNSW index (`[hnsw]`).
 
-Supported `pruning_mode` values include for example:
+Why this stage exists:
 
-* `anchor_hull` or `dominant_forest` for anchor centered forests.
-* `similarity_threshold` for similarity cutoff based pruning.
-* `radius` for fixed graph distance from anchors.
-* `steiner_similarity` for Steiner like subgraphs.
-* `community_pagerank` for community plus PageRank based pruning.
+* Taxonomy labels are often short or ambiguous.
+* Definitions clarify meaning.
+* Hierarchy mixing ensures that local embeddings reflect broader context.
 
-Key config:
+---
 
-* `[pruning].pruning_mode`.
-* `[pruning].tree_sort_mode`.
-* `[pruning].suggestion_sort_mode`.
-* `[pruning].suggestion_list_limit`.
-* `[pruning].node_budget`.
-* `[pruning].pagerank_damping`.
-* `[pruning].pagerank_score_floor`.
-* Optional thresholds such as `similarity_threshold` or `pruning_radius`.
-* Optional `surrogate_root_label` for a synthetic root label in the prompt tree.
+### 2. Getting anchors
 
-### Asking the LLM for the final label
+Goal: identify a small set of promising taxonomy nodes for each variable.
 
-**Goal:** select a single taxonomy node from the pruned subgraph as the final mapping.
+Steps:
 
-For each variable:
+1. Build variable text from `[fields].embedding_columns`.
+2. Embed it using the same encoder.
+3. Semantic anchors:
 
-1. Render the **system** and **user** messages using templates from `[prompts]`:
+   * Query the HNSW index for the top `anchor_top_k` neighbors
+4. Lexical anchors:
 
-   * `system_template_path` for instructions and JSON schema.
-   * `user_template_path` for variable context plus the pruned taxonomy tree and optional suggestions list.
-   * Include metadata configured in `[fields].metadata_columns`.
-2. Call the LLM endpoint from `[llm]`:
+   * Fuzzy matches between variable text and taxonomy labels
+   * Up to `lexical_anchor_limit` matches
+5. Merge and dedupe.
 
-   * Default: local **llama.cpp** server hosting **Qwen3 4B Instruct**.
-   * Alternative: OpenAI or any OpenAI compatible endpoint, using `llm.endpoint`, `llm.model`, `llm.api_key`.
-3. Constrain the output to a small JSON snippet, for example:
+Why this stage exists:
 
-   * `{"label": "Body Height"}`.
-4. Post process the answer:
+* Semantic anchors capture meaning.
+* Lexical anchors catch obvious direct matches (e.g. “BMI” → “Body mass index”).
+* Combining both improves recall before pruning.
 
-   * Align the returned label to actual taxonomy nodes.
-   * Use embedding and alias similarity thresholds:
+---
 
-     * `embedding_remap_threshold`.
-     * `alias_similarity_threshold`.
-   * Optional child snapping if `snap_to_child` is enabled:
+### 3. Expanding anchors
 
-     * Use `snap_margin`, `snap_similarity`, and `snap_descendant_depth` to refine broad parent choices.
-5. Record the final label id, label name, and path.
+Goal: build a local candidate region around the anchors.
 
-Key config:
+Steps:
 
-* `[llm]` for endpoint, model, key, and sampling parameters.
-* `[prompts]` for template locations.
-* `[fields].metadata_columns` for what goes into the prompt.
-* `[llm]` post processing options:
+* Add ancestors up to the root (unless the pruning mode limits this).
+* Add descendants up to `max_descendant_depth`.
+* Optionally perform community detection:
 
-  * `embedding_remap_threshold`.
-  * `alias_similarity_threshold`.
-  * `snap_to_child` and related parameters.
+  * controlled by `community_clique_size` and `max_community_size`
+* Some modes compute PageRank scores inside this region.
+
+Why this stage exists:
+
+* A variable often belongs *near* a semantic anchor, but not exactly at it.
+* Expanding up/down the graph increases recall.
+* Community detection helps in dense areas like symptoms or phenotypes.
+
+Key config: `[pruning].pruning_mode`, `max_descendant_depth`, community settings.
+
+---
+
+### 4. Trimming the tree back
+
+Goal: shrink the expanded region to a small, well-organized sub tree to show the LLM.
+
+Steps:
+
+1. Score or filter nodes depending on pruning mode:
+
+   * similarity-based
+   * radius-based
+   * Steiner-like
+   * community-pagerank
+2. Apply `node_budget` as a hard cap on the maximum number of nodes.
+3. Sort nodes for LLM display:
+
+   * hierarchical sorting: `tree_sort_mode`
+   * top suggestions: `suggestion_sort_mode`, `suggestion_list_limit`
+
+Why this stage exists:
+
+* LLM prompts must stay small.
+* A compact, well ordered tree improves comprehension.
+* The budgeted sub tree usually contains the correct term in practice.
+
+---
+
+### 5. Asking the LLM for the final label
+
+Goal: pick the single best taxonomy node from the pruned sub tree.
+
+Steps:
+
+1. Render system and user prompts using:
+
+   * `system_template_path`
+   * `user_template_path`
+
+2. Call an OpenAI-compatible endpoint (`[llm]`).
+
+3. Receive a constrained JSON object, e.g.:
+
+   ```json
+   {"label": "Body height"}
+   ```
+
+4. Postprocess the result:
+
+   * remap aliases or misspellings
+   * optionally snap broad labels to child nodes (`snap_to_child`)
+
+Why this stage exists:
+
+* LLMs are good at resolving borderline cases:
+
+  * similar siblings
+  * multiword synonyms
+  * vague variable names
+* The pruned sub tree gives the LLM exactly the context it needs.
 
 ---
 
@@ -244,34 +271,33 @@ Key config:
 
 ### Install dependencies
 
-Install [uv](https://docs.astral.sh/uv/get-started/installation/), then:
-
 ```bash
 uv sync
 source .venv/bin/activate
 ```
 
-This creates a virtual environment and installs the `vtm` console script.
-
 ### Start an LLM backend
 
-To use a local model with llama.cpp (for example Qwen3 4B GGUF):
+Local llama.cpp:
 
 ```bash
 llama-server -hf unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
 ```
 
-Or run it explicitly with `-m` pointing to a `.gguf` file. Adjust port, context length, and GPU flags as needed.
+Using OpenAI instead:
 
-Alternatively, to use OpenAI:
+```toml
+[llm]
+endpoint = "https://api.openai.com/v1"
+model = "gpt-4"
+api_key = "sk-..."
+```
 
-* Set `llm.endpoint = "https://api.openai.com/v1"`.
-* Set `llm.model` to the desired model.
-* Provide `llm.api_key` or set `OPENAI_API_KEY`.
+---
 
-### Core commands
+## Core commands
 
-Evaluate with gold labels:
+Evaluate mappings using gold labels:
 
 ```bash
 vtm evaluate config.example.toml
@@ -280,31 +306,28 @@ vtm evaluate config.example.toml
 Predict without evaluation:
 
 ```bash
-vtm predict config.example.toml \
-  --output data/predictions.parquet \
-  --output-format parquet
+vtm predict config.example.toml --output data/predictions.parquet
 ```
 
 Check pruning coverage:
 
 ```bash
-vtm prune-check config.example.toml \
-  --limit 10000 \
-  --output data/Keyword_coverage.csv
+vtm prune-check config.example.toml --limit 10000
 ```
 
-Optimize pruning parameters with Optuna:
+Optimize pruning parameters:
 
 ```bash
 vtm optimize-pruning config.example.toml --trials 80
 ```
 
+---
 
 ## Extra tools
 
 ### Error review CLI
 
-Interactive review of misclassifications:
+Interactive review:
 
 ```bash
 python -m vtm.error_review_cli \
@@ -314,30 +337,24 @@ python -m vtm.error_review_cli \
   --config config.toml
 ```
 
-Key bindings:
-
-* `A` acceptable mistake.
-* `X` reject prediction.
-* `U` unclear.
-* `B` back.
-* `Q` quit.
-
-Progress is saved incrementally to the output CSV.
-
-### Programmatic usage
-
-You can also call the mapper from Python:
+### Programmatic use
 
 ```python
 from vtm import VariableTaxonMapper
-
 mapper = VariableTaxonMapper(config_path="config.toml")
-predictions_df = mapper.predict()
+pred_df = mapper.predict()
 ```
 
-Or use the lower level async evaluation helpers if you already have an event loop.
+### HPC usage
 
-### Clusters and HPC
+For Slurm jobs and GPU cluster instructions see:
+[`doc/nibbler_cluster.md`](doc/nibbler_cluster.md)
 
-For running on an HPC cluster with Slurm and multiple GPUs, see: [doc/nibbler_cluster.md](doc/nibbler_cluster.md).
-This document describes cluster specific launch scripts and recommended settings.
+---
+
+## Full configuration reference
+
+The full configuration is in:
+[`config.example.toml`](./config.example.toml)
+
+It is self-documenting: every option includes comments describing what it controls and why it exists.
