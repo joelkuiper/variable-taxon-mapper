@@ -126,7 +126,7 @@ See `config.example.toml` for a complete reference.
 
 # Pipeline Stages
 
-## Embedding the Taxonomy
+## 1. Embedding the Taxonomy
 
 * Load taxonomy and construct a directed acyclic graph.
 * Compute embeddings using a biomedical encoder.
@@ -137,7 +137,7 @@ This provides semantic and structural grounding for later retrieval steps.
 
 ---
 
-## Getting Anchors
+## 2. Getting Anchors
 
 For each variable:
 
@@ -150,7 +150,7 @@ Semantic and lexical recall complement one another, ensuring the correct region 
 
 ---
 
-## Expanding the Anchors
+## 3. Expanding the Anchors
 
 The anchor set is expanded to include:
 
@@ -163,7 +163,7 @@ This greatly increases the chance that the true label appears in the candidate m
 
 ---
 
-## Trimming the Tree
+## 4. Trimming the Tree
 
 The expanded candidate set is pruned:
 
@@ -175,7 +175,7 @@ A compact and structured subtree helps the LLM make a precise choice.
 
 ---
 
-## Final LLM Selection
+## 5. Final LLM Selection
 
 * Build prompt using system and user templates.
 * Provide the variable description and pruned subtree.
@@ -196,7 +196,7 @@ This step handles the nuanced semantic decision that embeddings and heuristics c
 
 ## Install Dependencies
 
-Using `uv`:
+Using [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
@@ -283,7 +283,7 @@ Use `mapper.evaluate()` if gold labels are available.
 
 ## HPC Usage
 
-See `doc/nibbler_cluster.md` for Slurm and multi-GPU cluster instructions.
+See [doc/nibbler_cluster.md](doc/nibbler_cluster.md) for Slurm and multi-GPU cluster instructions.
 
 ---
 
