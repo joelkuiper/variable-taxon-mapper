@@ -58,11 +58,11 @@ Predictions table (+ optional evaluation report in doc/results)
 
 Non technical summary:
 
-* The taxonomy is converted into **vectors** that encode meaning plus some hierarchy context.
+* The taxonomy is converted into vectors that encode meaning plus some hierarchy context.
 * Each variable description is converted into a vector with the same embedder.
-* The system finds a small set of **anchors** in the taxonomy that are close to the variable.
-* It **expands** around those anchors, then **trims back** to a compact candidate sub tree.
-* It shows that sub tree, plus the variable context, to an **LLM** and asks for the best fitting label.
+* The system finds a small set of anchors in the taxonomy that are close to the variable.
+* It expands around those anchors, then trims back to a compact candidate sub tree.
+* It shows that sub tree, plus the variable context, to an LLM and asks for the best fitting label.
 * The chosen label is the final taxonomy mapping for that variable.
 
 By default:
@@ -71,8 +71,6 @@ By default:
 * Semantic search uses an **HNSW** index.
 * The LLM is **Qwen3 4B Instruct** served through **llama.cpp**.
 * The LLM endpoint is OpenAI compatible and can be pointed at **OpenAI** or any other compatible service.
-
-Results and example summaries are stored under `doc/`, for example in `doc/results`.
 
 ---
 
@@ -341,5 +339,5 @@ Or use the lower level async evaluation helpers if you already have an event loo
 
 ### Clusters and HPC
 
-For running on an HPC cluster with Slurm and multiple GPUs, see: doc/nibbler_cluster.md
+For running on an HPC cluster with Slurm and multiple GPUs, see: [doc/nibbler_cluster.md](doc/nibbler_cluster.md).
 This document describes cluster specific launch scripts and recommended settings.
