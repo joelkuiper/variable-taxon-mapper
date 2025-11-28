@@ -9,7 +9,7 @@ The system works in two phases:
 1. Use embeddings and the taxonomy graph to prune the taxonomy to a small, relevant sub tree.
 2. Ask an LLM to pick the best term within that tree.
 
-Together these produce accurate, explainable mappings while keeping the LLM workload small and cheap.
+Together these produce mostly accurate mappings while keeping the LLM workload small.
 
 ---
 
