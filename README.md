@@ -1,216 +1,345 @@
-# LLM-assisted Taxonomy Matcher (embedding + llama.cpp)
+# Variable Taxon Mapper
 
-This is a tool designed to map free-text variable metadata (from datasets) to a curated biomedical taxonomy. It achieves this by combining embedding-based similarity search with a Large Language Model (LLM) for final label selection. At a high level, the pipeline works as follows:
+Variable Taxon Mapper maps free text **variable metadata** to a curated **biomedical taxonomy**.
 
--   **Input Data**: The tool expects two tabular files (CSV, Parquet, or Feather) as input: one containing the variables (with fields like dataset name, variable label, variable name, description, etc.), and another containing the taxonomy (a list of *keywords* or terms with their parent relationships). The taxonomy is treated as a directed acyclic graph (essentially a hierarchy/forest) where each node has at most one parent. At minimum, the taxonomy table must expose columns for the keyword `name` and its `parent`; optional fields such as `parents` (multi-parent delimited list), `order`, `label`, and `definition` are honoured when present.
+It works in two main phases:
 
--   **Taxonomy Construction**: The taxonomy CSV is read and transformed into a directed acyclic graph (DAG) using `networkx`. Each term becomes a node, and parent-child relationships become directed edges. The code enforces that the graph remains acyclic and that no term has multiple parents, throwing an error if a cycle or multi-parent is detected. This ensures a tree (or forest) structure, which is important for defining ancestor/descendant relationships in evaluation.
+1. Use **embeddings** and the taxonomy graph to prune the taxonomy to a small, relevant sub tree.
+2. Ask an **LLM** to pick the single best label from that sub tree.
 
--   **Embedding of Taxonomy**: All taxonomy labels (and optionally their definitions/summaries if provided) are converted into vector embeddings. By default, it uses a biomedical language model ([SapBERT](https://huggingface.co/cambridgeltl/SapBERT-from-PubMedBERT-fulltext)) to create these embeddings, but others like [FlagEmbedding](https://huggingface.co/BAAI/bge-large-en-v1.5) can be used. The code enhances each taxonomy node's embedding with its ancestors\' information: it first generates a base embedding for each term (and mixes in any definition text with a weight), then iteratively adds a fraction of the parent's vector (`gamma` factor) to the child's vector and normalizes it. This means each node's final embedding encodes both its own meaning and some context of its position in the hierarchy. All embeddings are L2-normalized (unit-length) for cosine similarity comparisons. For fast similarity search, an HNSW index (approximate nearest neighbor search, [hsnwlib](https://github.com/nmslib/hnswlib)) is built over the taxonomy embeddings.
+This helps with dataset harmonization and consistent variable annotation across studies.
 
--   **Processing Each Variable**: For each variable record (with fields like *label*, *name*, *description*), the pipeline generates a composite text (concatenating or considering these fields) and computes an embedding for the variable using the same embedder. It then uses two strategies to find candidate taxonomy nodes relevant to this variable:
+---
 
-    -  **ANN Search (Semantic)** -- The variable's embedding is used to query the index to retrieve the top `K` most similar taxonomy nodes (by cosine similarity). These serve as *semantic anchors* in the taxonomy.
-    -  **Lexical Match (Textual)** -- The variable's text (name/description) is also compared lexically to taxonomy labels using a token-based similarity measure. Up to a few top terms that have high token overlap or similarity (e.g. edit distance or normalized compression distance) are taken as *lexical anchors*. This catches cases where a variable's name closely matches a taxonomy label even if embeddings might not rank it highest.
+## High level pipeline
 
--   **Taxonomy Pruning**: Using the above anchors as starting points, the tool prunes the taxonomy graph to a small subgraph likely to contain the correct label. The pruning is quite elaborate:
+Inputs:
 
-    - It will include the anchors, their close neighbors (children/ancestors up to a depth), and possibly other nodes that are in the same *communities* or connected components as the anchor. There are different modes for pruning (configurable via `pruning_mode`), including selecting the connected component (via "dominant forest" or "anchor hull") around anchors, prioritising one node per anchor community with PageRank ("community_pagerank"), connecting anchors to top-similarity labels with a Steiner tree approximation ("steiner_similarity"), keeping everything above a similarity threshold, or limiting exploration to an undirected radius. By default it uses a `dominant_forest` strategy that combines descendant expansion with a PageRank-based filtering to keep the subgraph size under a budget.
-    - The result of pruning is a reduced set of allowed nodes. This subset retains the most relevant terms for the given variable.
+- A **variables table** (CSV, Parquet, or Feather).
+- A **taxonomy table** with one row per taxonomy node.
 
--   **LLM Matching**: The pruned taxonomy subgraph is then turned into a nested Markdown list (indentation representing hierarchy) and included in a prompt ([example prompt](./doc/example_prompt.md)) to a local LLM. The prompt essentially asks the LLM (running via an OpenAI-compatible server such as `llama.cpp`) to pick the most appropriate taxonomy label for the variable, given its name/description and the pruned list of candidates. The LLM response is constrained by a JSON schema (using the `response_format` parameter) so that it returns a JSON object with a field for the chosen concept label. In practice, it sends a request to the server's `POST /v1/chat/completions` endpoint with the prompt messages, and the LLM responds with a proposed label.
+For each variable, the system:
 
--   **Output**: For each variable, the final chosen taxonomy label (and some metadata like its ID/path in the taxonomy) is recorded. The pipeline produces an output table (CSV by default) and prints the results to console, including whether each prediction was correct and what type of match it was (exact or ancestor/descendant match). A companion JSON manifest captures the configuration, git commit (when available), schema, and timestamp. It also prints a summary of evaluation metrics (see [example output](./doc/results/20251103_results.md)). Pass `--summary-md <path>` to `vtm evaluate` to persist that Markdown report (optionally pair it with `--summary-text` for a plain-text dump that mirrors the console output).
+1. **Embeds the taxonomy** and builds a nearest neighbor index.
+2. **Gets anchors** by comparing the variable text to the taxonomy.
+3. **Expands anchors** into a local neighborhood in the taxonomy graph.
+4. **Trims the tree back** to a small, budgeted sub tree.
+5. **Asks the LLM for the final label** and records that label as the mapping.
 
-In summary, the tool's idea is to use semantic embedding search to narrow the taxonomy and then leverage an LLM's contextual understanding to pick the best-fitting category. All operational parameters (model names, number of neighbors, pruning depth, LLM endpoint, etc.) are defined in a config TOML file (see [config.example.toml](./config.example.toml)) for flexibility, making it easy to tweak the pipeline without changing code.
+### ASCII flow
 
+```text
+Variables.csv + Taxonomy.csv
+        │
+        ▼
+Build taxonomy graph (tree or forest)
+Embed all taxonomy terms
+Build HNSW index over taxonomy embeddings
+        │
+For each variable:
+  ├─ Build variable text from configured columns
+  ├─ Embed variable text
+  ├─ Get anchors
+  │    ├─ ANN similarity search (semantic anchors)
+  │    └─ Lexical similarity (lexical anchors)
+  ├─ Expand anchors into a candidate subgraph
+  ├─ Trim the tree back to a node budget
+  ├─ Render subgraph + variable into an LLM prompt
+  ├─ Call LLM to pick best label
+  └─ Post process and record final taxonomy label
+        │
+        ▼
+Predictions table (+ optional evaluation report in doc/results)
+````
 
-## Configuring variable column mappings
+---
 
-Many datasets reuse different column headers for similar concepts (for example,
-`study_id` instead of `dataset`, `display_name` instead of `label`). The
-`[fields]` section lets you describe which columns should be embedded, surfaced
-in prompts/results, and used for evaluation:
+## Conceptual overview
 
-```toml
-[fields]
-embedding_columns = ["display_name", "long_description"]
-metadata_columns = ["study_id", "display_name", "unit"]
-gold_labels_column = "manual_tags"
-dataset_column = "study_id"
-```
+Non technical summary:
 
-- `embedding_columns` are concatenated and embedded whenever the pipeline needs
-  a text representation of the variable.
-- `metadata_columns` are carried through to prediction outputs, rendered in the
-  LLM prompt, and recorded alongside metrics.
-- `gold_labels_column` tells the evaluator which column contains comma-delimited
-  ground-truth taxonomy labels.
-- `dataset_column` (optional) identifies the column you want summaries grouped
-  by; the pipeline also exposes a canonical `dataset` alias for convenience.
+* The taxonomy is converted into **vectors** that encode meaning plus some hierarchy context.
+* Each variable description is converted into a vector with the same embedder.
+* The system finds a small set of **anchors** in the taxonomy that are close to the variable.
+* It **expands** around those anchors, then **trims back** to a compact candidate sub tree.
+* It shows that sub tree, plus the variable context, to an **LLM** and asks for the best fitting label.
+* The chosen label is the final taxonomy mapping for that variable.
 
-You can omit any optional setting when the data is unavailable. Options such as
-`evaluation.dedupe_on` now accept the raw column names from your variables CSV.
+By default:
 
-When working with taxonomy CSVs that expose multiple parents per node, map the
-column containing the delimited parent identifiers through the
-`[taxonomy_fields]` section. The mapper renames the configured column to
-`parents` and normalizes each entry using the resolved identifier lookup:
+* Embeddings use a biomedical model such as **SapBERT**.
+* Semantic search uses an **HNSW** index.
+* The LLM is **Qwen3 4B Instruct** served through **llama.cpp**.
+* The LLM endpoint is OpenAI compatible and can be pointed at **OpenAI** or any other compatible service.
 
-```toml
-[taxonomy_fields]
-name = "concept_name"
-parent = "primary_parent"
-parents = "all_parents"  # e.g., "PARENT_A|PARENT_B"
-```
+Results and example summaries are stored under `doc/`, for example in `doc/results`.
 
-If the column is omitted, the pipeline continues to operate on single-parent
-hierarchies. When supplied, the delimited values are normalized using the same
-identifier mapping as the `parent` column before downstream processing.
+---
 
-The `[data]` configuration accepts CSV, Parquet, or Feather sources for both
-`variables_csv` and `keywords_csv`. Files are loaded through
-`vtm.utils.load_table`, which automatically selects the appropriate pandas or
-pyarrow-backed reader and falls back to the default CSV engine when pyarrow is
-unavailable.
+## Pipeline stages
 
-## LLM endpoint authentication
+### Embedding the taxonomy
 
-If you point the mapper at an OpenAI-compatible endpoint that requires an API
-key, provide it via the `[llm]` section of your `config.toml` or the
-`OPENAI_API_KEY` environment variable. The loader reads `llm.api_key` first and
-falls back to the environment when that field is blank, so keep sensitive keys
-in a private config (e.g., a non-checked-in `config.toml`) or manage them via an
-environment secret store such as `direnv`, `uv run --env`, or your CI system.
+**Goal:** represent each taxonomy node as a vector that reflects both its local meaning and its position in the hierarchy.
 
-## Dependencies
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
+Steps:
 
-``` shell
-uv sync  # provisions the env *and* installs the local vtm console script
+1. Read the taxonomy table from `[data].keywords_csv`.
+2. Map raw columns to logical fields using `[taxonomy_fields]`:
+
+   * `name`, `parent`, optional `parents`, `label`, `definition`.
+3. Build a directed acyclic graph using `networkx`:
+
+   * One node per taxonomy term.
+   * Each node has one primary parent by default.
+   * Optional multi parent support via a delimited `parents` column.
+4. Compute base embeddings with the model from `[embedder]`:
+
+   * Base text is usually `name`.
+   * Optionally mix in `definition` controlled by `taxonomy_embeddings.summary_weight`.
+5. Inject hierarchy structure:
+
+   * Add a fraction `gamma` of each parent embedding into each child.
+   * Optionally add a fraction of each child into its parent using `child_aggregation_weight` and `child_aggregation_depth`.
+6. Normalize and index:
+
+   * L2 normalize all embeddings.
+   * Build an **HNSW** index with settings from `[hnsw]` for fast nearest neighbor search.
+
+Important config sections:
+
+* `[data]` for paths.
+* `[taxonomy_fields]` for column mapping.
+* `[embedder]` for the embedding model.
+* `[taxonomy_embeddings]` for hierarchy aware tweaks.
+* `[hnsw]` for approximate nearest neighbor settings.
+
+### Getting anchors
+
+**Goal:** find a small set of clearly relevant taxonomy nodes for each variable.
+
+For each variable row:
+
+1. Build variable text by concatenating columns in `[fields].embedding_columns`.
+2. Embed this text with the same embedder as the taxonomy.
+3. **Semantic anchors**:
+
+   * Query the HNSW index for top `anchor_top_k` nearest neighbors.
+4. **Lexical anchors**:
+
+   * Compare variable text to taxonomy `name` or `label` via lexical similarity.
+   * Keep up to `lexical_anchor_limit` matching nodes.
+5. Combine anchors and deduplicate.
+
+Key config:
+
+* `[fields].embedding_columns`.
+* `[pruning].anchor_top_k`.
+* `[pruning].lexical_anchor_limit`.
+* `[pruning].anchor_overfetch_multiplier`.
+* `[pruning].anchor_min_overfetch`.
+
+### Expanding anchors
+
+**Goal:** grow a local region around the anchors to form a candidate subgraph.
+
+From the union of all anchors:
+
+1. Add ancestors up to the root or until limited by the pruning strategy.
+2. Add descendants up to `max_descendant_depth`.
+3. Optionally group anchors into communities and expand within these communities:
+
+   * Use parameters like `community_clique_size` and `max_community_size` to control community size.
+4. Optionally compute PageRank scores for nodes inside each region.
+
+Key config:
+
+* `[pruning].pruning_mode`.
+* `[pruning].max_descendant_depth`.
+* `[pruning].community_clique_size`.
+* `[pruning].max_community_size`.
+
+### Trimming the tree back
+
+**Goal:** reduce the expanded candidate set to a compact subgraph that fits within a node budget and is well sorted for the LLM prompt.
+
+Steps:
+
+1. Score candidate nodes based on `pruning_mode`:
+
+   * Similarity based modes use embedding similarity.
+   * Graph based modes use degrees, distances, or PageRank.
+   * Steiner like modes favor nodes that connect multiple anchors.
+2. Apply global limits:
+
+   * Enforce `[pruning].node_budget` as an absolute cap on nodes in the pruned subgraph.
+   * For PageRank based modes, use `pagerank_damping`, `pagerank_score_floor`, and optionally `pagerank_candidate_limit`.
+3. Sort nodes for display:
+
+   * `tree_sort_mode` controls order of siblings in the hierarchical view.
+   * `suggestion_sort_mode` and `suggestion_list_limit` control an optional top suggestions list.
+
+Supported `pruning_mode` values include for example:
+
+* `anchor_hull` or `dominant_forest` for anchor centered forests.
+* `similarity_threshold` for similarity cutoff based pruning.
+* `radius` for fixed graph distance from anchors.
+* `steiner_similarity` for Steiner like subgraphs.
+* `community_pagerank` for community plus PageRank based pruning.
+
+Key config:
+
+* `[pruning].pruning_mode`.
+* `[pruning].tree_sort_mode`.
+* `[pruning].suggestion_sort_mode`.
+* `[pruning].suggestion_list_limit`.
+* `[pruning].node_budget`.
+* `[pruning].pagerank_damping`.
+* `[pruning].pagerank_score_floor`.
+* Optional thresholds such as `similarity_threshold` or `pruning_radius`.
+* Optional `surrogate_root_label` for a synthetic root label in the prompt tree.
+
+### Asking the LLM for the final label
+
+**Goal:** select a single taxonomy node from the pruned subgraph as the final mapping.
+
+For each variable:
+
+1. Render the **system** and **user** messages using templates from `[prompts]`:
+
+   * `system_template_path` for instructions and JSON schema.
+   * `user_template_path` for variable context plus the pruned taxonomy tree and optional suggestions list.
+   * Include metadata configured in `[fields].metadata_columns`.
+2. Call the LLM endpoint from `[llm]`:
+
+   * Default: local **llama.cpp** server hosting **Qwen3 4B Instruct**.
+   * Alternative: OpenAI or any OpenAI compatible endpoint, using `llm.endpoint`, `llm.model`, `llm.api_key`.
+3. Constrain the output to a small JSON snippet, for example:
+
+   * `{"label": "Body Height"}`.
+4. Post process the answer:
+
+   * Align the returned label to actual taxonomy nodes.
+   * Use embedding and alias similarity thresholds:
+
+     * `embedding_remap_threshold`.
+     * `alias_similarity_threshold`.
+   * Optional child snapping if `snap_to_child` is enabled:
+
+     * Use `snap_margin`, `snap_similarity`, and `snap_descendant_depth` to refine broad parent choices.
+5. Record the final label id, label name, and path.
+
+Key config:
+
+* `[llm]` for endpoint, model, key, and sampling parameters.
+* `[prompts]` for template locations.
+* `[fields].metadata_columns` for what goes into the prompt.
+* `[llm]` post processing options:
+
+  * `embedding_remap_threshold`.
+  * `alias_similarity_threshold`.
+  * `snap_to_child` and related parameters.
+
+---
+
+## Installation and running
+
+### Install dependencies
+
+Install [uv](https://docs.astral.sh/uv/get-started/installation/), then:
+
+```bash
+uv sync
 source .venv/bin/activate
 ```
 
-Download and install [llama.cpp](https://github.com/ggml-org/llama.cpp) (or run via Docker). The system has been tested with [Qwen3-4B-Instruct-2507-GUFF](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF), you can either download a GUFF and pass it via the `--model` parameter, or let the server download and cache it (as below).
+This creates a virtual environment and installs the `vtm` console script.
 
-``` shell
-llama-server -hf  unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
+### Start an LLM backend
 
-# Optionally pass --ctx-size 50000 -ngl 999 --parallel 4 on CUDA devices, --flash-attn on might help
+To use a local model with llama.cpp (for example Qwen3 4B GGUF):
+
+```bash
+llama-server -hf unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
 ```
 
-``` shell
-# Configuration and parameters are set via TOML
+Or run it explicitly with `-m` pointing to a `.gguf` file. Adjust port, context length, and GPU flags as needed.
 
-# Run evaluation (CSV by default)
+Alternatively, to use OpenAI:
+
+* Set `llm.endpoint = "https://api.openai.com/v1"`.
+* Set `llm.model` to the desired model.
+* Provide `llm.api_key` or set `OPENAI_API_KEY`.
+
+### Core commands
+
+Evaluate with gold labels:
+
+```bash
 vtm evaluate config.example.toml
+```
 
-# Predictions
-vtm predict config.example.toml --output data/predictions --output-format parquet
+Predict without evaluation:
 
-# Testing the tree pruning
-vtm prune-check config.example.toml --limit 10_000 --output data/Keyword_coverage.csv
+```bash
+vtm predict config.example.toml \
+  --output data/predictions.parquet \
+  --output-format parquet
+```
 
-# Optimising pruning parameters with Optuna
+Check pruning coverage:
+
+```bash
+vtm prune-check config.example.toml \
+  --limit 10000 \
+  --output data/Keyword_coverage.csv
+```
+
+Optimize pruning parameters with Optuna:
+
+```bash
 vtm optimize-pruning config.example.toml --trials 80
-
-# uv convenience (no activation required)
-uv run vtm run config.example.toml
-uv run vtm predict config.example.toml
-uv run vtm summarize config.example.toml
 ```
 
-### Persisting evaluation summaries
 
-When you want to keep the aggregated metrics around for later review, direct the
-CLI to save the Markdown summary:
+## Extra tools
 
-```shell
-vtm evaluate config.example.toml --summary-md doc/results/latest_results.md
+### Error review CLI
+
+Interactive review of misclassifications:
+
+```bash
+python -m vtm.error_review_cli \
+  --predictions path/to/predictions.csv \
+  --keywords path/to/Keywords.csv \
+  --output data/error_review_decisions.csv \
+  --config config.toml
 ```
 
-Include `--summary-text doc/results/latest_results.txt` if you also want the
-console-friendly text (DataFrame preview plus status messages) written to disk.
-Both paths are resolved relative to your current working directory, and parent
-directories are created automatically.
+Key bindings:
 
-Prediction runs emit the chosen table format and a `<output>.manifest.json` file that
-documents the configuration path, git revision (when available), output schema,
-and generation timestamp.
+* `A` acceptable mistake.
+* `X` reject prediction.
+* `U` unclear.
+* `B` back.
+* `Q` quit.
 
-### Programmatic usage (sync vs async)
+Progress is saved incrementally to the output CSV.
 
-The Typer CLI commands call into the synchronous helper exposed by
-`vtm.evaluate.collector.collect_predictions`. Service integrations that already
-run inside an event loop should instead await the coroutine version to avoid the
-`asyncio.run` guard:
+### Programmatic usage
+
+You can also call the mapper from Python:
 
 ```python
-from vtm.evaluate import async_collect_predictions
+from vtm import VariableTaxonMapper
 
-rows = await async_collect_predictions(
-    jobs,
-    pruning_cfg=config.pruning,
-    llm_cfg=config.llm,
-    parallel_cfg=config.parallelism,
-    http_cfg=config.http,
-    keywords=keywords_df,
-    graph=taxonomy_graph,
-    embedder=embedder,
-    tax_names=taxonomy_names,
-    tax_embs_unit=taxonomy_embeddings,
-    hnsw_index=hnsw_index,
-    name_to_id=name_to_id,
-    name_to_path=name_to_path,
-    gloss_map=gloss_map,
-    hnsw_config=config.hnsw,
-    progress_hook=None,
-    prompt_renderer=prompt_renderer,
-)
+mapper = VariableTaxonMapper(config_path="config.toml")
+predictions_df = mapper.predict()
 ```
 
-When no loop is running, reuse the synchronous
-`vtm.evaluate.collector.collect_predictions` helper (which simply wraps the
-coroutine in `asyncio.run`). This mirrors the behaviour of the CLI commands and
-other high-level entry points such as `VariableTaxonMapper.predict`.
+Or use the lower level async evaluation helpers if you already have an event loop.
 
-`vtm optimize-pruning` wraps the Optuna-based tuner from `optimize_pruning.py`,
-loading configuration through the shared CLI utilities so logging and seed
-control match the other commands. Use `--help` to review all available
-options, including Optuna storage parameters and trial sampling tweaks.
+### Clusters and HPC
 
-`check_pruned_tree` respects the `[fields]` logical-to-physical column mapping
-from the configuration file. Override entries such as
-`gold_labels = "my_gold_column"` (and `dataset`, `label`, `name`,
-`description`) when your variables CSV uses different headers; the script will
-resolve column access through that mapping before evaluating coverage.
-
-## Reviewing Model Errors Interactively
-
-Use the error review CLI to quickly inspect misclassifications and record
-judgments about whether they are acceptable mistakes.
-
-```shell
-python -m vtm.error_review_cli --predictions path/to/predictions.csv \
-    --keywords path/to/Keywords.csv \
-    --output data/error_review_decisions.csv
-# Add --config config.toml to reuse taxonomy column mappings from your pipeline.
-```
-
-The tool displays one error at a time, showing the variable context, the gold
-labels with their configured definition values (using the column mapped as
-`definition`, defaulting to `definition_summary`) from `Keywords.csv`, and the model
-prediction with its definition and resolved path. Record your judgment using the
-keyboard:
-
-- `A` – acceptable mistake
-- `X` – reject the prediction
-- `U` – unclear / requires follow-up
-- `B` – move back to the previous item
-- `Q` – quit the session (progress is saved automatically)
-
-Decisions are appended to the output CSV, which allows the session to be resumed
-later. Records that already appear in the output file are skipped automatically.
-
-## Running on HPC clusters
-See [Nibbler Cluster documentation](./doc/nibbler_cluster.md)
+For running on an HPC cluster with Slurm and multiple GPUs, see: doc/nibbler_cluster.md
+This document describes cluster specific launch scripts and recommended settings.

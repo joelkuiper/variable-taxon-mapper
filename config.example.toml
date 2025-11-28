@@ -1,139 +1,440 @@
+# =============================================================================
+# Global configuration
+#
+# [global]
+#   seed
+#     Global random seed used across the pipeline.
+# =============================================================================
 [global]
 seed = 37
 
+# =============================================================================
+# Data input paths
+#
+# [data]
+#   variables_csv
+#     Path to the variables table you want to map.
+#     This table has one row per variable with labels, names, descriptions.
+#
+#   keywords_csv
+#     Path to the taxonomy table with one row per taxonomy term.
+#     This file provides the taxonomy structure and definitions.
+#
+# Supported formats: CSV, Parquet, Feather.
+# The loader picks an appropriate backend automatically.
+# =============================================================================
 [data]
 # variables_csv = "data/Variables.csv"
 variables_csv = "data/Variables_with_keywords_and_desc.csv"
 keywords_csv = "data/Keywords_summarized_new.csv"
 
+# =============================================================================
+# Variable field mapping
+#
+# [fields]
+#   embedding_columns
+#     Columns whose text is concatenated and embedded for each variable.
+#     These drive semantic similarity and anchor selection.
+#
+#   metadata_columns
+#     Columns passed through to outputs and to the LLM prompt as context.
+#
+#   gold_labels_column
+#     Column that holds the gold taxonomy labels for evaluation.
+#     May be multi label, depending on your data.
+#
+#   dataset_column
+#     Column that identifies the dataset or study, used for grouped summaries.
+#
+#   embedding_chunk_chars (optional)
+#     If set, long text is split into overlapping chunks of this many characters
+#     instead of being truncated at the embedder max length.
+#
+#   chunk_overlap (optional)
+#     Overlap between chunks in characters, to keep context between slices.
+# =============================================================================
 [fields]
 # Configure which columns feed embeddings and metadata for variable rows.
 embedding_columns = ["label", "name", "description"]
-metadata_columns = ["label", "name", "dataset", "description"]
+metadata_columns  = ["label", "name", "dataset", "description"]
 gold_labels_column = "keywords"
-dataset_column = "dataset"
-# Optional chunking controls for long text fields. Set ``embedding_chunk_chars`` to
-# split fields into overlapping slices instead of truncating them, and tune
-# ``chunk_overlap`` to retain context between slices.
+dataset_column     = "dataset"
+# Optional chunking controls for long text fields.
 # embedding_chunk_chars = 512
 # chunk_overlap = 64
 
+# =============================================================================
+# Taxonomy field mapping
+#
+# [taxonomy_fields]
+#   Map logical taxonomy fields to the column names used in your keywords CSV.
+#   Set a field to "" or omit it if the column is unavailable.
+#
+#   name
+#     Identifier or canonical name for each taxonomy node.
+#
+#   parent
+#     Primary parent reference for each node. Defines the tree or forest.
+#
+#   parents
+#     Optional multi parent field if your taxonomy has more than one parent.
+#     Values are typically pipe delimited.
+#
+#   order
+#     Optional ordering hint for the taxonomy. Used when sort mode is topological.
+#
+#   definition
+#     Text definition for each node. Used in embeddings and LLM prompts.
+#
+#   label
+#     Human readable label for the node if different from name.
+#
+# In this config only definition is remapped to "definition_summary".
+# Other fields fall back to columns named "name", "parent", and so on.
+# =============================================================================
 [taxonomy_fields]
-# Map logical taxonomy fields to the column names used in your keywords CSV.
-# Set a field to "" or omit it if the column is unavailable.
 # name = "name"
 # parent = "parent"
-# parents = "parents" # optional: pipe-delimited multi-parent relationships
+# parents = "parents" # pipe delimited multi parent relationships
 # order = "order"
 # definition = "definition"
-definition = "definition_summary" # use this when working with summarized definitions
+definition = "definition_summary" # summarized definitions
 # label = "label"
 
+# =============================================================================
+# Embedding model
+#
+# [embedder]
+#   model_name
+#     Hugging Face model identifier or local path. Used for both taxonomy and
+#     variable embeddings. Here we use a biomedical SapBERT model.
+#
+#   max_length
+#     Maximum token length for the encoder. Longer text is truncated or chunked.
+#
+#   batch_size
+#     Batch size for embedding calls. Adjust based on memory and device.
+#
+#   fp16
+#     If true, use half precision where supported.
+#
+#   device
+#     Optional device override, for example "cpu" or "cuda:0".
+#
+#   mean_pool
+#     If false, use CLS token as the embedding. If true, use mean pooling.
+#
+#   models, pca_components, pca_whiten
+#     Optional multi model and PCA projection settings for more advanced setups.
+# =============================================================================
 [embedder]
 model_name = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"
 # model_name = "BAAI/bge-large-en-v1.5"
 # models = ["BAAI/bge-large-en-v1.5", "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"]
 max_length = 512
 batch_size = 256
-fp16 = true
-# device = "cpu"
-mean_pool = false # false = CLS token
-# pca_components = 256 # set to project concatenated embeddings (if models is provided)
-# pca_whiten = true
+fp16       = true
+# device  = "cpu"
+mean_pool  = false # false = CLS token
+# pca_components = 256 # apply PCA if "models" is provided
+# pca_whiten     = true
 
+# =============================================================================
+# Taxonomy embedding tweaks
+#
+# [taxonomy_embeddings]
+#   gamma
+#     Fraction of parent embedding added into each child. Injects hierarchy
+#     context into child nodes.
+#
+#   summary_weight
+#     Relative weight of definition text versus name when building node vectors.
+#
+#   child_aggregation_weight
+#     Fraction of child embedding propagated back into ancestors.
+#
+#   child_aggregation_depth
+#     How many ancestor hops receive child signal. Unset means up to the root.
+#
+# Set gamma and child_aggregation_weight to zero to disable hierarchy blending.
+# =============================================================================
 [taxonomy_embeddings]
 gamma = 0.05
 summary_weight = 0.85
-# Pull child signal back into ancestors; set to 0.0 to disable.
+# Pull child signal back into ancestors. Set to 0.0 to disable.
 child_aggregation_weight = 0.1
-# Limit how many ancestor hops receive child signal (unset = to the root).
+# Limit how many ancestor hops receive child signal. Unset means up to the root.
 # child_aggregation_depth = 1
 
+# =============================================================================
+# HNSW index
+#
+# [hnsw]
+#   space
+#     Distance metric for nearest neighbor search. "cosine" is recommended for
+#     normalized embeddings.
+#
+#   M, ef_construction
+#     HNSW graph construction parameters.
+#
+#   ef_search
+#     Search beam size. Higher values increase recall at the cost of latency.
+#
+#   num_threads
+#     Number of threads for building the index. Zero means all available cores.
+# =============================================================================
 [hnsw]
-space = "cosine"
-M = 32
+space           = "cosine"
+M               = 32
 ef_construction = 200
-ef_search = 128
-num_threads = 0
+ef_search       = 128
+num_threads     = 0
 
+# =============================================================================
+# Evaluation settings
+#
+# [evaluation]
+#   n
+#     Maximum number of variables to evaluate.
+#
+#   seed
+#     Seed used during evaluation.
+#
+#   dedupe_on
+#     Columns used to drop duplicates before evaluation. Use raw column names
+#     from the variables CSV.
+#
+#   progress_log_interval
+#     Log progress every N variables.
+# =============================================================================
 [evaluation]
-n = 10_000
-seed = 37
-# Provide column names as they appear in your variables CSV.
-dedupe_on = ["name"]
+n                     = 10_000
+seed                  = 37
+dedupe_on             = ["name"]
 progress_log_interval = 10
 
+# =============================================================================
+# Pruning and anchor selection
+#
+# [pruning]
+#   enable_taxonomy_pruning
+#     If true, only a pruned subgraph is sent to the LLM. If false, the full
+#     taxonomy would be used. Pruning should be true for realistic taxonomies.
+#
+#   tree_sort_mode
+#     Sorting strategy for nodes within the hierarchical tree. Supported values:
+#     "relevance", "topological", "alphabetical", "proximity", "pagerank".
+#
+#   suggestion_sort_mode
+#     Sorting strategy for the flat suggestion list shown alongside the tree.
+#
+#   suggestion_list_limit
+#     Number of top candidates to show in the suggestion list.
+#
+#   pruning_mode
+#     High level pruning strategy. Options include:
+#       "dominant_forest"
+#       "anchor_hull"
+#       "similarity_threshold"
+#       "radius"
+#       "steiner_similarity"
+#       "community_pagerank"
+#
+#   similarity_threshold
+#     Cosine similarity threshold used when pruning_mode is "similarity_threshold".
+#
+#   pruning_radius
+#     Undirected hop limit used when pruning_mode is "radius".
+#
+#   anchor_top_k
+#     Number of ANN neighbors used as semantic anchors per variable.
+#
+#   max_descendant_depth
+#     Maximum descendant depth to include under each anchor.
+#
+#   lexical_anchor_limit
+#     Maximum number of additional anchors from lexical overlap.
+#
+#   community_clique_size
+#     Clique size for community detection in some pruning modes.
+#
+#   max_community_size
+#     Maximum nodes pulled from any single community.
+#
+#   anchor_overfetch_multiplier
+#     Multiplier to overfetch ANN neighbors before pruning.
+#
+#   anchor_min_overfetch
+#     Minimum number of ANN neighbors to overfetch.
+#
+#   pagerank_damping, pagerank_score_floor, pagerank_candidate_limit
+#     Parameters for PageRank based ranking in pruning modes that use it.
+#
+#   node_budget
+#     Hard cap on the number of nodes in the final candidate set sent to the LLM.
+#
+#   surrogate_root_label
+#     Optional synthetic root label for the rendered taxonomy tree.
+# =============================================================================
 [pruning]
 enable_taxonomy_pruning = true
 
-tree_sort_mode = "relevance" # options: relevance, topological, alphabetical, proximity, pagerank
-suggestion_sort_mode = "relevance" # independent ranking for the suggestion list; options mirror tree_sort_mode
-suggestion_list_limit = 6 # number of candidates surfaced alongside the tree
+tree_sort_mode        = "relevance"
+suggestion_sort_mode  = "relevance"
+suggestion_list_limit = 6
 
- # options: dominant_forest, anchor_hull, similarity_threshold, radius, steiner_similarity, community_pagerank
+# options: dominant_forest, anchor_hull, similarity_threshold, radius, steiner_similarity, community_pagerank
 pruning_mode = "anchor_hull"
 
-# similarity_threshold = 0.0 # cosine threshold used when pruning_mode="similarity_threshold"
-# pruning_radius = 2 # undirected hop limit when pruning_mode="radius"
+# similarity_threshold = 0.0 # for pruning_mode = "similarity_threshold"
+# pruning_radius = 2         # for pruning_mode = "radius"
 
-anchor_top_k = 8 # ANN anchors to fetch per item before pruning
-max_descendant_depth = 4 # limit descendants pulled under each anchor
-lexical_anchor_limit = 3 # additional anchors sourced from lexical overlap
-community_clique_size = 2 # k for k-clique community expansion
-max_community_size = 160 # max nodes pulled from any single community, if set
+anchor_top_k         = 8  # ANN anchors per item before pruning
+max_descendant_depth = 4  # descendants included under each anchor
+lexical_anchor_limit = 3  # lexical anchors from name overlap
+community_clique_size = 2
+max_community_size    = 160
 
-anchor_overfetch_multiplier = 6 # ANN search overfetch multiplier (before pruning)
-anchor_min_overfetch = 96
+anchor_overfetch_multiplier = 6
+anchor_min_overfetch        = 96
 
-pagerank_damping = 0.875
+pagerank_damping     = 0.875
 pagerank_score_floor = 0.0
-# Cap candidate nodes before PageRank; the smaller of this and node_budget wins.
 # pagerank_candidate_limit = 384
 
-node_budget = 200 # hard cap on nodes retained in the final allowed set
-# surrogate_root_label = "Study catalogue variables" # optional: introduce a surrogate root label for the taxonomy tree
+node_budget = 200
+# surrogate_root_label = "Study catalogue variables"
 
+# =============================================================================
+# LLM endpoint and post processing
+#
+# [llm]
+#   endpoint
+#     OpenAI compatible chat completion endpoint.
+#     Default assumes a local llama.cpp server.
+#
+#   model
+#     Model identifier at that endpoint. Empty means use the server default.
+#
+#   api_key
+#     API key for remote endpoints. Leave blank for local llama.cpp or set
+#     OPENAI_API_KEY in the environment.
+#
+#   n_predict
+#     Maximum number of tokens to generate for the response.
+#
+#   temperature, top_k, top_p, min_p
+#     Generation parameters. For deterministic classification, keep temperature
+#     at zero.
+#
+#   cache_prompt
+#     Cache prompts where possible for efficiency.
+#
+#   n_keep, force_slot_id
+#     llama.cpp specific controls. Usually left as defaults.
+#
+#   embedding_remap_threshold
+#     Cosine distance threshold for mapping non exact LLM outputs back to known
+#     taxonomy nodes using embeddings.
+#
+#   alias_similarity_threshold
+#     String similarity threshold for mapping non exact outputs to known labels.
+#
+#   snap_to_child
+#     If true, attempt to refine broad parent predictions down to better matching
+#     children.
+#
+#   snap_margin
+#     Margin used when deciding whether to snap to a child.
+#
+#   snap_similarity
+#     Similarity method for snapping. Options are "token_sort", "token_set",
+#     "embedding".
+#
+#   snap_descendant_depth
+#     Maximum descendant depth to consider when snapping.
+#
+# [prompts]
+#   system_template_path
+#     Path to the system prompt Jinja2 template.
+#
+#   user_template_path
+#     Path to the user prompt Jinja2 template.
+# =============================================================================
 [llm]
 endpoint = "http://127.0.0.1:8080/v1"
-model = ""
-api_key = "" # optional; leave blank to use OPENAI_API_KEY or the default local key
-n_predict = 32
+model    = ""
+api_key  = "" # leave blank to use OPENAI_API_KEY or a local default
+
+n_predict   = 32
 temperature = 0.0
-top_k = 20
-top_p = 0.8
-min_p = 0.0
+top_k       = 20
+top_p       = 0.8
+min_p       = 0.0
+
 cache_prompt = true
-n_keep = -1
-force_slot_id = false # set true to force explicit slot ids on the llama server
-embedding_remap_threshold = 0.25
+n_keep        = -1
+force_slot_id = false
+
+embedding_remap_threshold  = 0.25
 alias_similarity_threshold = 0.9
-# Enable snapping ancestor predictions down to a better-matching child label.
-snap_to_child = false
-snap_margin = 0.25
-# Options: "token_sort", "token_set", "embedding"
-snap_similarity = "token_set"
-# Maximum descendant depth to consider when snapping (1 = direct children only).
+
+# Enable snapping ancestor predictions down to a better matching child label.
+snap_to_child         = false
+snap_margin           = 0.25
+snap_similarity       = "token_set"
 snap_descendant_depth = 2
 
 [prompts]
 system_template_path = "templates/match_system_prompt.j2"
-user_template_path = "templates/match_user_prompt.j2"
+user_template_path   = "templates/match_user_prompt.j2"
 
+# =============================================================================
+# Parallelism and HTTP
+#
+# [parallelism]
+#   num_slots
+#     Maximum concurrent LLM calls.
+#
+#   pool_maxsize
+#     Maximum HTTP connection pool size.
+#
+#   pruning_workers
+#     Number of workers for pruning tasks.
+#
+#   pruning_batch_size
+#     Batch size when distributing pruning work.
+#
+#   pruning_queue_size
+#     Queue size for pending pruning jobs.
+#
+#   pruning_embed_on_workers
+#     If true, spawn worker processes with their own embedder instances.
+#     If false, embed on the coordinator and fan out lighter work.
+#
+#   pruning_worker_devices
+#     Optional list of devices for worker embedders if GPUs are available.
+#
+#   pruning_start_method
+#     Optional override for process startup method ("fork" or "spawn").
+#
+# [http]
+#   sock_connect
+#     HTTP connect timeout in seconds.
+#
+#   sock_read_floor
+#     Minimum HTTP read timeout in seconds.
+# =============================================================================
 [parallelism]
-num_slots = 4
-pool_maxsize = 8
-pruning_workers = 8
-pruning_batch_size = 8
-pruning_queue_size = 16
-# Pruning precomputes embeddings on the coordinator and fans out work through a
-# thread pool by default. Enable ``pruning_embed_on_workers`` to spin up a
-# process pool that clones the embedder inside each worker.
+num_slots           = 4
+pool_maxsize        = 8
+pruning_workers     = 8
+pruning_batch_size  = 8
+pruning_queue_size  = 16
 pruning_embed_on_workers = false
-# When cloning the embedder provide explicit device mappings if GPUs are
-# available.
 # pruning_worker_devices = ["cuda:0", "cuda:1"]
-# pruning_start_method = "auto"  # or "fork"/"spawn" to override process startup
+# pruning_start_method   = "auto"
 
 [http]
-sock_connect = 10.0
+sock_connect    = 10.0
 sock_read_floor = 30.0
