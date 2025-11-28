@@ -55,12 +55,12 @@ For each variable:
 
 Short summary:
 
-* Taxonomy nodes are turned into vectors that reflect both meaning and hierarchy.
-* Variables are embedded the same way.
-* Nearest neighbors plus lexical matches give a small set of anchor nodes.
-* Anchors are expanded, then pruned down to a compact sub tree.
-* The variable and pruned tree are shown to an LLM, which selects the best label.
-* The result is the final mapping.
+* The taxonomy is converted into vectors that encode meaning plus some hierarchy context.
+* Each variable description is converted into a vector with the same embedder.
+* The system finds a small set of anchors in the taxonomy that are close to the variable.
+* It expands around those anchors, then trims back to a compact candidate sub tree.
+* It shows that sub tree, plus the variable context, to an LLM and asks for the best fitting label.
+* The chosen label is the final taxonomy mapping for that variable.
 
 Defaults:
 
@@ -108,7 +108,7 @@ This gives:
 
 * The speed and robustness of vector search.
 * The discrimination and contextual understanding of the LLM.
-* A reproducible, configurable pipeline controlled by `config.example.toml` (see that file for a complete reference).
+* A reproducible, configurable pipeline controlled by `config.example.toml`.
 
 A full configuration file lives at:
 **[`config.example.toml`](./config.example.toml)**.
@@ -263,7 +263,6 @@ mapper = VariableTaxonMapper(config_path="config.toml")
 preds = mapper.predict()
 ```
 
-### HPC usage
-
+### Clusters and HPC
 For running on an HPC cluster with Slurm and multiple GPUs, see: [doc/nibbler_cluster.md](doc/nibbler_cluster.md).
 This document describes cluster specific launch scripts and recommended settings.
