@@ -131,14 +131,20 @@ def build_result_row(
             allowed_has_gold = False
 
     resolved_label = prediction.get("resolved_label")
-    result: Dict[str, Any] = dict(job.metadata)
+    result: Dict[str, Any] = {}
+
+    # Preserve the original input columns so the output dataframe is a superset
+    # of the source data. ``item_columns`` contains the raw row values (plus a
+    # dataset alias) whereas ``metadata`` may only carry a configured subset.
+    if job.item_columns:
+        result.update(job.item_columns)
+
+    result.update(job.metadata)
     result.update(
         {
-            "pred_label_raw": prediction.get("pred_label_raw"),
             "resolved_label": resolved_label,
-            "resolved_id": prediction.get("resolved_id"),
             "resolved_path": prediction.get("resolved_path"),
-            "direct_parent": lookup_direct_parent(graph, resolved_label),
+            "resolved_direct_parent": lookup_direct_parent(graph, resolved_label),
             "_error": job.metadata.get("_error"),
             "match_strategy": prediction.get("match_strategy"),
             "llm_score": prediction.get("llm_score"),
@@ -147,8 +153,6 @@ def build_result_row(
             "confidence_score": prediction.get("confidence_score"),
         }
     )
-    if "raw" in prediction:
-        result["raw"] = prediction["raw"]
 
     has_gold_labels = bool(gold_labels_seq)
     correct_increment = 0
