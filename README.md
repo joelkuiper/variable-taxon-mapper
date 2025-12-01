@@ -44,37 +44,14 @@ See [doc/results/](doc/results/) for detailed metrics.
 
 ---
 
-## ASCII Flow
-
-```
-Variables.csv + Taxonomy.csv
-        │
-        ▼
-Build taxonomy graph
-Embed taxonomy nodes
-Build HNSW index
-        │
-For each variable:
-  ├─ Build variable text
-  ├─ Embed variable
-  ├─ Get anchors
-  │    ├─ ANN similarity search
-  │    └─ Lexical similarity
-  ├─ Expand anchors
-  ├─ Trim candidates to a subtree
-  ├─ Render prompt with subtree
-  ├─ Call LLM for final label
-  └─ Record prediction
-```
-
-Or schematically:
-![Technical diagram](./doc/diagram-diagram.png)
+## Flow
+![Technical diagram](./doc/diagram-technical.png)
 
 
 ---
 
 ## Conceptual Overview
-![Conceptual diagram](./doc/diagram-conceptual.png)
+![Conceptual diagram](./doc/diagram-concept.png)
 
 
 The mapping process works as follows:
