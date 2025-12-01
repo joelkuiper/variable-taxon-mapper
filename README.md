@@ -44,15 +44,12 @@ See [doc/results/](doc/results/) for detailed metrics.
 
 ---
 
-## Flow
-![Technical diagram](./doc/diagram-technical.png)
-
-
----
-
 ## Conceptual Overview
 ![Conceptual diagram](./doc/diagram-concept.png)
+---
 
+## Technical Overview
+![Technical diagram](./doc/diagram-technical.png)
 
 The mapping process works as follows:
 
