@@ -67,9 +67,15 @@ For each variable:
   └─ Record prediction
 ```
 
+Or schematically:
+![Technical diagram](./doc/diagram-diagram.png)
+
+
 ---
 
 ## Conceptual Overview
+![Conceptual diagram](./doc/diagram-conceptual.png)
+
 
 The mapping process works as follows:
 
