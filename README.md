@@ -230,6 +230,7 @@ vtm prune-check config.example.toml --limit 10000
 ```bash
 vtm optimize-pruning config.example.toml --trials 80
 ```
+
 ---
 
 # Additional Tools
