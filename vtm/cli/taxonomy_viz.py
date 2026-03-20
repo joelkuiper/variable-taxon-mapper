@@ -459,6 +459,23 @@ def _build_html(payload: dict[str, Any]) -> str:
       color: #f8f7f3;
     }}
 
+    .action-button {{
+      width: 100%;
+      appearance: none;
+      border: 1px solid rgba(29, 42, 49, 0.10);
+      background: #ffffff;
+      color: var(--ink);
+      padding: 10px 12px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+    }}
+
+    .action-button:hover {{
+      transform: translateY(-1px);
+      background: #f8fbff;
+    }}
+
     .search {{
       width: 100%;
       padding: 10px 12px;
@@ -584,6 +601,13 @@ def _build_html(payload: dict[str, Any]) -> str:
       font-size: 0.95rem;
     }}
 
+    .status-line {{
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }}
+
     .legend {{
       display: flex;
       flex-wrap: wrap;
@@ -621,8 +645,6 @@ def _build_html(payload: dict[str, Any]) -> str:
 
     svg {{
       display: block;
-      width: 100%;
-      height: auto;
     }}
 
     .link {{
@@ -651,7 +673,7 @@ def _build_html(payload: dict[str, Any]) -> str:
 
     .label {{
       fill: var(--ink);
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: 0.01em;
       user-select: none;
     }}
@@ -662,9 +684,15 @@ def _build_html(payload: dict[str, Any]) -> str:
       stroke-width: 1px;
     }}
 
+    .label-box.selected {{
+      fill: rgba(255, 255, 255, 0.98);
+      stroke: var(--accent);
+      stroke-width: 1.6px;
+    }}
+
     .label.internal {{
       fill: rgba(29, 42, 49, 0.70);
-      font-size: 11px;
+      font-size: 12px;
     }}
 
     .label.dim {{
@@ -672,7 +700,7 @@ def _build_html(payload: dict[str, Any]) -> str:
     }}
 
     .scale-bar {{
-      font-size: 11px;
+      font-size: 12px;
       fill: var(--muted);
     }}
 
@@ -752,6 +780,10 @@ def _build_html(payload: dict[str, Any]) -> str:
             </div>
           </div>
         </section>
+
+        <section class="control-group">
+          <button class="action-button" id="reset-view" type="button">Reset View</button>
+        </section>
       </div>
 
       <section class="details" id="details-panel"></section>
@@ -765,6 +797,7 @@ def _build_html(payload: dict[str, Any]) -> str:
           <div class="viz-caption">Rectangular phylogeny-style view only. Branch order can be switched between taxonomy order, alphabetical order, and prediction volume to keep the labels readable.</div>
         </div>
       </div>
+      <div class="status-line" id="status-line"></div>
       <div class="legend" id="legend"></div>
       <div id="chart-wrap">
         <svg id="chart" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Taxonomy visualization"></svg>
@@ -791,11 +824,13 @@ def _build_html(payload: dict[str, Any]) -> str:
     const detailsPanel = document.getElementById("details-panel");
     const metricsPanel = document.getElementById("summary-metrics");
     const legendPanel = document.getElementById("legend");
+    const statusLine = document.getElementById("status-line");
     const sortSelect = document.getElementById("sort-select");
     const searchInput = document.getElementById("search-input");
     const countSlider = document.getElementById("count-slider");
     const minCountInput = document.getElementById("min-count-input");
     const countCaption = document.getElementById("count-caption");
+    const resetViewButton = document.getElementById("reset-view");
 
     const nodeIndex = new Map();
     function indexTree(node) {{
@@ -828,6 +863,16 @@ def _build_html(payload: dict[str, Any]) -> str:
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;");
+    }}
+
+    function sortModeLabel(mode) {{
+      if (mode === "taxonomy") {{
+        return "Taxonomy order";
+      }}
+      if (mode === "alpha") {{
+        return "A-Z";
+      }}
+      return "Most VTM predictions";
     }}
 
     function buildLegend() {{
@@ -1019,7 +1064,6 @@ def _build_html(payload: dict[str, Any]) -> str:
       tooltip.innerHTML = `
         <strong>${{escapeHtml(node.name)}}</strong><br>
         <span>${{escapeHtml(node.path_text)}}</span><br>
-        Exact: ${{formatInteger(node.self_count)}}<br>
         VTM predictions: ${{formatInteger(node.subtree_count)}} (${{formatPercent(share)}})
       `;
       tooltip.classList.add("visible");
@@ -1049,7 +1093,6 @@ def _build_html(payload: dict[str, Any]) -> str:
         <div class="path">${{escapeHtml(active.path_text)}}</div>
         <div class="definition">${{escapeHtml(description)}}</div>
         <div class="stats">
-          <div class="stat"><span>Exact predictions</span><strong>${{formatInteger(active.self_count)}}</strong></div>
           <div class="stat"><span>VTM predictions</span><strong>${{formatInteger(active.subtree_count)}}</strong></div>
           <div class="stat"><span>Share of all VTM predictions</span><strong>${{formatPercent(share)}}</strong></div>
           <div class="stat"><span>Share of parent branch</span><strong>${{formatPercent(shareParent)}}</strong></div>
@@ -1087,7 +1130,7 @@ def _build_html(payload: dict[str, Any]) -> str:
       const layout = assignRectangularLayout(working);
 
       const parts = [];
-      parts.push(`<svg id="chart" viewBox="0 0 ${{layout.width}} ${{layout.height}}" xmlns="http://www.w3.org/2000/svg">`);
+      parts.push(`<svg id="chart" width="${{layout.width}}" height="${{layout.height}}" viewBox="0 0 ${{layout.width}} ${{layout.height}}" xmlns="http://www.w3.org/2000/svg">`);
 
       for (const depth of Array.from({{ length: maxDepth }}, (_, idx) => idx + 1)) {{
         const x = 96 + depth * 235;
@@ -1129,10 +1172,11 @@ def _build_html(payload: dict[str, Any]) -> str:
             isLeaf ? "" : "internal",
             isMatch || !query || node.depth <= 2 || state.selectedId === node.id ? "" : "dim",
           ].filter(Boolean).join(" ");
+          const rectClass = selected ? "label-box selected" : "label-box";
           const dx = isLeaf ? 8 : 10;
           parts.push(
             `<g data-label-id="${{node.id}}">
-              <rect class="label-box" x="${{(node._x + dx - 4).toFixed(2)}}" y="${{(node._y - 10).toFixed(2)}}" width="24" height="16" rx="4" ry="4" />
+              <rect class="${{rectClass}}" x="${{(node._x + dx - 4).toFixed(2)}}" y="${{(node._y - 10).toFixed(2)}}" width="24" height="16" rx="4" ry="4" />
               <text class="${{cls}}" x="${{(node._x + dx).toFixed(2)}}" y="${{(node._y + 4).toFixed(2)}}">${{escapeHtml(node.name)}}</text>
             </g>`
           );
@@ -1145,6 +1189,10 @@ def _build_html(payload: dict[str, Any]) -> str:
       fitLabelBoxes(nextChart);
       bindInteractions(nextChart);
       updateDetails(state.selectedId ? nodeIndex.get(state.selectedId) : null);
+      const visibleNodeCount = layout.nodes.filter((node) => node.depth > 0).length;
+      const selectedNode = state.selectedId ? nodeIndex.get(state.selectedId) : null;
+      const selectionText = selectedNode ? ` Selected: ${{selectedNode.name}}.` : "";
+      statusLine.textContent = `Visible nodes: ${{formatInteger(visibleNodeCount)}}. Sort: ${{sortModeLabel(state.sortMode)}}. Min VTM predictions: ${{formatInteger(state.minCount)}}.${{selectionText}}`;
       countCaption.textContent = state.minCount > 0
         ? `Showing branches with at least ${{formatInteger(state.minCount)}} VTM predictions`
         : "Showing all branches";
@@ -1232,6 +1280,19 @@ def _build_html(payload: dict[str, Any]) -> str:
       value = Math.min(value, maxCount);
       state.minCount = value;
       countSlider.value = String(value);
+      render();
+    }});
+
+    resetViewButton.addEventListener("click", () => {{
+      state.sortMode = "predictions";
+      state.minCount = 0;
+      state.collapsed.clear();
+      state.selectedId = null;
+      state.query = "";
+      sortSelect.value = "predictions";
+      searchInput.value = "";
+      countSlider.value = "0";
+      minCountInput.value = "0";
       render();
     }});
 
