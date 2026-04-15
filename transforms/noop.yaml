@@ -1,5 +1,0 @@
-version: 1
-description: "No-op: load, verify ledger, write unchanged."
-rules:
-  - check: { assert: ledger_preserved }
-  - check: { assert: name_unique }
