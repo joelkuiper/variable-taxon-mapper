@@ -1,0 +1,16 @@
+version: 1
+description: "Smoke test: rename a few stragglers, reroute the grab-bag catch-all."
+rules:
+  - id: normalize_main_land_use
+    rename:
+      select: { re: "^main_land_use_(.+)$" }
+      to: "Land use: $1"
+
+  - id: merge_birth_outcome_dup
+    reroute:
+      select: { name: "Birth outcome" }
+      to: "Birth outcomes"
+      keep_as_keyword: true
+
+  - check: { assert: ledger_preserved }
+  - check: { assert: name_unique }

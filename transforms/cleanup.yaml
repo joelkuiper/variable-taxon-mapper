@@ -1,0 +1,1276 @@
+version: 1
+description: 'cleanup.yaml: canonical single-pass restructure of Keywords_summarized_new.csv. Merges iterative drafts cleanup_v1 + cleanup_v2 + cleanup_v3 + restructure_v4 + over-long-root renames into one script. Source 509 → ~415 nodes. Collapses the four overlapping organizing schemes onto one coherent axis: nosological (ICD), method (Lab/Physical measures), life-domain (Lifestyle/Social/Preschool), subject metadata (Admin/Sociodemo/Pregnancy). Adds a comprehensive mental health subtree under F00-F99, biological samples, genomics breakdown, microbiome, pregnancy outcomes, vaccinations. Preserves M/P/C subject splits, ICD chapter scaffolding, per-allergen leaves. Folds representation/parameter axes (unit, buffer, pm species, land use, temperature/humidity/UV, noise categorical) into keywords. Renames every node to a consistent style (sentence case, no snake_case, standardized acronyms).'
+rules:
+- id: promote_cerebral_palsy
+  promote:
+    select:
+      name: Cerebral palsy
+    to: Diseases of the nervous system (G00-G99)
+- id: promote_cotinine
+  promote:
+    select:
+      name: Cotinine
+    to: (Molecular) biomarkers
+- id: promote_creatinine
+  promote:
+    select:
+      name: Creatinine
+    to: (Molecular) biomarkers
+- id: dedup_birth_outcome
+  reroute:
+    select:
+      name: Birth outcome
+    to: Birth outcomes
+    keep_as_keyword: true
+- id: merge_food_ige
+  merge:
+    select:
+      any:
+      - name: Food_IgE
+      - name: IgE (Food)
+    as: Food allergen sensitization (IgE)
+- id: merge_food_spt
+  merge:
+    select:
+      any:
+      - name: Food_Skin prick test
+      - name: Skin prick test (Food)
+    as: Food allergen sensitization (Skin prick test)
+- id: merge_inhalant_ige
+  merge:
+    select:
+      any:
+      - name: Inhalant_IgE
+      - name: IgE (Inhalant)
+    as: Inhalant allergen sensitization (IgE)
+- id: merge_inhalant_spt
+  merge:
+    select:
+      any:
+      - name: Inhalant_Skin prick test
+      - name: Skin prick test (Inhalant)
+    as: Inhalant allergen sensitization (Skin prick test)
+- id: merge_food_any_ige
+  merge:
+    select:
+      any:
+      - name: IgE - Any food allergic sensitization
+      - name: Any food allergic sensitization (IgE)
+    as: Any food allergic sensitization (IgE)
+- id: merge_food_any_spt
+  merge:
+    select:
+      any:
+      - name: Skin prick test - Any food allergic sensitization
+      - name: Any food allergic sensitization (Skin prick test)
+    as: Any food allergic sensitization (Skin prick test)
+- id: merge_inhalant_any_ige
+  merge:
+    select:
+      any:
+      - name: IgE - Any inhalant allergic sensitization
+      - name: Any inhalant allergic sensitization (IgE)
+    as: Any inhalant allergic sensitization (IgE)
+- id: merge_inhalant_cat_ige
+  merge:
+    select:
+      any:
+      - name: IgE - Cat
+      - name: Cat (IgE)
+    as: Cat (IgE)
+- id: merge_inhalant_hdm_ige
+  merge:
+    select:
+      any:
+      - name: IgE - House dust mite
+      - name: House dust mite (IgE)
+    as: House dust mite (IgE)
+- id: merge_inhalant_any_spt
+  merge:
+    select:
+      any:
+      - name: Skin prick test - Any inhalant allergic sensitization
+      - name: Any inhalant allergic sensitization  (Skin prick test)
+    as: Any inhalant allergic sensitization (Skin prick test)
+- id: merge_inhalant_cat_spt
+  merge:
+    select:
+      any:
+      - name: Skin prick test - Cat
+      - name: Cat (Skin prick test)
+    as: Cat (Skin prick test)
+- id: merge_inhalant_hdm_spt
+  merge:
+    select:
+      any:
+      - name: Skin prick test - House dust mite
+      - name: House dust mite (Skin prick test)
+    as: House dust mite (Skin prick test)
+- id: dissolve_food_wrapper
+  dissolve:
+    select:
+      name: Food
+- id: dissolve_inhalant_wrapper
+  dissolve:
+    select:
+      name: Inhalant
+- id: merge_preschool_dietary_behavior
+  merge:
+    select:
+      any:
+      - name: Dietary behavior (Preschool)
+      - name: Preschool age - Dietary behavior
+    as: Dietary behavior (Preschool)
+- id: merge_preschool_food_groups
+  merge:
+    select:
+      any:
+      - name: Food groups (Preschool)
+      - name: Preschool age - Food groups
+    as: Food groups (Preschool)
+- id: merge_preschool_method
+  merge:
+    select:
+      any:
+      - name: Method of dietary assessment (Preschool)
+      - name: Preschool age - Method of dietary assessment
+    as: Method of dietary assessment (Preschool)
+- id: merge_preschool_nutrients
+  merge:
+    select:
+      any:
+      - name: Nutrients (Preschool)
+      - name: Preschool age - Nutrients
+    as: Nutrients (Preschool)
+- id: merge_preschool_supplements
+  merge:
+    select:
+      any:
+      - name: Supplements (Preschool)
+      - name: Preschool age - Supplements
+    as: Supplements (Preschool)
+- id: merge_school_dash
+  merge:
+    select:
+      any:
+      - name: DASH diet index
+      - name: School age - DASH diet index
+    as: DASH diet index (School)
+- id: merge_school_dietary_behavior
+  merge:
+    select:
+      any:
+      - name: Dietary behavior (School)
+      - name: School age - Dietary behavior
+    as: Dietary behavior (School)
+- id: merge_school_exact_age
+  merge:
+    select:
+      any:
+      - name: Exact age at dietary assessment (School)
+      - name: School age - Exact age at dietary assessment
+    as: Exact age at dietary assessment (School)
+- id: merge_school_food_groups
+  merge:
+    select:
+      any:
+      - name: Food groups (School)
+      - name: School age - Food groups
+    as: Food groups (School)
+- id: merge_school_method
+  merge:
+    select:
+      any:
+      - name: Method of dietary assessment (School)
+      - name: School age - Method of dietary assessment
+    as: Method of dietary assessment (School)
+- id: merge_school_nutrients
+  merge:
+    select:
+      any:
+      - name: Nutrients (School)
+      - name: School age - Nutrients
+    as: Nutrients (School)
+- id: merge_school_supplements
+  merge:
+    select:
+      any:
+      - name: Supplements (School)
+      - name: School age - Supplements
+    as: Supplements (School)
+- id: merge_cats
+  merge:
+    select:
+      any:
+      - name: Cats (any)
+      - name: Cats (number)
+    as: Cats
+- id: merge_dogs
+  merge:
+    select:
+      any:
+      - name: Dogs (any)
+      - name: Dogs (number)
+    as: Dogs
+- id: merge_lden
+  merge:
+    select:
+      any:
+      - name: lden
+      - name: lden_categorical
+    as: lden
+- id: merge_ln
+  merge:
+    select:
+      any:
+      - name: ln
+      - name: ln_categorical
+    as: ln
+- id: merge_traffic_distance
+  merge:
+    select:
+      any:
+      - name: distance (traffic)
+      - name: distance_traffic
+    as: distance_traffic
+- id: merge_traffic_load
+  merge:
+    select:
+      any:
+      - name: traffic_load_all_roads
+      - name: traffic_load_major_roads
+    as: Traffic load
+- id: merge_unhealthy_facilities
+  merge:
+    select:
+      any:
+      - name: unhealthy_facilities_density
+      - name: unhealthy_facilities_density_osm
+    as: unhealthy_facilities_density
+- id: merge_temperature
+  merge:
+    select:
+      any:
+      - name: maximum_temperature
+      - name: minimum_temperature
+      - name: mean_temperature
+      - name: land_surface_temperature
+    as: Temperature
+- id: merge_humidity
+  merge:
+    select:
+      any:
+      - name: maximum_relative_humidity
+      - name: minimum_relative_humidity
+      - name: mean_relative_humidity
+    as: Relative humidity
+- id: merge_uv_dose
+  merge:
+    select:
+      any:
+      - name: DNA_damage_UV_dose
+      - name: erythemal_UV_dose
+      - name: vitamin_d_UV_dose
+    as: UV dose
+- id: merge_land_use
+  merge:
+    select:
+      re: ^main_land_use(_.+)?$
+    as: Land use
+- id: reroute_sex
+  reroute:
+    select:
+      name: Sex
+    to: Sex/gender
+    keep_as_keyword: true
+- id: merge_asthma_instruments
+  merge:
+    select:
+      any:
+      - name: Asthma
+      - name: CHICOS
+      - name: ISAAC
+      - name: MeDALL
+    as: Asthma
+- id: flatten_maternal_psych
+  flatten:
+    select:
+      name: Maternal psychiatric disorders
+    absorb:
+      match: ^(?P<subtype>.+)$
+    definition_suffix: 'Subtypes captured in data: {subtype}.'
+- id: spirometry_absorb_units
+  flatten:
+    select:
+      all:
+      - parent: Spirometry
+      - children: '>0'
+    absorb:
+      match: ^(?P<unit>Absolute|Z-score) \(
+    definition_suffix: 'Measurement variants: {unit}.'
+- id: spirometry_stray_absolute
+  reroute:
+    select:
+      name: Absolute
+    to: Spirometry
+    keep_as_keyword: true
+- id: sitting_height_into_child_height
+  reroute:
+    select:
+      name: Sitting height
+    to: Child's height
+    keep_as_keyword: true
+- id: air_pollution_pm_species
+  extract_facet:
+    select:
+      parent: Air pollution
+    pattern: ^pm(?P<size>10|25)(?P<component>.*)$
+    group_by: size
+    name_template: PM{size}
+    definition_suffix: 'Species/components: {component|join:'',''}.'
+- id: rename_no2
+  rename:
+    select:
+      name: no2
+    to: NO2
+- id: rename_nox
+  rename:
+    select:
+      name: nox
+    to: NOx
+- id: ndvi_buffer
+  extract_facet:
+    select:
+      parent: Natural spaces
+    pattern: ^(?P<concept>ndvi)(?P<buffer>\d*)$
+    group_by: concept
+    name_template: NDVI
+    definition_suffix: 'Buffer radii (m): {buffer}.'
+- id: built_env_buffer_radii
+  extract_facet:
+    select:
+      parent: Built environment/neighbourhood characteristics
+    pattern: ^(?P<concept>.+?)(?P<buffer>\d{3})$
+    group_by: concept
+    name_template: '{concept}'
+    definition_suffix: 'Buffer radii (m): {buffer}.'
+- id: dissolve_other_admin
+  dissolve:
+    select:
+      name: Other administrative information
+    on_collision: keep_destination
+- id: dissolve_other_reproductive
+  dissolve:
+    select:
+      name: Other reproductive health-related information
+    on_collision: keep_destination
+- id: dissolve_other_end_of_life
+  dissolve:
+    select:
+      name: Other end of life or death-related information
+    on_collision: keep_destination
+- id: dissolve_other_laboratory
+  dissolve:
+    select:
+      name: Other laboratory measures
+    on_collision: keep_destination
+- id: dissolve_other_life_events
+  dissolve:
+    select:
+      name: Other life events, plans and beliefs
+    on_collision: keep_destination
+- id: dissolve_other_lifestyle
+  dissolve:
+    select:
+      name: Other and unspecified lifestyle information
+    on_collision: keep_destination
+- id: dissolve_other_pharma
+  dissolve:
+    select:
+      name: Other and unspecified pharmacological interventions
+    on_collision: keep_destination
+- id: dissolve_other_nonpharma
+  dissolve:
+    select:
+      name: Other and unspecified non-pharmacological interventions
+    on_collision: keep_destination
+- id: dissolve_other_perception
+  dissolve:
+    select:
+      name: Other perception of health, quality of life and functional limitation-related information
+    on_collision: keep_destination
+- id: dissolve_other_physical_measures
+  dissolve:
+    select:
+      name: Other physical measures and assessments
+    on_collision: keep_destination
+- id: dissolve_other_preschool_work
+  dissolve:
+    select:
+      name: Other preschool, school or work life-related information
+    on_collision: keep_destination
+- id: dissolve_other_sociodemo
+  dissolve:
+    select:
+      name: Other socio-demographic and economic characteristics
+    on_collision: keep_destination
+- id: dissolve_other_health_community
+  dissolve:
+    select:
+      name: Other health and community care
+    on_collision: keep_destination
+- id: dissolve_other_social_env
+  dissolve:
+    select:
+      name: Other social environment characteristics
+    on_collision: keep_destination
+- id: flatten_circumferences
+  flatten:
+    select:
+      name: Circumferences
+    absorb:
+      match: ^(?P<site>.+)$
+    definition_suffix: 'Body sites: {site}.'
+- id: flatten_skinfold
+  flatten:
+    select:
+      name: Skinfold
+    absorb:
+      match: ^(?P<site>.+)$
+    definition_suffix: 'Body sites: {site}.'
+- id: dissolve_child_asthma_wrapper
+  dissolve:
+    select:
+      name: Child asthma
+    on_collision: keep_destination
+- id: reroute_diseases_unspec
+  reroute:
+    select:
+      name: Diseases without precise specification or falling into multiple categories
+    to: Diseases
+    keep_as_keyword: true
+    on_collision: keep_destination
+- id: rename_pm25
+  rename:
+    select:
+      name: PM25
+    to: PM2.5
+- id: rename_pmcoarse
+  rename:
+    select:
+      name: pmcoarse
+    to: PMcoarse
+- id: rename_building_density
+  rename:
+    select:
+      name: building_density
+    to: Building density
+- id: rename_connectivity_density
+  rename:
+    select:
+      name: connectivity_density
+    to: Street connectivity density
+- id: rename_facilities_density
+  rename:
+    select:
+      name: facilities_density
+    to: Facilities density
+- id: rename_facilities_richness
+  rename:
+    select:
+      name: facilities_richness
+    to: Facilities richness
+- id: rename_land_use_mix
+  rename:
+    select:
+      name: land_use_mix
+    to: Land use mix
+- id: rename_population_density
+  rename:
+    select:
+      name: population_density
+    to: Population density
+- id: rename_walkability
+  rename:
+    select:
+      name: walkability
+    to: Walkability index
+- id: rename_access_lines
+  rename:
+    select:
+      name: access_to_public_transport_lines
+    to: Access to public transport lines
+- id: rename_access_stops
+  rename:
+    select:
+      name: access_to_public_transport_stops
+    to: Access to public transport stops
+- id: rename_ses_quintiles
+  rename:
+    select:
+      name: area_level_ses_quintiles
+    to: Area-level SES (quintiles)
+- id: rename_ses_tertiles
+  rename:
+    select:
+      name: area_level_ses_tertiles
+    to: Area-level SES (tertiles)
+- id: rename_blue_access
+  rename:
+    select:
+      name: blue_access
+    to: Access to blue space
+- id: rename_blue_distance
+  rename:
+    select:
+      name: blue_distance
+    to: Distance to blue space
+- id: rename_blue_size
+  rename:
+    select:
+      name: blue_size
+    to: Size of blue space
+- id: rename_green_access
+  rename:
+    select:
+      name: green_access
+    to: Access to green space
+- id: rename_green_distance
+  rename:
+    select:
+      name: green_distance
+    to: Distance to green space
+- id: rename_green_size
+  rename:
+    select:
+      name: green_size
+    to: Size of green space
+- id: rename_meteo_distance
+  rename:
+    select:
+      name: meteo_distance
+    to: Distance to meteorological station
+- id: rename_distance_noise
+  rename:
+    select:
+      name: distance (noise)
+    to: Distance to noise source
+- id: rename_lden
+  rename:
+    select:
+      name: lden
+    to: Day-evening-night noise level (Lden)
+- id: rename_ln
+  rename:
+    select:
+      name: ln
+    to: Night noise level (Ln)
+- id: rename_distance_traffic
+  rename:
+    select:
+      name: distance_traffic
+    to: Distance to road
+- id: rename_traffic_density
+  rename:
+    select:
+      name: traffic_density
+    to: Traffic density
+- id: rename_unhealthy_facilities
+  rename:
+    select:
+      name: unhealthy_facilities_density
+    to: Unhealthy food facility density
+- id: rename_ocs_pbdes
+  rename:
+    select:
+      name: OCs & PBDEs
+    to: Organochlorines and PBDEs
+- id: rename_dash_f
+  rename:
+    select:
+      name: DASH diet index (F)
+    to: DASH diet index (maternal)
+- id: rename_dash_m
+  rename:
+    select:
+      name: DASH diet index (M)
+    to: DASH diet index (paternal)
+- id: rename_food_groups_f
+  rename:
+    select:
+      name: Food groups (F)
+    to: Food groups (maternal)
+- id: rename_food_groups_m
+  rename:
+    select:
+      name: Food groups (M)
+    to: Food groups (paternal)
+- id: rename_method_f
+  rename:
+    select:
+      name: Method of dietary assessment (F)
+    to: Method of dietary assessment (maternal)
+- id: rename_method_m
+  rename:
+    select:
+      name: Method of dietary assessment (M)
+    to: Method of dietary assessment (paternal)
+- id: rename_nutrients_f
+  rename:
+    select:
+      name: Nutrients (F)
+    to: Nutrients (maternal)
+- id: rename_nutrients_m
+  rename:
+    select:
+      name: Nutrients (M)
+    to: Nutrients (paternal)
+- id: rename_supplements_f
+  rename:
+    select:
+      name: Supplements (F)
+    to: Supplements (maternal)
+- id: rename_supplements_m
+  rename:
+    select:
+      name: Supplements (M)
+    to: Supplements (paternal)
+- id: rename_preschool_dietary
+  rename:
+    select:
+      name: Dietary behavior (Preschool)
+    to: Dietary behavior (preschool age)
+- id: rename_preschool_exact_age
+  rename:
+    select:
+      name: Exact age at dietary assessment (Preschool)
+    to: Exact age at dietary assessment (preschool age)
+- id: rename_preschool_food_groups
+  rename:
+    select:
+      name: Food groups (Preschool)
+    to: Food groups (preschool age)
+- id: rename_preschool_method
+  rename:
+    select:
+      name: Method of dietary assessment (Preschool)
+    to: Method of dietary assessment (preschool age)
+- id: rename_preschool_nutrients
+  rename:
+    select:
+      name: Nutrients (Preschool)
+    to: Nutrients (preschool age)
+- id: rename_preschool_supplements
+  rename:
+    select:
+      name: Supplements (Preschool)
+    to: Supplements (preschool age)
+- id: rename_school_dash
+  rename:
+    select:
+      name: DASH diet index (School)
+    to: DASH diet index (school age)
+- id: rename_school_dietary
+  rename:
+    select:
+      name: Dietary behavior (School)
+    to: Dietary behavior (school age)
+- id: rename_school_exact_age
+  rename:
+    select:
+      name: Exact age at dietary assessment (School)
+    to: Exact age at dietary assessment (school age)
+- id: rename_school_food_groups
+  rename:
+    select:
+      name: Food groups (School)
+    to: Food groups (school age)
+- id: rename_school_method
+  rename:
+    select:
+      name: Method of dietary assessment (School)
+    to: Method of dietary assessment (school age)
+- id: rename_school_nutrients
+  rename:
+    select:
+      name: Nutrients (School)
+    to: Nutrients (school age)
+- id: rename_school_supplements
+  rename:
+    select:
+      name: Supplements (School)
+    to: Supplements (school age)
+- id: rename_lifestyle_characteristics
+  rename:
+    select:
+      name: Lifestyle Characteristics
+    to: Lifestyle characteristics
+- id: rename_obstetric_characteristics
+  rename:
+    select:
+      name: Obstetric Characteristics
+    to: Obstetric characteristics
+- id: rename_body_composition
+  rename:
+    select:
+      name: Body Composition
+    to: Body composition
+- id: rename_furry_pets
+  rename:
+    select:
+      name: Furry Pets
+    to: Furry pets
+- id: rename_molecular_biomarkers
+  rename:
+    select:
+      name: (Molecular) biomarkers
+    to: Molecular biomarkers
+- id: rename_maternal_education
+  rename:
+    select:
+      name: Maternal education (core)
+    to: Maternal education
+- id: rename_paternal_education
+  rename:
+    select:
+      name: Paternal education (core)
+    to: Paternal education
+- id: rename_asthma_to_child_asthma
+  rename:
+    select:
+      name: Asthma
+    to: Child asthma
+- id: rename_asthma_medication
+  rename:
+    select:
+      name: Asthma medication
+    to: Child asthma medication
+- id: reroute_asthma_respiratory_to_maternal
+  reroute:
+    select:
+      name: Asthma (Respiratory)
+    to: Maternal asthma
+    keep_as_keyword: true
+- id: dissolve_respiratory_adult_health
+  dissolve:
+    select:
+      name: Respiratory (Adult health)
+- id: merge_respiratory_characteristics_dialects
+  merge:
+    select:
+      any:
+      - name: Respiratory allergy and skin characteristics
+      - name: Respiratory, allergy and skin characteristics
+    as: Respiratory, allergy and skin characteristics
+    into_parent: Pregnancy, delivery and birth
+- id: dissolve_skin_orphan
+  dissolve:
+    select:
+      name: Skin
+- id: dissolve_health_related_characteristics
+  dissolve:
+    select:
+      name: Health-related characteristics
+- id: promote_paternal_psychiatric_health
+  promote:
+    select:
+      name: Paternal psychiatric health
+    to: Mental and behavioural disorders (F00-F99)
+- id: rename_paternal_psychiatric_health
+  rename:
+    select:
+      name: Paternal psychiatric health
+    to: Paternal psychiatric disorders
+- id: dissolve_other_psychological
+  dissolve:
+    select:
+      name: Other psychological measures and assessments
+    on_collision: keep_destination
+- id: dissolve_vital_status
+  dissolve:
+    select:
+      name: Vital status
+    on_collision: keep_destination
+- id: rename_furry_pets
+  rename:
+    select:
+      name: Furry pets
+    to: Any furry pet
+- id: add_substance_use_disorders
+  add_node:
+    name: Substance use disorders (F10-F19)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F10-F19. Mental and behavioural disorders due to psychoactive substance use, including tobacco, alcohol, cannabis, opioids, sedatives, stimulants, and other psychoactive substances.
+- id: add_schizophrenia
+  add_node:
+    name: Schizophrenia and psychotic disorders (F20-F29)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F20-F29. Schizophrenia, schizotypal and delusional disorders.
+- id: add_mood_disorders
+  add_node:
+    name: Mood disorders (F30-F39)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F30-F39. Mood (affective) disorders, including depression, bipolar disorder, persistent mood disorders.
+- id: add_anxiety_disorders
+  add_node:
+    name: Anxiety, stress and trauma-related disorders (F40-F48)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F40-F48. Phobic anxiety disorders, generalised anxiety, panic, obsessive-compulsive disorder, reactions to severe stress (PTSD, acute stress), dissociative disorders, somatoform disorders.
+- id: add_eating_disorders
+  add_node:
+    name: Eating disorders (F50)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F50. Anorexia nervosa, bulimia nervosa, binge eating disorder, and other eating disorders.
+- id: add_personality_disorders
+  add_node:
+    name: Personality disorders (F60-F69)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F60-F69. Disorders of adult personality and behaviour.
+- id: add_intellectual_disability
+  add_node:
+    name: Intellectual disability (F70-F79)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F70-F79. Intellectual disability (formerly mental retardation), classified by severity.
+- id: add_developmental_disorders
+  add_node:
+    name: Disorders of psychological development (F80-F89)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F80-F89. Disorders of psychological development including autism spectrum disorders, specific developmental disorders of speech and language, scholastic skills, and motor function.
+- id: add_childhood_disorders
+  add_node:
+    name: Behavioural and emotional disorders with onset in childhood (F90-F98)
+    parent: Mental and behavioural disorders (F00-F99)
+    definition: ICD-10 F90-F98. Hyperkinetic disorders, conduct disorders, mixed disorders of conduct and emotions, tic disorders, and other behavioural and emotional disorders typically beginning in childhood and adolescence.
+- id: add_depression
+  add_node:
+    name: Depression
+    parent: Mood disorders (F30-F39)
+    definition: Depressive episodes and recurrent depressive disorder. Includes major depressive disorder.
+- id: add_bipolar
+  add_node:
+    name: Bipolar disorder
+    parent: Mood disorders (F30-F39)
+    definition: Bipolar affective disorder, characterised by repeated episodes of mood disturbance involving both manic/hypomanic and depressive states.
+- id: add_postpartum_depression
+  add_node:
+    name: Postpartum depression
+    parent: Mood disorders (F30-F39)
+    definition: Depressive episode with onset in the postpartum period (typically within 4-6 weeks of delivery, but extending up to one year).
+- id: add_anxiety
+  add_node:
+    name: Anxiety disorders
+    parent: Anxiety, stress and trauma-related disorders (F40-F48)
+    definition: Generalised anxiety disorder, panic disorder, social anxiety, separation anxiety, and other anxiety disorders.
+- id: add_phobic
+  add_node:
+    name: Phobic disorders
+    parent: Anxiety, stress and trauma-related disorders (F40-F48)
+    definition: Specific phobias, agoraphobia, social phobias.
+- id: add_ocd
+  add_node:
+    name: Obsessive-compulsive disorder
+    parent: Anxiety, stress and trauma-related disorders (F40-F48)
+    definition: Recurrent intrusive thoughts (obsessions) and/or repetitive behaviours (compulsions).
+- id: add_ptsd
+  add_node:
+    name: Post-traumatic stress disorder
+    parent: Anxiety, stress and trauma-related disorders (F40-F48)
+    definition: Delayed or protracted response to a stressful event of an exceptionally threatening or catastrophic nature.
+- id: add_anorexia
+  add_node:
+    name: Anorexia nervosa
+    parent: Eating disorders (F50)
+    definition: Eating disorder characterised by deliberate restriction of food intake and excessive concern about body weight and shape.
+- id: add_bulimia
+  add_node:
+    name: Bulimia nervosa
+    parent: Eating disorders (F50)
+    definition: Eating disorder characterised by recurrent episodes of binge eating followed by compensatory behaviours.
+- id: add_binge_eating
+  add_node:
+    name: Binge eating disorder
+    parent: Eating disorders (F50)
+    definition: Recurrent episodes of binge eating without regular compensatory behaviours.
+- id: add_autism
+  add_node:
+    name: Autism spectrum disorder
+    parent: Disorders of psychological development (F80-F89)
+    definition: Pervasive developmental disorder characterised by qualitative impairments in social interaction and communication, and a restricted, stereotyped, repetitive repertoire of interests and activities.
+- id: add_specific_learning
+  add_node:
+    name: Specific learning disorders
+    parent: Disorders of psychological development (F80-F89)
+    definition: Specific developmental disorders of scholastic skills (reading, spelling, arithmetic) not attributable to general intellectual disability or inadequate schooling.
+- id: add_speech_language
+  add_node:
+    name: Speech and language disorders
+    parent: Disorders of psychological development (F80-F89)
+    definition: 'Specific developmental disorders of speech and language: expressive language disorder, receptive language disorder, phonological disorder, stuttering.'
+- id: add_adhd
+  add_node:
+    name: Attention-deficit/hyperactivity disorder (ADHD)
+    parent: Behavioural and emotional disorders with onset in childhood (F90-F98)
+    definition: Hyperkinetic disorder characterised by inattention, impulsivity, and hyperactivity beyond what is developmentally appropriate.
+- id: add_conduct
+  add_node:
+    name: Conduct and oppositional defiant disorder
+    parent: Behavioural and emotional disorders with onset in childhood (F90-F98)
+    definition: Repetitive and persistent pattern of dissocial, aggressive, or defiant conduct (conduct disorder) or pattern of negativistic, hostile, defiant behaviour (oppositional defiant disorder).
+- id: add_tic
+  add_node:
+    name: Tic disorders
+    parent: Behavioural and emotional disorders with onset in childhood (F90-F98)
+    definition: Transient or chronic motor and/or vocal tics, including Tourette syndrome.
+- id: add_biosamples
+  add_node:
+    name: Biological samples
+    parent: Laboratory measures
+    definition: Inventory of biological specimens collected and stored from cohort participants.
+- id: add_cord_blood
+  add_node:
+    name: Cord blood
+    parent: Biological samples
+    definition: Blood collected from the umbilical cord at delivery.
+- id: add_maternal_blood
+  add_node:
+    name: Maternal blood
+    parent: Biological samples
+    definition: Whole blood, serum, or plasma collected from the mother.
+- id: add_paternal_blood
+  add_node:
+    name: Paternal blood
+    parent: Biological samples
+    definition: Whole blood, serum, or plasma collected from the father.
+- id: add_child_blood
+  add_node:
+    name: Child blood
+    parent: Biological samples
+    definition: Whole blood, serum, or plasma collected from the child at one or more follow-up time points.
+- id: add_urine
+  add_node:
+    name: Urine
+    parent: Biological samples
+    definition: Urine specimens collected from mother, father, and/or child.
+- id: add_stool
+  add_node:
+    name: Stool
+    parent: Biological samples
+    definition: Faecal specimens, typically used for microbiome and pathogen analyses.
+- id: add_hair
+  add_node:
+    name: Hair
+    parent: Biological samples
+    definition: Hair specimens, used for retrospective exposure assessment (cortisol, heavy metals, drug use).
+- id: add_saliva
+  add_node:
+    name: Saliva
+    parent: Biological samples
+    definition: Saliva specimens, often used for cortisol or DNA extraction.
+- id: add_breast_milk
+  add_node:
+    name: Breast milk
+    parent: Biological samples
+    definition: Breast milk specimens, used for nutritional, hormonal, and exposure analyses.
+- id: add_placenta
+  add_node:
+    name: Placenta
+    parent: Biological samples
+    definition: Placental tissue collected at delivery.
+- id: add_buccal_swab
+  add_node:
+    name: Buccal swab
+    parent: Biological samples
+    definition: Buccal cell specimens collected by swab, typically used for DNA extraction.
+- id: add_amniotic_fluid
+  add_node:
+    name: Amniotic fluid
+    parent: Biological samples
+    definition: Amniotic fluid specimens, typically obtained during clinically indicated amniocentesis.
+- id: add_snp_genotyping
+  add_node:
+    name: SNP genotyping
+    parent: Genomics
+    definition: Single-nucleotide polymorphism genotyping data, typically generated using genome-wide arrays.
+- id: add_wgs
+  add_node:
+    name: Whole-genome sequencing
+    parent: Genomics
+    definition: Whole-genome sequencing data.
+- id: add_wes
+  add_node:
+    name: Whole-exome sequencing
+    parent: Genomics
+    definition: Whole-exome sequencing data.
+- id: add_methylation
+  add_node:
+    name: DNA methylation
+    parent: Genomics
+    definition: DNA methylation profiles, typically generated using methylation arrays or bisulfite sequencing.
+- id: add_transcriptomics
+  add_node:
+    name: Transcriptomics
+    parent: Genomics
+    definition: Gene expression profiling, typically generated using RNA sequencing or microarrays.
+- id: add_microbiome
+  add_node:
+    name: Microbiome
+    parent: Microbiology
+    definition: Microbial community profiling from biological specimens (stool, skin, oral, vaginal).
+- id: add_16s
+  add_node:
+    name: 16S rRNA sequencing
+    parent: Microbiome
+    definition: Amplicon sequencing of the 16S ribosomal RNA gene for bacterial community profiling.
+- id: add_shotgun
+  add_node:
+    name: Shotgun metagenomics
+    parent: Microbiome
+    definition: Untargeted shotgun sequencing of all DNA in a microbial community sample.
+- id: add_miscarriage
+  add_node:
+    name: Miscarriage
+    parent: Pregnancy, childbirth and the puerperium (O00-O9A)
+    definition: Spontaneous abortion before 24 weeks gestation.
+- id: add_stillbirth
+  add_node:
+    name: Stillbirth
+    parent: Pregnancy, childbirth and the puerperium (O00-O9A)
+    definition: Fetal death after 24 weeks gestation.
+- id: add_ectopic
+  add_node:
+    name: Ectopic pregnancy
+    parent: Pregnancy, childbirth and the puerperium (O00-O9A)
+    definition: Pregnancy implanted outside the uterine cavity.
+- id: add_pregnancy_termination
+  add_node:
+    name: Pregnancy termination
+    parent: Pregnancy, childbirth and the puerperium (O00-O9A)
+    definition: Induced abortion, medical or surgical.
+- id: add_vaccinations
+  add_node:
+    name: Vaccinations
+    parent: Health and community care services utilization
+    definition: Immunisation records, including childhood vaccination schedule and additional vaccines (influenza, COVID-19, travel).
+- id: add_childhood_immunization
+  add_node:
+    name: Childhood immunisation schedule
+    parent: Vaccinations
+    definition: Vaccines administered as part of the national childhood immunisation programme.
+- id: promote_tobacco_to_f10
+  promote:
+    select:
+      name: Tobacco
+    to: Substance use disorders (F10-F19)
+- id: promote_alcohol_to_f10
+  promote:
+    select:
+      name: Alcohol
+    to: Substance use disorders (F10-F19)
+- id: promote_drugs_to_f10
+  promote:
+    select:
+      name: Drugs
+    to: Substance use disorders (F10-F19)
+- id: promote_cholesterol_to_lab
+  promote:
+    select:
+      name: Cholesterol
+    to: Biochemistry
+- id: promote_cotinine_to_lab
+  promote:
+    select:
+      name: Cotinine
+    to: Toxicology
+- id: promote_creatinine_to_lab
+  promote:
+    select:
+      name: Creatinine
+    to: Biochemistry
+- id: dissolve_molecular_biomarkers
+  dissolve:
+    select:
+      name: Molecular biomarkers
+    on_collision: keep_destination
+- id: promote_allergic_sensitization_to_immunology
+  promote:
+    select:
+      name: Allergic sensitization
+    to: Immunology
+- id: promote_anaphylaxis_to_injury
+  promote:
+    select:
+      name: Anaphylaxis
+    to: Injury, poisoning and certain other consequences of external causes (S00-T98)
+- id: promote_food_allergy_to_injury
+  promote:
+    select:
+      name: Food allergy
+    to: Injury, poisoning and certain other consequences of external causes (S00-T98)
+- id: promote_inhalant_allergy_to_respiratory
+  promote:
+    select:
+      name: Inhalant allergy
+    to: Diseases of the respiratory system (J00-J99)
+- id: promote_urticaria_to_skin
+  promote:
+    select:
+      name: Urticaria
+    to: Diseases of the skin and subcutaneous tissue (L00-L99)
+- id: promote_any_allergy_to_injury
+  promote:
+    select:
+      name: Any allergy
+    to: Injury, poisoning and certain other consequences of external causes (S00-T98)
+- id: reroute_allergy_root
+  reroute:
+    select:
+      name: Allergy
+    to: Diseases
+    keep_as_keyword: true
+    on_collision: keep_destination
+- id: promote_adhd_registry
+  promote:
+    select:
+      name: ADHD Registry diagnosis
+    to: Attention-deficit/hyperactivity disorder (ADHD)
+- id: promote_asd_registry
+  promote:
+    select:
+      name: ASD Registry diagnosis
+    to: Autism spectrum disorder
+- id: reroute_twin_to_plurality
+  reroute:
+    select:
+      name: Twin
+    to: Plurality
+    keep_as_keyword: true
+    on_collision: keep_destination
+- id: promote_work_life
+  promote:
+    select:
+      name: Work life
+    to: Labour force and retirement
+- id: dissolve_brain_and_nerves
+  dissolve:
+    select:
+      name: Brain and nerves
+    on_collision: keep_destination
+- id: dissolve_circulation_respiration
+  dissolve:
+    select:
+      name: Circulation and respiration
+    on_collision: keep_destination
+- id: dissolve_digestion
+  dissolve:
+    select:
+      name: Digestion
+    on_collision: keep_destination
+- id: dissolve_muscles_skeleton
+  dissolve:
+    select:
+      name: Muscles, skeleton and mobility
+    on_collision: keep_destination
+- id: dissolve_sensory_pain
+  dissolve:
+    select:
+      name: Sensory and pain
+    on_collision: keep_destination
+- id: dissolve_skin_subcutaneous
+  dissolve:
+    select:
+      name: Skin and subcutaneous tissue
+    on_collision: keep_destination
+- id: dissolve_speech_voice
+  dissolve:
+    select:
+      name: Speech and voice
+    on_collision: keep_destination
+- id: dissolve_reproduction
+  dissolve:
+    select:
+      name: Reproduction
+    on_collision: keep_destination
+- id: dissolve_maternal_measurements
+  dissolve:
+    select:
+      name: Maternal measurements
+    on_collision: keep_destination
+- id: dissolve_paternal_measurements
+  dissolve:
+    select:
+      name: Paternal measurements
+    on_collision: keep_destination
+- id: dissolve_measurements
+  dissolve:
+    select:
+      name: Measurements
+    on_collision: keep_destination
+- id: dissolve_physical_characteristics
+  dissolve:
+    select:
+      name: Physical characteristics
+    on_collision: keep_destination
+- id: rename_childs_height
+  rename:
+    select:
+      name: Child's height
+    to: Child height
+- id: rename_childs_weight
+  rename:
+    select:
+      name: Child's weight
+    to: Child weight
+- id: rename_childs_country
+  rename:
+    select:
+      name: Child's country of birth
+    to: Child country of birth
+- id: rename_child_id
+  rename:
+    select:
+      name: Child id
+    to: Child ID
+- id: rename_cohort_id
+  rename:
+    select:
+      name: Cohort id
+    to: Cohort ID
+- id: rename_mother_id
+  rename:
+    select:
+      name: Mother id
+    to: Mother ID
+- id: rename_urban_area_id
+  rename:
+    select:
+      name: Urban area id
+    to: Urban area ID
+- id: rename_behavioral_problem_domains
+  rename:
+    select:
+      name: Behavioral problem domains
+    to: Behavioural problem domains
+- id: rename_cognition_root
+  rename:
+    select:
+      name: Cognition, personality and psychological measures and assessments
+    to: Psychological assessments
+- id: rename_perception_root
+  rename:
+    select:
+      name: Perception of health, quality of life, development and functional limitations
+    to: Quality of life and functioning
+- id: rename_birth_pregnancy_root
+  rename:
+    select:
+      name: Birth, pregnancy and reproductive health history
+    to: Pregnancy and reproductive history
+- id: rename_life_events_root
+  rename:
+    select:
+      name: Life events, life plans, beliefs and values
+    to: Life events and beliefs
+- check:
+    assert: ledger_preserved
+- check:
+    assert: name_unique
