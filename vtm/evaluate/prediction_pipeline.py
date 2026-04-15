@@ -245,7 +245,18 @@ class PredictionPipeline:
                 job.slot_id,
                 len(pruned.allowed_labels),
             )
-            await self._handle_single_prediction(idx, job, pruned)
+            try:
+                await self._handle_single_prediction(idx, job, pruned)
+            except Exception:
+                logger.exception(
+                    "Skipping prediction for index %d (slot=%s) after "
+                    "unrecoverable error; pipeline continues",
+                    idx,
+                    job.slot_id,
+                )
+                self.rows[idx] = None
+                self.completed += 1
+                self._update_progress(0, False)
 
     async def _handle_single_prediction(
         self, idx: int, job: PredictionJob, pruned: PrunedTreeResult

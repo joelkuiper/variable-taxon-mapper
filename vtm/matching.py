@@ -29,6 +29,63 @@ _PROMPT_DEBUG_SHOWN = False
 logger = logging.getLogger(__name__)
 
 
+def _tolerant_json_parse(raw: str) -> Optional[Dict[str, Any]]:
+    """Best-effort recovery from malformed LLM responses.
+
+    Handles three observed failure modes:
+      1. Plain valid JSON — parsed directly.
+      2. Code-fenced or Python-preamble-wrapped JSON — strip the wrapper,
+         extract from the first '{' onwards, retry.
+      3. Truncated mid-string (cut off by n_predict or read timeout) —
+         fall back to regex-extracting any complete quoted strings from
+         a "concept_labels": [...] prefix and rebuilding a minimal payload.
+
+    Returns a dict on success, None if nothing recognisable could be extracted.
+    """
+    if not raw:
+        return None
+    # (1) straight parse
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    # (2) strip code fences / Python preamble, reparse
+    s = raw.strip()
+    if s.startswith("```"):
+        s = s[3:]
+        if s.lower().startswith("json"):
+            s = s[4:]
+        fence_end = s.rfind("```")
+        if fence_end != -1:
+            s = s[:fence_end]
+    first_brace = s.find("{")
+    if first_brace > 0:
+        s = s[first_brace:]
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    # (3) truncated response — regex-extract complete quoted strings
+    m = re.search(r'"concept_labels"\s*:\s*\[(.*)$', s, re.DOTALL)
+    if m:
+        body = m.group(1)
+        strings = re.findall(r'"((?:[^"\\]|\\.)*)"', body)
+        if strings:
+            logger.warning(
+                "Recovered %d concept_labels from truncated/malformed response",
+                len(strings),
+            )
+            return {"concept_labels": strings}
+
+    return None
+
+
 def _similarity_to_score(similarity: Optional[float]) -> Optional[float]:
     """Map cosine similarity ``[-1, 1]`` to a unit interval confidence score."""
 
@@ -309,18 +366,24 @@ async def match_items_to_tree(
                 f"{req.slot_id}; expected JSON payload."
             )
 
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                "Failed to parse JSON from LLM response for "
-                f"slot {req.slot_id}: {raw!r}"
-            ) from exc
+        payload = _tolerant_json_parse(raw)
+        if payload is None:
+            logger.warning(
+                "Failed to parse JSON from LLM response for slot %s; "
+                "treating as empty prediction. Raw head: %r",
+                req.slot_id,
+                raw[:200] if isinstance(raw, str) else raw,
+            )
+            payload = {"concept_labels": []}
 
         if not isinstance(payload, dict):
-            raise RuntimeError(
-                f"LLM response for slot {req.slot_id} is not a JSON object: {payload!r}"
+            logger.warning(
+                "LLM response for slot %s is not a JSON object (%r); "
+                "treating as empty prediction.",
+                req.slot_id,
+                payload,
             )
+            payload = {"concept_labels": []}
 
         labels_raw = payload.get("concept_labels")
         if labels_raw is None:
