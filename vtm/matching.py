@@ -395,6 +395,7 @@ async def match_items_to_tree(
         else:
             label_candidates = [str(labels_raw)] if labels_raw else []
 
+        label_candidates = [c.strip().strip('"').strip("'") for c in label_candidates]
         node_label_raw = ", ".join([c for c in label_candidates if c])
         resolved_keywords: list[str] = []
         match_strategies: list[str] = []
