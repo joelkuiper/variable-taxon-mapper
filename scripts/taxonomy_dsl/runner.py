@@ -10,22 +10,16 @@ from .model import Tree
 from .ops import (
     op_add_node,
     op_dissolve,
-    op_extract_facet,
-    op_flatten,
     op_merge,
     op_promote,
     op_rename,
-    op_reroute,
 )
 
 OPS = {
     "rename": op_rename,
-    "reroute": op_reroute,
     "promote": op_promote,
-    "dissolve": op_dissolve,
     "merge": op_merge,
-    "flatten": op_flatten,
-    "extract_facet": op_extract_facet,
+    "dissolve": op_dissolve,
     "add_node": op_add_node,
 }
 
