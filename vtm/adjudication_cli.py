@@ -346,12 +346,12 @@ def present_item(
         emit_if_present("gold_definitions", "Definitions")
         print()
 
-    if any(key in lower_map for key in ["resolved_label", "resolved_path", "resolved_definition"]):
+    if any(key in lower_map for key in ["resolved_keywords", "resolved_paths", "resolved_definitions"]):
         print("🤖 Model Prediction")
         print(divider)
-        emit_if_present("resolved_label", "Resolved Label")
-        emit_if_present("resolved_path", "Path")
-        emit_if_present("resolved_definition", "Definition")
+        emit_if_present("resolved_keywords", "Resolved Keywords")
+        emit_if_present("resolved_paths", "Paths")
+        emit_if_present("resolved_definitions", "Definitions")
         print()
 
     print("🧮 Rater Decisions")
@@ -472,4 +472,3 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -52,6 +52,7 @@ async def async_collect_predictions(
     progress_hook: ProgressHook | None,
     prompt_renderer: PromptRenderer,
     field_mapping: FieldMappingConfig | None = None,
+    output_column_prefix: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Asynchronously collect predictions for ``jobs`` using the pipeline."""
 
@@ -82,6 +83,7 @@ async def async_collect_predictions(
         progress_hook=progress_hook,
         prompt_renderer=prompt_renderer,
         field_mapping=field_mapping,
+        output_column_prefix=output_column_prefix,
     )
 
     pipeline.run_prune_workers()
@@ -128,6 +130,7 @@ def collect_predictions(
     progress_hook: ProgressHook | None,
     prompt_renderer: PromptRenderer,
     field_mapping: FieldMappingConfig | None = None,
+    output_column_prefix: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Synchronously collect predictions, delegating to ``async_collect_predictions``."""
 
@@ -165,6 +168,7 @@ def collect_predictions(
                 progress_hook=progress_hook,
                 prompt_renderer=prompt_renderer,
                 field_mapping=field_mapping,
+                output_column_prefix=output_column_prefix,
             )
         )
     except KeyboardInterrupt:

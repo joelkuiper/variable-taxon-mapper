@@ -5,7 +5,7 @@ import os
 import random
 import logging
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
 
 import numpy as np
 import torch
@@ -13,6 +13,30 @@ import pandas as pd
 
 
 logger = logging.getLogger(__name__)
+
+
+def apply_output_prefix(prefix: Optional[str], name: str) -> str:
+    """Return ``name`` prefixed with ``prefix`` when provided."""
+
+    return f"{prefix}{name}" if prefix else name
+
+
+def resolve_prefixed_column(
+    columns: Iterable[str], name: str, prefix: Optional[str] = None
+) -> Optional[str]:
+    """Resolve ``name`` against ``columns`` with an optional prefix fallback."""
+
+    if prefix:
+        candidate = f"{prefix}{name}"
+        if candidate in columns:
+            return candidate
+    if name in columns:
+        return name
+    target = name.lower()
+    for column in columns:
+        if str(column).lower().endswith(target):
+            return column
+    return None
 
 def clean_text(value: Any, empty="(empty)") -> str:
     """Normalize arbitrary values to a trimmed string or `empty`."""

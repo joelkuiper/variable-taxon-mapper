@@ -114,7 +114,14 @@ def run_command(
     )
     results_path = normalise_output_path(results_path, output_format, compression)
     results_path.parent.mkdir(parents=True, exist_ok=True)
-    write_output(df, results_path, output_format, compression=compression)
+    write_output(
+        df,
+        results_path,
+        output_format,
+        compression=compression,
+        keyword_columns=["resolved_keywords"],
+        output_column_prefix=config_obj.evaluation.output_column_prefix,
+    )
     logger.info("Results saved to %s (%s)", results_path, output_format.upper())
 
     run_metadata = build_run_metadata(
@@ -166,9 +173,11 @@ def run_command(
     gold_column = field_cfg.gold_column()
     if gold_column and gold_column not in display_columns:
         display_columns.append(gold_column)
-    for extra in ["gold_labels", "resolved_label", "correct", "match_type"]:
-        if extra not in display_columns:
-            display_columns.append(extra)
+    column_prefix = config_obj.evaluation.output_column_prefix
+    for extra in ["gold_labels", "resolved_keywords", "correct", "match_type"]:
+        prefixed = f"{column_prefix}{extra}" if column_prefix else extra
+        if prefixed not in display_columns:
+            display_columns.append(prefixed)
 
     dataset_column = field_cfg.dataset_column_name() or "dataset"
 

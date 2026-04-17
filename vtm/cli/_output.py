@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Iterable, Literal, cast
 
 import pandas as pd
+from pandas.io.common import get_handle
+
+from vtm.utils import apply_output_prefix
 
 OutputFormat = Literal["csv", "parquet", "feather", "json"]
 
@@ -81,16 +84,69 @@ def write_output(
     json_orient: str = "records",
     json_lines: bool = True,
     json_indent: int | None = None,
+    keyword_columns: Iterable[str] = (),
+    output_column_prefix: str | None = None,
 ) -> None:
     """Write ``df`` to ``path`` according to ``output_format``."""
 
     fmt = cast(OutputFormat, output_format.lower())
 
+    keyword_columns = tuple(keyword_columns)
     if fmt == "csv":
-        kwargs: dict[str, Any] = {"index": False}
+        def _encode_standard_cell(value: Any) -> str:
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return ""
+            text = str(value)
+            if any(ch in text for ch in [",", "\"", "\n", "\r"]):
+                escaped = text.replace('"', '""')
+                return f"\"{escaped}\""
+            return text
+
+        def _encode_keyword_cell(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, (list, tuple, set)):
+                items = [str(item).strip() for item in value if item is not None]
+            else:
+                items = [str(value).strip()]
+            items = [item for item in items if item]
+            if not items:
+                return ""
+            joined = ",".join(items)
+            if any("," in item for item in items):
+                joined = joined.replace("\"", "\"\"")
+                return f"\"\"\"{joined}\"\"\""
+            return _encode_standard_cell(joined)
+
+        header = [_encode_standard_cell(col) for col in df.columns]
+        keyword_set = {
+            apply_output_prefix(output_column_prefix or "", column)
+            for column in keyword_columns
+        }
+
         if compression:
-            kwargs["compression"] = compression
-        df.to_csv(path, **kwargs)
+            handle = get_handle(
+                path, "w", compression=compression, encoding="utf-8", newline=""
+            )
+            fh = handle.handle
+        else:
+            handle = None
+            fh = path.open("w", encoding="utf-8", newline="")
+        try:
+            fh.write(",".join(header) + "\n")
+            for row in df.itertuples(index=False, name=None):
+                encoded: list[str] = []
+                for column, value in zip(df.columns, row):
+                    if column in keyword_set:
+                        encoded.append(_encode_keyword_cell(value))
+                    else:
+                        encoded.append(_encode_standard_cell(value))
+                fh.write(",".join(encoded) + "\n")
+        finally:
+            if handle is not None:
+                handle.close()
+            else:
+                fh.close()
         return
 
     if fmt == "parquet":

@@ -156,7 +156,14 @@ def predict_command(
 
     output_path = normalise_output_path(output_path, output_format, compression)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_output(df, output_path, output_format, compression=compression)
+    write_output(
+        df,
+        output_path,
+        output_format,
+        compression=compression,
+        keyword_columns=["resolved_keywords"],
+        output_column_prefix=config_obj.evaluation.output_column_prefix,
+    )
     logger.info(
         "Saved %d predictions to %s (%s)", len(df), output_path, output_format.upper()
     )

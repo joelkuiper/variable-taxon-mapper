@@ -159,12 +159,12 @@ mean_pool  = false # false = CLS token
 # Set gamma and child_aggregation_weight to zero to disable hierarchy blending.
 # =============================================================================
 [taxonomy_embeddings]
-gamma = 0.05
-summary_weight = 0.85
+gamma = 0.13
+summary_weight = 0.53
 # Pull child signal back into ancestors. Set to 0.0 to disable.
-child_aggregation_weight = 0.1
+child_aggregation_weight = 0.47
 # Limit how many ancestor hops receive child signal. Unset means up to the root.
-# child_aggregation_depth = 1
+child_aggregation_depth = 1
 
 # =============================================================================
 # HNSW index
@@ -206,12 +206,16 @@ num_threads     = 0
 #
 #   progress_log_interval
 #     Log progress every N variables.
+#
+#   output_column_prefix
+#     Optional prefix applied to generated output columns (for example "vtm_").
 # =============================================================================
 [evaluation]
 n                     = 10_000
 seed                  = 37
 dedupe_on             = ["name"]
 progress_log_interval = 10
+output_column_prefix  = ""
 
 # =============================================================================
 # Pruning and anchor selection
@@ -279,7 +283,7 @@ progress_log_interval = 10
 [pruning]
 enable_taxonomy_pruning = true
 
-tree_sort_mode        = "relevance"
+tree_sort_mode        = "pagerank"
 suggestion_sort_mode  = "relevance"
 suggestion_list_limit = 6
 
@@ -289,20 +293,20 @@ pruning_mode = "anchor_hull"
 # similarity_threshold = 0.0 # for pruning_mode = "similarity_threshold"
 # pruning_radius = 2         # for pruning_mode = "radius"
 
-anchor_top_k         = 8  # ANN anchors per item before pruning
+anchor_top_k         = 12 # ANN anchors per item before pruning
 max_descendant_depth = 4  # descendants included under each anchor
 lexical_anchor_limit = 3  # lexical anchors from name overlap
-community_clique_size = 2
-max_community_size    = 160
+community_clique_size = 1
+max_community_size    = 256
 
-anchor_overfetch_multiplier = 6
-anchor_min_overfetch        = 96
+anchor_overfetch_multiplier = 1
+anchor_min_overfetch        = 256
 
-pagerank_damping     = 0.875
-pagerank_score_floor = 0.0
-# pagerank_candidate_limit = 384
+pagerank_damping         = 0.83
+pagerank_score_floor     = 0.028
+pagerank_candidate_limit = 512
 
-node_budget = 200
+node_budget = 250
 # surrogate_root_label = "Study catalogue variables"
 
 # =============================================================================

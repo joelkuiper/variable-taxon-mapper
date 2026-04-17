@@ -29,18 +29,61 @@ _PROMPT_DEBUG_SHOWN = False
 logger = logging.getLogger(__name__)
 
 
-def _normalize_confidence(value: Any) -> Optional[float]:
-    """Coerce a confidence-like value into ``[0, 1]`` if possible."""
+def _tolerant_json_parse(raw: str) -> Optional[Dict[str, Any]]:
+    """Best-effort recovery from malformed LLM responses.
 
+    Handles three observed failure modes:
+      1. Plain valid JSON — parsed directly.
+      2. Code-fenced or Python-preamble-wrapped JSON — strip the wrapper,
+         extract from the first '{' onwards, retry.
+      3. Truncated mid-string (cut off by n_predict or read timeout) —
+         fall back to regex-extracting any complete quoted strings from
+         a "concept_labels": [...] prefix and rebuilding a minimal payload.
+
+    Returns a dict on success, None if nothing recognisable could be extracted.
+    """
+    if not raw:
+        return None
+    # (1) straight parse
     try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return None
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
 
-    if np.isnan(score) or np.isinf(score):  # type: ignore[arg-type]
-        return None
+    # (2) strip code fences / Python preamble, reparse
+    s = raw.strip()
+    if s.startswith("```"):
+        s = s[3:]
+        if s.lower().startswith("json"):
+            s = s[4:]
+        fence_end = s.rfind("```")
+        if fence_end != -1:
+            s = s[:fence_end]
+    first_brace = s.find("{")
+    if first_brace > 0:
+        s = s[first_brace:]
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
 
-    return max(0.0, min(1.0, score))
+    # (3) truncated response — regex-extract complete quoted strings
+    m = re.search(r'"concept_labels"\s*:\s*\[(.*)$', s, re.DOTALL)
+    if m:
+        body = m.group(1)
+        strings = re.findall(r'"((?:[^"\\]|\\.)*)"', body)
+        if strings:
+            logger.warning(
+                "Recovered %d concept_labels from truncated/malformed response",
+                len(strings),
+            )
+            return {"concept_labels": strings}
+
+    return None
 
 
 def _similarity_to_score(similarity: Optional[float]) -> Optional[float]:
@@ -49,15 +92,6 @@ def _similarity_to_score(similarity: Optional[float]) -> Optional[float]:
     if similarity is None:
         return None
     return max(0.0, min(1.0, 0.5 * (similarity + 1.0)))
-
-
-def _combine_confidence(*parts: Optional[float]) -> Optional[float]:
-    """Aggregate available confidence components via a simple mean."""
-
-    numeric_parts = [part for part in parts if part is not None]
-    if not numeric_parts:
-        return None
-    return float(np.mean(numeric_parts))
 
 
 def _format_prompt(messages: Sequence[ChatCompletionMessageParam]) -> str:
@@ -183,32 +217,24 @@ def _build_match_result(
     *,
     node_label_raw: Optional[str],
     raw: str,
-    resolved_label: Optional[str],
-    name_to_id: Mapping[str, str],
-    name_to_path: Mapping[str, str],
+    resolved_keywords: Sequence[str],
     match_strategy: str,
     matched: bool,
     no_match: bool,
-    llm_score: Optional[float],
     embedding_similarity: Optional[float],
-    confidence_score: Optional[float],
 ) -> Dict[str, Any]:
     """Construct a standard match result payload."""
 
     return {
         "input_item": req.item,
         "pred_label_raw": node_label_raw,
-        "resolved_label": resolved_label,
-        "resolved_id": name_to_id.get(resolved_label) if resolved_label else None,
-        "resolved_path": name_to_path.get(resolved_label) if resolved_label else None,
+        "resolved_keywords": resolved_keywords,
         "matched": matched,
         "no_match": no_match,
         "match_strategy": match_strategy,
         "raw": raw,
-        "llm_score": llm_score,
         "embedding_similarity": embedding_similarity,
         "embedding_score": _similarity_to_score(embedding_similarity),
-        "confidence_score": confidence_score,
     }
 
 
@@ -340,72 +366,73 @@ async def match_items_to_tree(
                 f"{req.slot_id}; expected JSON payload."
             )
 
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                "Failed to parse JSON from LLM response for "
-                f"slot {req.slot_id}: {raw!r}"
-            ) from exc
+        payload = _tolerant_json_parse(raw)
+        if payload is None:
+            logger.warning(
+                "Failed to parse JSON from LLM response for slot %s; "
+                "treating as empty prediction. Raw head: %r",
+                req.slot_id,
+                raw[:200] if isinstance(raw, str) else raw,
+            )
+            payload = {"concept_labels": []}
 
         if not isinstance(payload, dict):
-            raise RuntimeError(
-                f"LLM response for slot {req.slot_id} is not a JSON object: {payload!r}"
+            logger.warning(
+                "LLM response for slot %s is not a JSON object (%r); "
+                "treating as empty prediction.",
+                req.slot_id,
+                payload,
+            )
+            payload = {"concept_labels": []}
+
+        labels_raw = payload.get("concept_labels")
+        if labels_raw is None:
+            labels_raw = payload.get("concept_label")
+        if isinstance(labels_raw, str):
+            label_candidates = [labels_raw]
+        elif isinstance(labels_raw, (list, tuple, set)):
+            label_candidates = [str(item) for item in labels_raw]
+        else:
+            label_candidates = [str(labels_raw)] if labels_raw else []
+
+        label_candidates = [c.strip().strip('"').strip("'") for c in label_candidates]
+        node_label_raw = ", ".join([c for c in label_candidates if c])
+        resolved_keywords: list[str] = []
+        match_strategies: list[str] = []
+        embedding_similarity: Optional[float] = None
+
+        allowed_idx_map = _build_allowed_index_map(req.allowed_labels, name_to_idx)
+        allowed_indices = list(allowed_idx_map.keys()) if allowed_idx_map else []
+
+        for candidate in label_candidates:
+            if not candidate:
+                continue
+            normalized_text, canonical_label = _canonicalize_label_text(
+                candidate,
+                allowed_labels=req.allowed_labels,
+                similarity_cutoff=getattr(
+                    postprocessing, "alias_similarity_threshold", 0.9
+                ),
             )
 
-        llm_score = _normalize_confidence(payload.get("confidence"))
-        node_label_raw: Optional[str] = payload.get("concept_label")
-
-        normalized_text, canonical_label = _canonicalize_label_text(
-            node_label_raw,
-            allowed_labels=req.allowed_labels,
-            similarity_cutoff=getattr(
-                postprocessing, "alias_similarity_threshold", 0.9
-            ),
-        )
-
-        if canonical_label:
-            snapped_label = maybe_snap_to_child(
-                canonical_label,
-                item_text=item_text,
-                allowed_children=req.allowed_children,
-                llm_config=postprocessing,
-                embedder=embedder,
-                encode_lock=encode_guard,
-            )
-            snapped = bool(snapped_label and snapped_label != canonical_label)
-            match_strategy = "llm_direct_and_snapped" if snapped else "llm_direct"
-            embedding_similarity = None
-            if snapped_label:
-                idx = name_to_idx.get(snapped_label)
-                if idx is not None and item_vec is not None and tax_embs.size:
-                    embedding_similarity = float(tax_embs[idx] @ item_vec)
-            confidence_score = _combine_confidence(
-                llm_score, _similarity_to_score(embedding_similarity)
-            )
-            results.append(
-                _build_match_result(
-                    req,
-                    node_label_raw=node_label_raw,
-                    raw=raw,
-                    resolved_label=snapped_label,
-                    name_to_id=name_to_id,
-                    name_to_path=name_to_path,
-                    match_strategy=match_strategy,
-                    matched=True,
-                    no_match=False,
-                    llm_score=llm_score,
-                    embedding_similarity=embedding_similarity,
-                    confidence_score=confidence_score,
+            if canonical_label:
+                snapped_label = maybe_snap_to_child(
+                    canonical_label,
+                    item_text=item_text,
+                    allowed_children=req.allowed_children,
+                    llm_config=postprocessing,
+                    embedder=embedder,
+                    encode_lock=encode_guard,
                 )
-            )
-            continue
+                snapped = bool(snapped_label and snapped_label != canonical_label)
+                match_strategies.append(
+                    "llm_direct_and_snapped" if snapped else "llm_direct"
+                )
+                if snapped_label:
+                    resolved_keywords.append(snapped_label)
+                continue
 
-        if normalized_text:
-            allowed_idx_map = _build_allowed_index_map(req.allowed_labels, name_to_idx)
-            if allowed_idx_map:
-                allowed_indices = list(allowed_idx_map.keys())
-
+            if normalized_text and allowed_idx_map:
                 with encode_guard:
                     query_vecs = embedder.encode([normalized_text])
                 if query_vecs.size:
@@ -413,7 +440,7 @@ async def match_items_to_tree(
                     best_idx: Optional[int] = None
                     best_similarity: float = float("-inf")
 
-                    if hnsw_index is not None:
+                    if hnsw_index is not None and allowed_indices:
                         allowed_idx_set = set(allowed_indices)
                         query = query_vec.astype(np.float32, copy=False)
                         query = query[np.newaxis, :]
@@ -437,7 +464,7 @@ async def match_items_to_tree(
                                 best_similarity = float(tax_embs[idx_int] @ query_vec)
                                 break
 
-                    if best_idx is None:
+                    if best_idx is None and allowed_indices:
                         allowed_items = list(allowed_idx_map.items())
                         allowed_embs = tax_embs[allowed_indices]
                         sims = allowed_embs @ query_vec
@@ -449,67 +476,63 @@ async def match_items_to_tree(
                         best_idx is not None
                         and best_similarity >= embedding_remap_threshold
                     ):
-                        resolved_label = allowed_idx_map[best_idx]
+                        candidate_label = allowed_idx_map[best_idx]
                         snapped_label = maybe_snap_to_child(
-                        resolved_label,
-                        item_text=item_text,
-                        allowed_children=req.allowed_children,
-                        llm_config=postprocessing,
-                        embedder=embedder,
-                        encode_lock=encode_guard,
-                    )
+                            candidate_label,
+                            item_text=item_text,
+                            allowed_children=req.allowed_children,
+                            llm_config=postprocessing,
+                            embedder=embedder,
+                            encode_lock=encode_guard,
+                        )
                         snapped = bool(
                             snapped_label
-                            and resolved_label
-                            and snapped_label != resolved_label
+                            and candidate_label
+                            and snapped_label != candidate_label
                         )
-                        match_strategy = (
+                        match_strategies.append(
                             "embedding_remap_and_snapped"
                             if snapped
                             else "embedding_remap"
                         )
-                        embedding_similarity: Optional[float] = best_similarity
                         if snapped_label:
-                            idx = name_to_idx.get(snapped_label)
-                            if idx is not None and item_vec is not None and tax_embs.size:
-                                embedding_similarity = float(tax_embs[idx] @ item_vec)
-                        confidence_score = _combine_confidence(
-                            llm_score, _similarity_to_score(embedding_similarity)
-                        )
-                        results.append(
-                            _build_match_result(
-                                req,
-                                node_label_raw=node_label_raw,
-                                raw=raw,
-                                resolved_label=snapped_label,
-                                name_to_id=name_to_id,
-                                name_to_path=name_to_path,
-                                match_strategy=match_strategy,
-                                matched=True,
-                                no_match=False,
-                                llm_score=llm_score,
-                                embedding_similarity=embedding_similarity,
-                                confidence_score=confidence_score,
-                            )
-                        )
-                        continue
+                            resolved_keywords.append(snapped_label)
+                        embedding_similarity = best_similarity
 
-        results.append(
-            _build_match_result(
-                req,
-                node_label_raw=node_label_raw,
-                raw=raw,
-                resolved_label=None,
-                name_to_id=name_to_id,
-                name_to_path=name_to_path,
-                match_strategy="no_match",
-                matched=False,
-                no_match=True,
-                llm_score=llm_score,
-                embedding_similarity=None,
-                confidence_score=_combine_confidence(llm_score),
+        resolved_keywords = [
+            label for label in dict.fromkeys(resolved_keywords) if label
+        ]
+        if resolved_keywords:
+            match_strategy = (
+                match_strategies[0]
+                if len(set(match_strategies)) == 1
+                else "llm_multi"
             )
-        )
+            results.append(
+                _build_match_result(
+                    req,
+                    node_label_raw=node_label_raw,
+                    raw=raw,
+                    resolved_keywords=resolved_keywords,
+                    match_strategy=match_strategy,
+                    matched=True,
+                    no_match=False,
+                    embedding_similarity=embedding_similarity,
+                )
+            )
+        else:
+            results.append(
+                _build_match_result(
+                    req,
+                    node_label_raw=node_label_raw,
+                    raw=raw,
+                    resolved_keywords=[],
+                    match_strategy="no_match",
+                    matched=False,
+                    no_match=True,
+                    embedding_similarity=None,
+                )
+            )
 
     return results
 

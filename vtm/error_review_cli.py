@@ -21,7 +21,7 @@ import pandas as pd
 
 from vtm.config import TaxonomyFieldMappingConfig, load_config
 from vtm.pipeline.service import prepare_keywords_dataframe
-from vtm.utils import load_table
+from vtm.utils import load_table, resolve_prefixed_column
 from .taxonomy import build_name_maps_from_graph, build_taxonomy_graph
 
 
@@ -43,9 +43,9 @@ class ErrorRecord:
     gold_labels: List[str]
     gold_definitions: List[str]
     gold_paths: List[str]
-    resolved_label: str
-    resolved_definition: str
-    resolved_path: str
+    resolved_keywords: List[str]
+    resolved_definitions: List[str]
+    resolved_paths: List[str]
 
     def to_output_row(self, decision: str) -> dict[str, str]:
         """Return a dictionary suitable for CSV persistence."""
@@ -58,9 +58,9 @@ class ErrorRecord:
             "description": self.description,
             "gold_labels": " | ".join(self.gold_labels),
             "gold_definitions": "\n".join(self.gold_definitions),
-            "resolved_label": self.resolved_label,
-            "resolved_definition": self.resolved_definition,
-            "resolved_path": self.resolved_path,
+            "resolved_keywords": " | ".join(self.resolved_keywords),
+            "resolved_definitions": " | ".join(self.resolved_definitions),
+            "resolved_paths": " | ".join(self.resolved_paths),
             "decision": decision,
         }
 
@@ -150,14 +150,31 @@ def load_keywords_metadata(
     return definitions, taxonomy_paths
 
 
-def load_prediction_errors(predictions_path: Path) -> pd.DataFrame:
+def load_prediction_errors(
+    predictions_path: Path, *, resolved_column: str | None = None
+) -> pd.DataFrame:
     """Return a DataFrame containing only misclassified rows."""
 
     df = load_table(predictions_path, dtype=str).fillna("")
+    if resolved_column:
+        resolved_col = resolve_prefixed_column(df.columns, resolved_column)
+        if resolved_col and resolved_col != resolved_column:
+            df = df.rename(columns={resolved_col: resolved_column})
+        paths_col = resolve_prefixed_column(df.columns, "resolved_paths")
+        if paths_col and paths_col != "resolved_paths":
+            df = df.rename(columns={paths_col: "resolved_paths"})
+        defs_col = resolve_prefixed_column(df.columns, "resolved_definitions")
+        if defs_col and defs_col != "resolved_definitions":
+            df = df.rename(columns={defs_col: "resolved_definitions"})
+    correct_col = resolve_prefixed_column(df.columns, "correct")
+    if correct_col is None:
+        raise KeyError("Predictions file is missing the 'correct' column.")
     # Normalize the `correct` column into booleans.
-    normalized = df["correct"].astype(str).str.lower()
+    normalized = df[correct_col].astype(str).str.lower()
     mask = normalized.isin({"false", "0", "no"})
     errors = df[mask].copy()
+    if correct_col != "correct":
+        errors = errors.rename(columns={correct_col: "correct"})
     errors.reset_index(inplace=True)
     errors.rename(columns={"index": "row_index"}, inplace=True)
     return errors
@@ -195,12 +212,24 @@ def enrich_records(
     taxonomy_paths: dict[str, str],
 ) -> List[ErrorRecord]:
     records: List[ErrorRecord] = []
+    resolved_col = resolve_prefixed_column(errors.columns, "resolved_keywords")
+    paths_col = resolve_prefixed_column(errors.columns, "resolved_paths")
+    defs_col = resolve_prefixed_column(errors.columns, "resolved_definitions")
     for row in errors.itertuples():
         gold_labels = parse_label_list(getattr(row, "gold_labels", ""))
         gold_definitions = [definitions.get(label, "") for label in gold_labels]
         gold_paths = [taxonomy_paths.get(label, "") for label in gold_labels]
-        resolved_label = str(getattr(row, "resolved_label", ""))
-        resolved_definition = definitions.get(resolved_label, "")
+        resolved_keywords = (
+            parse_label_list(str(getattr(row, resolved_col, ""))) if resolved_col else []
+        )
+        resolved_definitions = (
+            parse_label_list(str(getattr(row, defs_col, ""))) if defs_col else []
+        )
+        if not resolved_definitions and resolved_keywords:
+            resolved_definitions = [definitions.get(label, "") for label in resolved_keywords]
+        resolved_paths = (
+            parse_label_list(str(getattr(row, paths_col, ""))) if paths_col else []
+        )
 
         records.append(
             ErrorRecord(
@@ -212,9 +241,9 @@ def enrich_records(
                 gold_labels=gold_labels,
                 gold_definitions=gold_definitions,
                 gold_paths=gold_paths,
-                resolved_label=resolved_label,
-                resolved_definition=resolved_definition,
-                resolved_path=str(getattr(row, "resolved_path", "")),
+                resolved_keywords=resolved_keywords,
+                resolved_definitions=resolved_definitions,
+                resolved_paths=resolved_paths,
             )
         )
     return records
@@ -288,10 +317,12 @@ def present_record(record: ErrorRecord, index: int, total: int) -> None:
 
     print("🤖 Model Prediction")
     print(divider)
-    print_field("Resolved Label", record.resolved_label or "(none)")
-    print_field("Path", record.resolved_path or "(none)")
-    if record.resolved_definition:
-        print_field("Definition", record.resolved_definition)
+    resolved_text = " | ".join(record.resolved_keywords)
+    print_field("Resolved Keywords", resolved_text or "(none)")
+    paths_text = " | ".join(record.resolved_paths)
+    print_field("Paths", paths_text or "(none)")
+    if record.resolved_definitions:
+        print_field("Definitions", " | ".join(record.resolved_definitions))
     else:
         print_field("Definition", "(no definition)")
     print(divider)
@@ -391,7 +422,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     definitions, taxonomy_paths = load_keywords_metadata(
         keywords_path, taxonomy_fields
     )
-    errors = load_prediction_errors(args.predictions)
+    errors = load_prediction_errors(args.predictions, resolved_column="resolved_keywords")
     records = enrich_records(errors, definitions, taxonomy_paths)
     existing_decisions = load_existing_decisions(args.output)
 

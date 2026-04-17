@@ -8,6 +8,7 @@ import networkx as nx
 import pandas as pd
 
 from ..taxonomy import is_ancestor_of
+from ..utils import apply_output_prefix
 from ..pruning import PrunedTreeResult
 from ..graph_utils import lookup_direct_parent
 from .types import PredictionJob
@@ -30,6 +31,24 @@ def determine_match_type(
     return "none"
 
 
+def determine_match_type_any(
+    pred_labels: Sequence[str], gold_labels: Sequence[str], *, G
+) -> str:
+    for pred_label in pred_labels:
+        match_type = determine_match_type(pred_label, gold_labels, G=G)
+        if match_type == "exact":
+            return "exact"
+    for pred_label in pred_labels:
+        match_type = determine_match_type(pred_label, gold_labels, G=G)
+        if match_type == "ancestor":
+            return "ancestor"
+    for pred_label in pred_labels:
+        match_type = determine_match_type(pred_label, gold_labels, G=G)
+        if match_type == "descendant":
+            return "descendant"
+    return "none"
+
+
 def is_correct_prediction(
     pred_label: Optional[str], gold_labels: Sequence[str], *, G
 ) -> bool:
@@ -37,7 +56,7 @@ def is_correct_prediction(
 
 
 def _compute_hierarchical_distance(
-    resolved_label: Optional[str],
+    pred_label: Optional[str],
     gold_labels: Sequence[str],
     *,
     undirected_graph,
@@ -45,8 +64,8 @@ def _compute_hierarchical_distance(
 ) -> Dict[str, Optional[int | str]]:
     if (
         undirected_graph is None
-        or not isinstance(resolved_label, str)
-        or not undirected_graph.has_node(resolved_label)
+        or not isinstance(pred_label, str)
+        or not undirected_graph.has_node(pred_label)
     ):
         return {
             "hierarchical_distance_min": None,
@@ -56,7 +75,7 @@ def _compute_hierarchical_distance(
             "hierarchical_distance_gold_label_at_min": None,
         }
 
-    pred_depth = depth_map.get(resolved_label)
+    pred_depth = depth_map.get(pred_label)
     min_distance: Optional[int] = None
     min_depth_delta: Optional[int] = None
     min_gold_depth: Optional[int] = None
@@ -69,7 +88,7 @@ def _compute_hierarchical_distance(
     ]
     for gold in gold_candidates:
         try:
-            distance = nx.shortest_path_length(undirected_graph, resolved_label, gold)
+            distance = nx.shortest_path_length(undirected_graph, pred_label, gold)
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             continue
 
@@ -116,6 +135,7 @@ def build_result_row(
     graph,
     undirected_graph,
     depth_map: Mapping[str, Optional[int]],
+    column_prefix: Optional[str] = None,
 ) -> tuple[Dict[str, Any], int, bool]:
     allowed_labels = pruned.allowed_labels
     allowed_has_gold: Optional[bool] = None
@@ -130,7 +150,19 @@ def build_result_row(
         else:
             allowed_has_gold = False
 
-    resolved_label = prediction.get("resolved_label")
+    resolved_raw = prediction.get("resolved_keywords")
+    resolved_keywords: list[str] = []
+    if isinstance(resolved_raw, (list, tuple, set)):
+        resolved_keywords = [
+            str(item).strip() for item in resolved_raw if item is not None
+        ]
+    elif isinstance(resolved_raw, str):
+        resolved_keywords = [resolved_raw.strip()] if resolved_raw.strip() else []
+    elif resolved_raw is not None:
+        resolved_keywords = [str(resolved_raw).strip()]
+    resolved_keywords = [label for label in resolved_keywords if label]
+    primary_keyword = resolved_keywords[0] if resolved_keywords else None
+
     result: Dict[str, Any] = {}
 
     # Preserve the original input columns so the output dataframe is a superset
@@ -140,26 +172,26 @@ def build_result_row(
         result.update(job.item_columns)
 
     result.update(job.metadata)
-    result.update(
-        {
-            "resolved_label": resolved_label,
-            "resolved_path": prediction.get("resolved_path"),
-            "resolved_direct_parent": lookup_direct_parent(graph, resolved_label),
-            "_error": job.metadata.get("_error"),
-            "match_strategy": prediction.get("match_strategy"),
-            "llm_score": prediction.get("llm_score"),
-            "embedding_similarity": prediction.get("embedding_similarity"),
-            "embedding_score": prediction.get("embedding_score"),
-            "confidence_score": prediction.get("confidence_score"),
-        }
-    )
+    generated: Dict[str, Any] = {
+        "resolved_keywords": resolved_keywords,
+        "resolved_ids": prediction.get("resolved_ids"),
+        "resolved_paths": prediction.get("resolved_paths"),
+        "resolved_definitions": prediction.get("resolved_definitions"),
+        "resolved_direct_parent": lookup_direct_parent(graph, primary_keyword),
+        "_error": job.metadata.get("_error"),
+        "match_strategy": prediction.get("match_strategy"),
+        "embedding_similarity": prediction.get("embedding_similarity"),
+        "embedding_score": prediction.get("embedding_score"),
+    }
 
     has_gold_labels = bool(gold_labels_seq)
     correct_increment = 0
     if has_gold_labels:
-        match_type = determine_match_type(resolved_label, gold_labels_seq, G=graph)
+        match_type = determine_match_type_any(
+            resolved_keywords, gold_labels_seq, G=graph
+        )
         correct = match_type != "none"
-        result.update(
+        generated.update(
             {
                 "gold_labels": list(gold_labels_seq),
                 "match_type": match_type,
@@ -170,22 +202,34 @@ def build_result_row(
         )
         correct_increment = 1 if correct else 0
 
-        result.update(
+        generated.update(
             _compute_hierarchical_distance(
-                resolved_label,
+                primary_keyword,
                 gold_labels_seq,
                 undirected_graph=undirected_graph,
                 depth_map=depth_map,
             )
         )
+    if column_prefix:
+        generated = {
+            apply_output_prefix(column_prefix, key): value
+            for key, value in generated.items()
+        }
+    result.update(generated)
     return result, correct_increment, has_gold_labels
 
 
-def add_parent_column(df: pd.DataFrame, graph) -> None:
-    if "resolved_label" not in df.columns:
+def add_parent_column(
+    df: pd.DataFrame, graph, *, column_prefix: Optional[str] = None
+) -> None:
+    resolved_col = apply_output_prefix(column_prefix, "resolved_keywords")
+    if resolved_col not in df.columns:
         return
-    df["direct_parent"] = df["resolved_label"].map(
-        lambda label: lookup_direct_parent(graph, label)
+    output_col = apply_output_prefix(column_prefix, "direct_parent")
+    df[output_col] = df[resolved_col].map(
+        lambda labels: lookup_direct_parent(graph, labels[0])
+        if isinstance(labels, list) and labels
+        else lookup_direct_parent(graph, labels)
     )
 
 
@@ -197,6 +241,7 @@ def summarise_dataframe(
     total_with_any_gold_label: int,
     n_eligible: int,
     n_excluded_not_in_taxonomy: int,
+    column_prefix: Optional[str] = None,
 ) -> Dict[str, Any]:
     total_processed = int(len(df))
     metrics: Dict[str, Any] = {
@@ -209,29 +254,33 @@ def summarise_dataframe(
     }
 
     strategy_series = None
-    if "match_strategy" in df.columns:
-        strategy_series = df["match_strategy"].fillna("unknown").astype(str)
-        df["match_strategy"] = strategy_series
+    strategy_col = apply_output_prefix(column_prefix, "match_strategy")
+    if strategy_col in df.columns:
+        strategy_series = df[strategy_col].fillna("unknown").astype(str)
+        df[strategy_col] = strategy_series
         strategy_counts = strategy_series.value_counts(sort=False)
         metrics["match_strategy_volume"] = {
             str(key): int(value) for key, value in strategy_counts.items()
         }
 
-    if evaluate and "correct" in df.columns and total_processed:
-        metrics["n_correct"] = int(df["correct"].sum())
-        metrics["label_accuracy_any_match"] = float(df["correct"].mean())
+    correct_col = apply_output_prefix(column_prefix, "correct")
+    if evaluate and correct_col in df.columns and total_processed:
+        metrics["n_correct"] = int(df[correct_col].sum())
+        metrics["label_accuracy_any_match"] = float(df[correct_col].mean())
 
-        if "possible_correct_under_allowed" in df.columns:
+        possible_col = apply_output_prefix(column_prefix, "possible_correct_under_allowed")
+        if possible_col in df.columns:
             possible_series = (
-                df["possible_correct_under_allowed"].fillna(False).astype(bool)
+                df[possible_col].fillna(False).astype(bool)
             )
             metrics["n_possible_correct_under_allowed"] = int(possible_series.sum())
             metrics["possible_correct_under_allowed_rate"] = float(
                 possible_series.mean()
             )
 
-        if "match_type" in df.columns:
-            match_counts_series = df["match_type"].value_counts(sort=False)
+        match_col = apply_output_prefix(column_prefix, "match_type")
+        if match_col in df.columns:
+            match_counts_series = df[match_col].value_counts(sort=False)
             match_counts = {
                 str(key): int(value) for key, value in match_counts_series.items()
             }
@@ -253,9 +302,9 @@ def summarise_dataframe(
 
         if strategy_series is not None:
             strategy_stats: Dict[str, Dict[str, float | int]] = {}
-            grouped = df.groupby("match_strategy", dropna=False)
+            grouped = df.groupby(strategy_col, dropna=False)
             for strat, group in grouped:
-                correct_series = group["correct"].dropna()
+                correct_series = group[correct_col].dropna()
                 correct_count = int(correct_series.sum())
                 denom = len(correct_series)
                 accuracy = float(correct_count / denom) if denom else 0.0
@@ -267,16 +316,17 @@ def summarise_dataframe(
 
             metrics["match_strategy_performance"] = strategy_stats
 
-            total_correct = float(df["correct"].sum())
+            total_correct = float(df[correct_col].sum())
             if total_correct > 0:
                 metrics["match_strategy_correct_share"] = {
                     strat: float(stats["n_correct"] / total_correct)
                     for strat, stats in strategy_stats.items()
                 }
 
-    if "hierarchical_distance_min" in df.columns:
+    distance_col = apply_output_prefix(column_prefix, "hierarchical_distance_min")
+    if distance_col in df.columns:
         distance_series = pd.to_numeric(
-            df["hierarchical_distance_min"], errors="coerce"
+            df[distance_col], errors="coerce"
         )
         distance_nonnull = distance_series.dropna()
         metrics["hierarchical_distance_count"] = int(distance_nonnull.shape[0])
@@ -292,8 +342,8 @@ def summarise_dataframe(
                 (distance_nonnull <= 2).mean()
             )
 
-        if "correct" in df.columns:
-            incorrect_mask = df["correct"] == False  # noqa: E712
+        if correct_col in df.columns:
+            incorrect_mask = df[correct_col] == False  # noqa: E712
             incorrect_distances = distance_series[incorrect_mask].dropna()
             metrics["hierarchical_distance_error_count"] = int(
                 incorrect_distances.shape[0]

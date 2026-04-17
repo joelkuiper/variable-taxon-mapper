@@ -53,6 +53,7 @@ class PredictionPipeline:
         progress_hook: ProgressHook | None,
         prompt_renderer: PromptRenderer,
         field_mapping: FieldMappingConfig | None = None,
+        output_column_prefix: Optional[str] = None,
     ) -> None:
         self.jobs = list(jobs)
         self.pruning_cfg = pruning_cfg
@@ -82,6 +83,7 @@ class PredictionPipeline:
         self.progress_hook = progress_hook
         self.prompt_renderer = prompt_renderer
         self.field_mapping = field_mapping
+        self.output_column_prefix = output_column_prefix
 
         self.total = len(self.jobs)
         self.rows: List[Optional[Dict[str, Any]]] = [None] * self.total
@@ -243,7 +245,18 @@ class PredictionPipeline:
                 job.slot_id,
                 len(pruned.allowed_labels),
             )
-            await self._handle_single_prediction(idx, job, pruned)
+            try:
+                await self._handle_single_prediction(idx, job, pruned)
+            except Exception:
+                logger.exception(
+                    "Skipping prediction for index %d (slot=%s) after "
+                    "unrecoverable error; pipeline continues",
+                    idx,
+                    job.slot_id,
+                )
+                self.rows[idx] = None
+                self.completed += 1
+                self._update_progress(0, False)
 
     async def _handle_single_prediction(
         self, idx: int, job: PredictionJob, pruned: PrunedTreeResult
@@ -257,13 +270,15 @@ class PredictionPipeline:
                 f"at index {idx} (slot_id={job.slot_id})."
             )
 
+        prediction = self._enrich_prediction(predictions[0])
         result, correct_increment, has_gold = build_result_row(
             job,
             pruned,
-            predictions[0],
+            prediction,
             graph=self.graph,
             undirected_graph=self.undirected_graph,
             depth_map=self.depth_map,
+            column_prefix=self.output_column_prefix,
         )
         self.rows[idx] = result
         self.completed += 1
@@ -317,6 +332,30 @@ class PredictionPipeline:
                 "LLM matching failed for prompt request at "
                 f"index {idx} (slot_id={job.slot_id})."
             ) from exc
+
+    def _enrich_prediction(self, prediction: Mapping[str, Any]) -> Dict[str, Any]:
+        enriched = dict(prediction)
+        resolved_raw = enriched.get("resolved_keywords") or []
+        if isinstance(resolved_raw, str):
+            resolved_keywords = [resolved_raw.strip()] if resolved_raw.strip() else []
+        elif isinstance(resolved_raw, (list, tuple, set)):
+            resolved_keywords = [
+                str(item).strip() for item in resolved_raw if item is not None
+            ]
+        else:
+            resolved_keywords = [str(resolved_raw).strip()] if resolved_raw else []
+        resolved_keywords = [label for label in resolved_keywords if label]
+        enriched["resolved_keywords"] = resolved_keywords
+        enriched["resolved_ids"] = [
+            self.name_to_id.get(label) for label in resolved_keywords
+        ]
+        enriched["resolved_paths"] = [
+            self.name_to_path.get(label) for label in resolved_keywords
+        ]
+        enriched["resolved_definitions"] = [
+            self.gloss_map.get(label) for label in resolved_keywords
+        ]
+        return enriched
 
     def _update_progress(self, correct_increment: int, has_gold: bool) -> None:
         if has_gold:

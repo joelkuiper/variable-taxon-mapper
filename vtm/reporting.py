@@ -93,9 +93,9 @@ def format_metrics(
     if hierarchy_table:
         sections.extend(["### Hierarchical distance metrics", hierarchy_table, ""])
 
-    dataset_table = _build_dataset_section(df, dataset_column=dataset_column)
-    if dataset_table:
-        sections.extend(["### Performance by dataset", dataset_table, ""])
+    # dataset_table = _build_dataset_section(df, dataset_column=dataset_column)
+    # if dataset_table:
+    #     sections.extend(["### Performance by dataset", dataset_table, ""])
 
     # additional_table = _build_additional_metrics_section(metrics, consumed)
     # if additional_table:
@@ -423,22 +423,45 @@ def _build_dataset_section(
 
 def _build_top_error_sections(df: pd.DataFrame | None) -> list[str]:
     sections: list[str] = []
-    if df is None or "correct" not in df.columns:
+    if df is None:
+        return sections
+    resolved_col = None
+    for candidate in ("resolved_keywords",):
+        if candidate in df.columns:
+            resolved_col = candidate
+            break
+        for column in df.columns:
+            if str(column).lower().endswith(candidate):
+                resolved_col = column
+                break
+        if resolved_col:
+            break
+
+    correct_col = None
+    for column in df.columns:
+        if str(column).lower().endswith("correct"):
+            correct_col = column
+            break
+    if correct_col is None:
         return sections
 
-    incorrect_mask = df["correct"] == False  # noqa: E712
+    incorrect_mask = df[correct_col] == False  # noqa: E712
     incorrect_df = df[incorrect_mask]
 
     if incorrect_df.empty:
         return sections
 
-    if "resolved_label" in incorrect_df.columns:
-        top_wrong = (
-            incorrect_df["resolved_label"]
-            .fillna("(missing)")
-            .astype(str)
-            .value_counts()
-        )
+    if resolved_col and resolved_col in incorrect_df.columns:
+        series = incorrect_df[resolved_col].dropna()
+        if not series.empty:
+            exploded = series.apply(
+                lambda value: list(value)
+                if isinstance(value, (list, tuple, set))
+                else ([value] if isinstance(value, str) else [])
+            ).explode()
+        else:
+            exploded = series
+        top_wrong = exploded.fillna("(missing)").astype(str).value_counts()
         if not top_wrong.empty:
             top_wrong_df = (
                 top_wrong.head(10).rename_axis("Keyword").reset_index(name="Count")
@@ -449,8 +472,13 @@ def _build_top_error_sections(df: pd.DataFrame | None) -> list[str]:
                     ["### Top wrong predicted labels", top_wrong_table, ""]
                 )
 
-    if "gold_labels" in incorrect_df.columns:
-        gold_series = incorrect_df["gold_labels"].dropna()
+    gold_col = None
+    for column in incorrect_df.columns:
+        if str(column).lower().endswith("gold_labels"):
+            gold_col = column
+            break
+    if gold_col:
+        gold_series = incorrect_df[gold_col].dropna()
         if not gold_series.empty:
             exploded = gold_series.apply(
                 lambda value: list(value)
@@ -507,11 +535,29 @@ def report_results(
             "name",
             "description",
             "gold_labels",
-            "resolved_label",
+            "resolved_keywords",
             "correct",
             "match_type",
         ]
     )
+
+    if df is not None and display_columns:
+        lower_map = {str(col).lower(): col for col in df.columns}
+        resolved: list[str] = []
+        for column in display_columns:
+            if column in df.columns:
+                resolved.append(column)
+                continue
+            candidate = lower_map.get(str(column).lower())
+            if candidate:
+                resolved.append(candidate)
+                continue
+            for col in df.columns:
+                if str(col).lower().endswith(str(column).lower()):
+                    resolved.append(col)
+                    break
+        if resolved:
+            display_columns = list(dict.fromkeys(resolved))
 
     text_sections: list[str] = []
 

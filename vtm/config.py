@@ -260,6 +260,7 @@ class EvaluationConfig:
     dedupe_on: list[str] = field(default_factory=lambda: ["name"])
     progress_log_interval: int = 10
     results_csv: Optional[str] = None
+    output_column_prefix: Optional[str] = None
 
     def to_kwargs(self) -> dict[str, Any]:
         data = asdict(self)

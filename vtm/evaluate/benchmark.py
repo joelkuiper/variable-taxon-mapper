@@ -172,6 +172,8 @@ def run_label_benchmark(
         evaluate,
     )
     cfg = coerce_eval_config(eval_config)
+    if cfg.output_column_prefix is not None:
+        cfg.output_column_prefix = str(cfg.output_column_prefix)
     pruning_cfg = coerce_config(pruning_config, PruningConfig, "pruning_config")
     llm_cfg = coerce_config(llm_config, LLMConfig, "llm_config")
     llama_cpp_cfg = coerce_config(
@@ -289,6 +291,7 @@ def run_label_benchmark(
         prompt_renderer=renderer,
         hnsw_config=hnsw_cfg,
         field_mapping=field_cfg,
+        output_column_prefix=cfg.output_column_prefix,
     )
 
     if progress_bar is not None:
@@ -310,6 +313,7 @@ def run_label_benchmark(
         total_with_any_gold_label=total_with_any_gold_label,
         n_eligible=n_eligible,
         n_excluded_not_in_taxonomy=n_excluded_not_in_taxonomy,
+        column_prefix=cfg.output_column_prefix,
     )
     logger.debug("Computed metrics: %s", metrics)
 
