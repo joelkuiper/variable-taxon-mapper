@@ -1336,7 +1336,7 @@ def taxonomy_viz_command(
         path_type=Path,
     ),
     prediction_column: str = typer.Option(
-        "generated_keywords",
+        "resolved_keywords",
         "--prediction-column",
         help="Column in the results table containing the predicted taxonomy label.",
     ),
